@@ -79,7 +79,7 @@
 
 <SetupOverlay visible={setupVisible} message={setupMessage} progress={setupProgress} isError={setupError} />
 
-<div class="fixed inset-0 bg-[#282c34]">
+<div class="fixed inset-0 bg-[#1a1b2e]">
   <Editor
     bind:this={editorRef}
     onchange={handleChange}
