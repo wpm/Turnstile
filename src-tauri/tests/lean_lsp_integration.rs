@@ -31,6 +31,14 @@ use serde_json::{json, Value};
 
 const ERROR_SEVERITY: u64 = 1;
 
+static LOGGER: OnceLock<()> = OnceLock::new();
+
+fn init_logger() {
+    LOGGER.get_or_init(|| {
+        let _ = env_logger::try_init();
+    });
+}
+
 // ── Environment ────────────────────────────────────────────────────────
 
 fn lean_project_path() -> Option<PathBuf> {
@@ -117,6 +125,7 @@ impl LspClient {
 
     fn send_raw(&mut self, msg: &Value) -> Result<(), String> {
         let body = serde_json::to_string(msg).map_err(|e| e.to_string())?;
+        log::debug!("LSP → {body}");
         let header = format!("Content-Length: {}\r\n\r\n", body.len());
         self.writer
             .write_all(header.as_bytes())
@@ -246,6 +255,7 @@ fn reader_loop(stdout: std::process::ChildStdout, tx: SyncSender<Value>) {
             return;
         }
         if let Ok(msg) = serde_json::from_slice::<Value>(&body) {
+            log::debug!("LSP ← {}", serde_json::to_string(&msg).unwrap_or_default());
             if tx.send(msg).is_err() {
                 return;
             }
@@ -370,6 +380,7 @@ impl Session {
 static SESSION: OnceLock<Option<Mutex<Session>>> = OnceLock::new();
 
 fn session() -> Option<std::sync::MutexGuard<'static, Session>> {
+    init_logger();
     SESSION
         .get_or_init(|| {
             lean_project_path().map(|project| match Session::new(project) {
