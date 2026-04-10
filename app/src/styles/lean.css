@@ -1,43 +1,43 @@
 /* Lean LSP diagnostic gutter markers */
 .lean-diag-error {
-  color: #f7768e;
+  color: #ff5555;
   font-size: 10px;
   line-height: 1.5;
   cursor: pointer;
 }
 
 .lean-diag-warning {
-  color: #e0af68;
+  color: #ffb86c;
   font-size: 10px;
   line-height: 1.5;
   cursor: pointer;
 }
 
 .lean-diag-info {
-  color: #7aa2f7;
+  color: #8be9fd;
   font-size: 10px;
   line-height: 1.5;
   cursor: pointer;
 }
 
-/* Lean 4 semantic token highlighting (Tokyo Night palette) */
-.cm-lean-keyword    { color: #bb9af7; }
-.cm-lean-type       { color: #2ac3de; }
-.cm-lean-function   { color: #7aa2f7; }
-.cm-lean-variable   { color: #c0caf5; }
-.cm-lean-namespace  { color: #2ac3de; }
-.cm-lean-enum-member { color: #ff9e64; }
-.cm-lean-macro      { color: #bb9af7; font-style: italic; }
-.cm-lean-comment    { color: #565f89; font-style: italic; }
-.cm-lean-string     { color: #9ece6a; }
-.cm-lean-number     { color: #ff9e64; }
-.cm-lean-operator   { color: #89ddff; }
-.cm-lean-decorator  { color: #f7768e; }
+/* Lean 4 semantic token highlighting (Dracula palette) */
+.cm-lean-keyword    { color: #ff79c6; }
+.cm-lean-type       { color: #8be9fd; }
+.cm-lean-function   { color: #50fa7b; }
+.cm-lean-variable   { color: #f8f8f2; }
+.cm-lean-namespace  { color: #8be9fd; }
+.cm-lean-enum-member { color: #ffb86c; }
+.cm-lean-macro      { color: #ff79c6; font-style: italic; }
+.cm-lean-comment    { color: #6272a4; font-style: italic; }
+.cm-lean-string     { color: #f1fa8c; }
+.cm-lean-number     { color: #bd93f9; }
+.cm-lean-operator   { color: #ff79c6; }
+.cm-lean-decorator  { color: #ff5555; }
 
 /* CodeMirror 6 full-screen editor */
 .cm-editor {
   height: 100%;
-  background-color: #1a1b2e;
+  background-color: #282a36;
 }
 
 .cm-editor.cm-focused {
