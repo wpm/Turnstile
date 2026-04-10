@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    turnstile_lib::run()
+    turnstile_lib::run();
 }
