@@ -1,4 +1,4 @@
-import { type Page } from '@playwright/test'
+import { type Page, type Locator } from '@playwright/test'
 import {
   test,
   expect,
@@ -13,6 +13,28 @@ import {
   type DiagnosticInfoFixture,
   type SemanticTokenFixture,
 } from './fixtures'
+
+// ---------------------------------------------------------------------------
+// Page-level helpers
+// ---------------------------------------------------------------------------
+
+/** Type a multi-line string into the editor, one line at a time. */
+async function typeMultiLine(page: Page, text: string): Promise<void> {
+  for (const line of text.split('\n')) {
+    await page.keyboard.type(line)
+    await page.keyboard.press('Enter')
+  }
+}
+
+/** Locator for the theme toggle button (☀ / ☾). */
+function themeToggleBtn(page: Page): Locator {
+  return page.locator('button').filter({ hasText: /[☀☾]/ })
+}
+
+/** Locator for the GoalPanel container element. */
+function goalPanel(page: Page): Locator {
+  return page.locator('text=Goal State').locator('..')
+}
 
 // ---------------------------------------------------------------------------
 // Setup overlay
@@ -105,10 +127,7 @@ test.describe('Editor', () => {
     const editor = page.locator('.cm-content')
     await editor.click()
     // Type line by line to preserve line structure
-    for (const line of LEAN_SIMPLE_THEOREM.split('\n')) {
-      await page.keyboard.type(line)
-      await page.keyboard.press('Enter')
-    }
+    await typeMultiLine(page, LEAN_SIMPLE_THEOREM)
     await expect(editor).toContainText('theorem add_comm_simple')
     await expect(editor).toContainText('ring')
   })
@@ -117,10 +136,7 @@ test.describe('Editor', () => {
     await mountApp()
     const editor = page.locator('.cm-content')
     await editor.click()
-    for (const line of LEAN_MULTI_STEP_PROOF.split('\n')) {
-      await page.keyboard.type(line)
-      await page.keyboard.press('Enter')
-    }
+    await typeMultiLine(page, LEAN_MULTI_STEP_PROOF)
     await expect(editor).toContainText('constructor')
     await expect(editor).toContainText('exact hp')
   })
@@ -133,7 +149,7 @@ test.describe('Editor', () => {
 test.describe('Theme toggle', () => {
   test('toggle button is visible', async ({ page, mountApp }) => {
     await mountApp()
-    await expect(page.locator('button').filter({ hasText: /[☀☾]/ })).toBeVisible()
+    await expect(themeToggleBtn(page)).toBeVisible()
   })
 
   test('starts in Dracula (dark) theme', async ({ page, mountApp }) => {
@@ -144,14 +160,14 @@ test.describe('Theme toggle', () => {
 
   test('toggle switches to light theme', async ({ page, mountApp }) => {
     await mountApp()
-    await page.locator('button').filter({ hasText: /[☀☾]/ }).click()
+    await themeToggleBtn(page).click()
     const root = page.locator('[data-theme]')
     await expect(root).toHaveAttribute('data-theme', 'light')
   })
 
   test('toggle switches back to dark theme', async ({ page, mountApp }) => {
     await mountApp()
-    const btn = page.locator('button').filter({ hasText: /[☀☾]/ })
+    const btn = themeToggleBtn(page)
     await btn.click() // → light
     await btn.click() // → dracula
     const root = page.locator('[data-theme]')
@@ -166,7 +182,7 @@ test.describe('Theme toggle', () => {
     await expect(editor).toHaveCSS('background-color', 'rgb(40, 42, 54)') // #282a36
 
     // Switch to light
-    await page.locator('button').filter({ hasText: /[☀☾]/ }).click()
+    await themeToggleBtn(page).click()
     await expect(editor).toHaveCSS('background-color', 'rgb(255, 255, 255)')
   })
 })
@@ -302,10 +318,7 @@ test.describe('Diagnostic gutter markers', () => {
     await mountApp({ diagnostics: [diag] })
 
     await page.locator('.cm-content').click()
-    for (const line of LEAN_SIMPLE_THEOREM.split('\n')) {
-      await page.keyboard.type(line)
-      await page.keyboard.press('Enter')
-    }
+    await typeMultiLine(page, LEAN_SIMPLE_THEOREM)
     await emitEvent('lsp-diagnostics', [diag])
 
     // .nth(0) is the hidden initialSpacer; .nth(1) is the real gutter marker.
@@ -359,10 +372,7 @@ test.describe('Diagnostic gutter markers', () => {
     await mountApp({ diagnostics: diags })
 
     await page.locator('.cm-content').click()
-    for (const line of LEAN_MULTI_STEP_PROOF.split('\n')) {
-      await page.keyboard.type(line)
-      await page.keyboard.press('Enter')
-    }
+    await typeMultiLine(page, LEAN_MULTI_STEP_PROOF)
     await emitEvent('lsp-diagnostics', diags)
 
     await expect(page.locator('.lean-diag-error')).toHaveCount(1)
@@ -489,19 +499,15 @@ test.describe('GoalPanel', () => {
     await mountApp({ goalText: '⊢ a + b = b + a' })
 
     await page.locator('.cm-content').click()
-    for (const line of LEAN_SIMPLE_THEOREM.split('\n')) {
-      await page.keyboard.type(line)
-      await page.keyboard.press('Enter')
-    }
+    await typeMultiLine(page, LEAN_SIMPLE_THEOREM)
 
     // Click inside the proof body to trigger a cursor-move event.
     // The mock always returns goalText, so the panel should appear.
     await page.locator('.cm-content').click()
 
-    const goalPanel = page.locator('text=Goal State').locator('..')
-    await expect(goalPanel).toBeVisible()
+    await expect(goalPanel(page)).toBeVisible()
     // Plain text (no fences) is rendered in a <p> block inside the panel.
-    await expect(goalPanel.locator('p, pre')).toContainText('⊢ a + b = b + a')
+    await expect(goalPanel(page).locator('p, pre')).toContainText('⊢ a + b = b + a')
   })
 
   test('goal panel displays multi-line goal text', async ({ page, mountApp }) => {
@@ -509,16 +515,12 @@ test.describe('GoalPanel', () => {
     await mountApp({ goalText: goal })
 
     await page.locator('.cm-content').click()
-    for (const line of LEAN_MULTI_STEP_PROOF.split('\n')) {
-      await page.keyboard.type(line)
-      await page.keyboard.press('Enter')
-    }
+    await typeMultiLine(page, LEAN_MULTI_STEP_PROOF)
     await page.locator('.cm-content').click()
 
-    const goalPanel = page.locator('text=Goal State').locator('..')
-    await expect(goalPanel).toBeVisible()
-    await expect(goalPanel).toContainText('case left')
-    await expect(goalPanel).toContainText('case right')
+    await expect(goalPanel(page)).toBeVisible()
+    await expect(goalPanel(page)).toContainText('case left')
+    await expect(goalPanel(page)).toContainText('case right')
   })
 
   test('fence delimiters are not shown when goal contains a fenced code block', async ({
@@ -531,12 +533,11 @@ test.describe('GoalPanel', () => {
     await page.locator('.cm-content').click()
     await page.locator('.cm-content').click()
 
-    const goalPanel = page.locator('text=Goal State').locator('..')
-    await expect(goalPanel).toBeVisible()
+    await expect(goalPanel(page)).toBeVisible()
     // The fence delimiters must not appear anywhere in the panel.
-    await expect(goalPanel).not.toContainText('```')
+    await expect(goalPanel(page)).not.toContainText('```')
     // The goal content itself must be visible inside a <pre> block.
-    await expect(goalPanel.locator('pre')).toContainText('⊢ a + b = b + a')
+    await expect(goalPanel(page).locator('pre')).toContainText('⊢ a + b = b + a')
   })
 
   test('prose outside fences is rendered separately from code content', async ({
@@ -549,12 +550,11 @@ test.describe('GoalPanel', () => {
     await page.locator('.cm-content').click()
     await page.locator('.cm-content').click()
 
-    const goalPanel = page.locator('text=Goal State').locator('..')
-    await expect(goalPanel).toBeVisible()
+    await expect(goalPanel(page)).toBeVisible()
     // Prose block rendered as <p>, code block rendered as <pre>.
-    await expect(goalPanel.locator('p')).toContainText('case intro')
-    await expect(goalPanel.locator('pre')).toContainText('⊢ True')
-    await expect(goalPanel).not.toContainText('```')
+    await expect(goalPanel(page).locator('p')).toContainText('case intro')
+    await expect(goalPanel(page).locator('pre')).toContainText('⊢ True')
+    await expect(goalPanel(page)).not.toContainText('```')
   })
 })
 
@@ -640,10 +640,7 @@ test.describe('Diagnostic underlines', () => {
     }
     await mountApp({ diagnostics: [diag] })
     await page.locator('.cm-content').click()
-    for (const line of LEAN_SIMPLE_THEOREM.split('\n')) {
-      await page.keyboard.type(line)
-      await page.keyboard.press('Enter')
-    }
+    await typeMultiLine(page, LEAN_SIMPLE_THEOREM)
     await emitEvent('lsp-diagnostics', [diag])
 
     await expect(page.locator('.cm-diag-info').first()).toBeVisible()
@@ -689,10 +686,7 @@ test.describe('Diagnostic underlines', () => {
     ]
     await mountApp({ diagnostics: diags })
     await page.locator('.cm-content').click()
-    for (const line of LEAN_SIMPLE_THEOREM.split('\n')) {
-      await page.keyboard.type(line)
-      await page.keyboard.press('Enter')
-    }
+    await typeMultiLine(page, LEAN_SIMPLE_THEOREM)
     await emitEvent('lsp-diagnostics', diags)
 
     await expect(page.locator('.cm-diag-error')).toHaveCount(1)
