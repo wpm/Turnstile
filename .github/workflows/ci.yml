@@ -67,25 +67,18 @@ jobs:
         working-directory: app
         run: npm run lint
 
-      - name: svelte-check
+      # npm run check = svelte-check (tsconfig.app.json) + tsc (tsconfig.node.json)
+      - name: svelte-check and TypeScript check (app + node)
         working-directory: app
-        run: npx svelte-check --tsconfig ./tsconfig.app.json
-
-      - name: TypeScript check (app)
-        working-directory: app
-        run: npx tsc --noEmit -p tsconfig.app.json
+        run: npm run check
 
       - name: TypeScript check (e2e)
         working-directory: app
         run: npx tsc --noEmit -p tsconfig.e2e.json
 
-      - name: TypeScript check (node)
-        working-directory: app
-        run: npx tsc --noEmit -p tsconfig.node.json
-
       - name: Knip (dead code detection)
         working-directory: app
-        run: npx knip
+        run: npm run knip
 
       # ── Rust checks ─────────────────────────────────────────────────────
       - name: cargo fmt --check
@@ -295,7 +288,9 @@ jobs:
   test-e2e:
     name: E2E Tests (Playwright)
     runs-on: macos-latest
-    needs: [test-unit, build]
+    # Playwright starts `npm run dev` (Vite dev server) as the web server;
+    # no compiled Tauri app required. Run after unit tests pass.
+    needs: [test-unit]
 
     steps:
       - uses: actions/checkout@v4
