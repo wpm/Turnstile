@@ -37,10 +37,12 @@ import {
   closeBracketsKeymap,
   autocompletion,
   completionKeymap,
+  type CompletionContext,
+  type CompletionResult,
 } from '@codemirror/autocomplete'
 import { searchKeymap, highlightSelectionMatches } from '@codemirror/search'
 import { lintKeymap } from '@codemirror/lint'
-import type { DiagnosticInfo, SemanticToken } from './tauri'
+import type { CompletionItem, DiagnosticInfo, SemanticToken } from './tauri'
 import { tokenTypeToCssClass } from './tokenTypes'
 import type { Theme } from './theme'
 
@@ -153,6 +155,44 @@ const diagnosticGutter = gutter({
 })
 
 // ---------------------------------------------------------------------------
+// LSP completion source
+// ---------------------------------------------------------------------------
+
+/** Invoke the Rust `get_completions` command and map results to CM6 completions. */
+async function lspCompletionSource(ctx: CompletionContext): Promise<CompletionResult | null> {
+  // Only trigger on an explicit request or when the user has typed a word character.
+  if (!ctx.explicit && !ctx.matchBefore(/\w+/)) return null
+
+  const pos = ctx.pos
+  const line = ctx.state.doc.lineAt(pos)
+  // LSP expects 0-indexed line and character
+  const lspLine = line.number - 1
+  const lspCol = pos - line.from
+
+  let items: CompletionItem[]
+  try {
+    items = (await window.__TAURI__.core.invoke('get_completions', {
+      line: lspLine,
+      col: lspCol,
+    })) as CompletionItem[]
+  } catch {
+    return null
+  }
+
+  if (items.length === 0) return null
+
+  const word = ctx.matchBefore(/\w*/)
+  return {
+    from: word ? word.from : pos,
+    options: items.map((item) => ({
+      label: item.label,
+      ...(item.detail != null && { detail: item.detail }),
+      apply: item.insert_text ?? item.label,
+    })),
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Public interface
 // ---------------------------------------------------------------------------
 
@@ -242,7 +282,7 @@ export function mountEditor(
         syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
         bracketMatching(),
         closeBrackets(),
-        autocompletion(),
+        autocompletion({ override: [lspCompletionSource] }),
         rectangularSelection(),
         crosshairCursor(),
         highlightActiveLine(),

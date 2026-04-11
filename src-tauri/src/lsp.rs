@@ -44,6 +44,17 @@ pub struct LspStatus {
     pub message: String,
 }
 
+/// A single completion candidate from `textDocument/completion`.
+#[derive(Clone, Serialize)]
+pub struct CompletionItem {
+    /// The text shown in the completion menu.
+    pub label: String,
+    /// Brief type or kind information (e.g. "theorem", "def", "(def)").
+    pub detail: Option<String>,
+    /// The text inserted when the completion is accepted; falls back to `label`.
+    pub insert_text: Option<String>,
+}
+
 // ── LSP Client ────────────────────────────────────────────────────────
 
 pub struct LspClient {
@@ -330,6 +341,13 @@ pub fn initialize_params(root_uri: &str) -> Value {
                     "formats": ["relative"],
                     "multilineTokenSupport": false,
                     "overlappingTokenSupport": false
+                },
+                "completion": {
+                    "completionItem": {
+                        "snippetSupport": false,
+                        "documentationFormat": ["plaintext"]
+                    },
+                    "contextSupport": false
                 }
             },
             "experimental": {
@@ -428,6 +446,36 @@ pub fn decode_semantic_tokens(data: &[u32], legend: &[String]) -> Vec<SemanticTo
     }
 
     tokens
+}
+
+/// Parse a `textDocument/completion` response into a list of completion items.
+///
+/// The LSP response is either a `CompletionList` (`{ items: [...] }`) or a bare
+/// `CompletionItem[]`. Both shapes are handled here.
+pub fn parse_completion_items(result: &Value) -> Vec<CompletionItem> {
+    let items = result
+        .get("items")
+        .and_then(Value::as_array)
+        .or_else(|| result.as_array())
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+
+    items
+        .iter()
+        .filter_map(|item| {
+            let label = item.get("label")?.as_str()?.to_string();
+            let detail = item.get("detail").and_then(Value::as_str).map(String::from);
+            let insert_text = item
+                .get("insertText")
+                .and_then(Value::as_str)
+                .map(String::from);
+            Some(CompletionItem {
+                label,
+                detail,
+                insert_text,
+            })
+        })
+        .collect()
 }
 
 /// Parse `{ "start": { "line": u32, "character": u32 }, "end": { ... } }`.
@@ -586,5 +634,57 @@ mod tests {
         let data = vec![0, 0, 5, 99, 0]; // index 99 out of bounds
         let tokens = decode_semantic_tokens(&data, &legend);
         assert_eq!(tokens[0].token_type, "variable");
+    }
+
+    #[test]
+    fn parse_completion_items_from_list_object() {
+        let result = json!({
+            "isIncomplete": false,
+            "items": [
+                { "label": "theorem", "detail": "keyword", "insertText": "theorem" },
+                { "label": "Nat.succ", "detail": "Nat → Nat" }
+            ]
+        });
+        let items = parse_completion_items(&result);
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].label, "theorem");
+        assert_eq!(items[0].detail.as_deref(), Some("keyword"));
+        assert_eq!(items[0].insert_text.as_deref(), Some("theorem"));
+        assert_eq!(items[1].label, "Nat.succ");
+        assert_eq!(items[1].detail.as_deref(), Some("Nat → Nat"));
+        assert!(items[1].insert_text.is_none());
+    }
+
+    #[test]
+    fn parse_completion_items_from_bare_array() {
+        let result = json!([
+            { "label": "def" },
+            { "label": "lemma", "detail": "keyword" }
+        ]);
+        let items = parse_completion_items(&result);
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].label, "def");
+        assert!(items[0].detail.is_none());
+        assert_eq!(items[1].label, "lemma");
+    }
+
+    #[test]
+    fn parse_completion_items_empty_returns_empty() {
+        let result = json!({ "items": [] });
+        assert!(parse_completion_items(&result).is_empty());
+    }
+
+    #[test]
+    fn parse_completion_items_null_returns_empty() {
+        assert!(parse_completion_items(&json!(null)).is_empty());
+    }
+
+    #[test]
+    fn initialize_params_declares_completion_capability() {
+        let params = initialize_params("file:///tmp");
+        assert_eq!(
+            params["capabilities"]["textDocument"]["completion"]["completionItem"]["snippetSupport"],
+            false
+        );
     }
 }

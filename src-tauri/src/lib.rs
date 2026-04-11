@@ -21,7 +21,7 @@ use std::sync::{Arc, Mutex};
 use serde_json::json;
 use tauri::{AppHandle, Emitter, Manager};
 
-use lsp::{LspClient, LspStatus};
+use lsp::{CompletionItem, LspClient, LspStatus};
 
 struct AppState {
     lsp_client: Arc<tokio::sync::Mutex<Option<LspClient>>>,
@@ -236,6 +236,34 @@ async fn get_goal_state(app: AppHandle, line: u32, col: u32) -> Result<String, S
     Ok(rendered)
 }
 
+#[tauri::command]
+#[allow(clippy::significant_drop_tightening)] // lock must be held while awaiting on client
+async fn get_completions(
+    app: AppHandle,
+    line: u32,
+    col: u32,
+) -> Result<Vec<CompletionItem>, String> {
+    let state = app.state::<AppState>();
+    let lock = state.lsp_client.lock().await;
+
+    let Some(client) = lock.as_ref() else {
+        return Ok(Vec::new());
+    };
+
+    let doc_uri = state.doc_uri();
+    let result = client
+        .send_request_await(
+            "textDocument/completion",
+            json!({
+                "textDocument": { "uri": doc_uri },
+                "position": { "line": line, "character": col },
+            }),
+        )
+        .await?;
+
+    Ok(lsp::parse_completion_items(&result))
+}
+
 fn handle_lsp_message(
     app: &AppHandle,
     token_types: &Arc<Mutex<Vec<String>>>,
@@ -358,6 +386,7 @@ pub fn run() {
             start_lsp,
             update_document,
             get_goal_state,
+            get_completions,
         ])
         .run(tauri::generate_context!())
         .expect("error while running turnstile");

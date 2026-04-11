@@ -22,6 +22,12 @@ export interface SemanticToken {
   token_type: string
 }
 
+export interface CompletionItem {
+  label: string
+  detail: string | null
+  insert_text: string | null
+}
+
 // window.__TAURI__ is injected by Tauri when withGlobalTauri: true
 declare global {
   interface Window {

@@ -5,6 +5,7 @@ import {
   LEAN_DEFINITION,
   LEAN_WITH_ERROR,
   LEAN_MULTI_STEP_PROOF,
+  type CompletionItemFixture,
   type DiagnosticInfoFixture,
   type SemanticTokenFixture,
 } from './fixtures'
@@ -366,6 +367,110 @@ test.describe('Diagnostic gutter markers', () => {
 
     await expect(page.locator('.lean-diag-error')).toHaveCount(1)
     await expect(page.locator('.lean-diag-warning')).toHaveCount(1)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Tab completion
+// ---------------------------------------------------------------------------
+
+test.describe('Tab completion', () => {
+  /** Shared completion items used across multiple tests. */
+  const COMPLETIONS: CompletionItemFixture[] = [
+    { label: 'theorem', detail: 'keyword', insert_text: 'theorem' },
+    { label: 'Nat.succ', detail: 'Nat → Nat', insert_text: null },
+    { label: 'List.map', detail: 'List α → (α → β) → List β', insert_text: null },
+  ]
+
+  test('completion menu appears after typing a word character', async ({ page, mountApp }) => {
+    await mountApp({ completionItems: COMPLETIONS })
+    await page.locator('.cm-content').click()
+    await page.keyboard.type('th')
+    // The CM6 autocompletion tooltip
+    await expect(page.locator('.cm-tooltip-autocomplete')).toBeVisible()
+  })
+
+  test('completion menu lists items returned by get_completions', async ({
+    page,
+    mountApp,
+  }) => {
+    await mountApp({ completionItems: COMPLETIONS })
+    const editor = page.locator('.cm-content')
+    await editor.click()
+    // Ctrl+Space triggers an explicit completion request with no prefix filter,
+    // so all three items from the mock should appear.
+    await page.keyboard.press('Control+Space')
+    const menu = page.locator('.cm-tooltip-autocomplete')
+    await expect(menu).toBeVisible()
+    await expect(menu).toContainText('theorem')
+    await expect(menu).toContainText('Nat.succ')
+    await expect(menu).toContainText('List.map')
+  })
+
+  test('completion detail is shown alongside the label', async ({ page, mountApp }) => {
+    await mountApp({ completionItems: COMPLETIONS })
+    await page.locator('.cm-content').click()
+    await page.keyboard.type('Na')
+    await expect(page.locator('.cm-tooltip-autocomplete')).toBeVisible()
+    // CM6 renders the detail in a .cm-completionDetail span next to the label
+    await expect(page.locator('.cm-completionDetail').first()).toBeVisible()
+  })
+
+  test('clicking a completion item inserts its label', async ({
+    page,
+    mountApp,
+  }) => {
+    const items: CompletionItemFixture[] = [{ label: 'theorem', detail: 'keyword', insert_text: null }]
+    await mountApp({ completionItems: items })
+    const editor = page.locator('.cm-content')
+    await editor.click()
+    await page.keyboard.type('th')
+    // Wait for the item to appear in the menu
+    const option = page.locator('.cm-tooltip-autocomplete [role=option]').filter({ hasText: 'theorem' })
+    await expect(option).toBeVisible()
+    await option.click()
+    await expect(editor).toContainText('theorem')
+    await expect(page.locator('.cm-tooltip-autocomplete')).not.toBeVisible()
+  })
+
+  test('insert_text is used instead of label when present', async ({ page, mountApp }) => {
+    const items: CompletionItemFixture[] = [
+      { label: 'mkApp', detail: 'Expr → Expr → Expr', insert_text: 'mkApp f a' },
+    ]
+    await mountApp({ completionItems: items })
+    const editor = page.locator('.cm-content')
+    await editor.click()
+    await page.keyboard.type('mk')
+    // Click the option to accept it
+    const option = page.locator('.cm-tooltip-autocomplete [role=option]').filter({ hasText: 'mkApp' })
+    await expect(option).toBeVisible()
+    await option.click()
+    await expect(editor).toContainText('mkApp f a')
+  })
+
+  test('Escape closes the completion menu without inserting', async ({ page, mountApp }) => {
+    await mountApp({ completionItems: COMPLETIONS })
+    const editor = page.locator('.cm-content')
+    await editor.click()
+    await page.keyboard.type('Na')
+    await expect(page.locator('.cm-tooltip-autocomplete')).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(page.locator('.cm-tooltip-autocomplete')).not.toBeVisible()
+    // Editor still shows what was typed — nothing was inserted
+    await expect(editor).toContainText('Na')
+  })
+
+  test('completion menu does not appear when get_completions returns empty', async ({
+    page,
+    mountApp,
+  }) => {
+    await mountApp({ completionItems: [] })
+    const editor = page.locator('.cm-content')
+    await editor.click()
+    await page.keyboard.type('th')
+    // Give CM6 time to call the source and render (or not)
+    await page.waitForTimeout(300)
+    await expect(page.locator('.cm-tooltip-autocomplete')).not.toBeVisible()
   })
 })
 
