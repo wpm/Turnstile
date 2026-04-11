@@ -1,1 +1,1 @@
-cd app && npx lint-staged && npx tsc --noEmit -p tsconfig.app.json && npx tsc --noEmit -p tsconfig.e2e.json && npx knip
+cd app && npx lint-staged && npx tsc --noEmit -p tsconfig.app.json && npx tsc --noEmit -p tsconfig.e2e.json && npx tsc --noEmit -p tsconfig.node.json && npx knip
