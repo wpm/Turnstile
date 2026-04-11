@@ -10,17 +10,9 @@
     diagnostics?: DiagnosticInfo[] | null
     semanticTokens?: SemanticToken[] | null
     onchange: (content: string) => void
-    oncursormove: (line: number, col: number) => void
   }
 
-  let {
-    initialTheme,
-    theme,
-    diagnostics = null,
-    semanticTokens = null,
-    onchange,
-    oncursormove,
-  }: Props = $props()
+  let { initialTheme, theme, diagnostics = null, semanticTokens = null, onchange }: Props = $props()
 
   let container: HTMLDivElement
   let handle = $state<ReturnType<typeof mountEditor> | null>(null)
@@ -38,7 +30,7 @@
   })
 
   onMount(() => {
-    handle = mountEditor(container, initialTheme, onchange, oncursormove)
+    handle = mountEditor(container, initialTheme, onchange)
   })
 
   onDestroy(() => {

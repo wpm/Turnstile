@@ -31,11 +31,6 @@ function themeToggleBtn(page: Page): Locator {
   return page.locator('button').filter({ hasText: /[☀☾]/ })
 }
 
-/** Locator for the GoalPanel container element. */
-function goalPanel(page: Page): Locator {
-  return page.locator('text=Goal State').locator('..')
-}
-
 // ---------------------------------------------------------------------------
 // Setup overlay
 // ---------------------------------------------------------------------------
@@ -481,80 +476,6 @@ test.describe('Tab completion', () => {
     // Give CM6 time to call the source and render (or not)
     await page.waitForTimeout(300)
     await expect(page.locator('.cm-tooltip-autocomplete')).not.toBeVisible()
-  })
-})
-
-// ---------------------------------------------------------------------------
-// Goal panel
-// ---------------------------------------------------------------------------
-
-test.describe('GoalPanel', () => {
-  test('goal panel is hidden when no goal is active', async ({ page, mountApp }) => {
-    await mountApp({ goalText: '' })
-    // The panel only renders when visible=true; assert the "Goal State" label is absent.
-    await expect(page.locator('text=Goal State')).not.toBeVisible()
-  })
-
-  test('goal panel appears after cursor moves to a proof line', async ({ page, mountApp }) => {
-    await mountApp({ goalText: '⊢ a + b = b + a' })
-
-    await page.locator('.cm-content').click()
-    await typeMultiLine(page, LEAN_SIMPLE_THEOREM)
-
-    // Click inside the proof body to trigger a cursor-move event.
-    // The mock always returns goalText, so the panel should appear.
-    await page.locator('.cm-content').click()
-
-    await expect(goalPanel(page)).toBeVisible()
-    // Plain text (no fences) is rendered in a <p> block inside the panel.
-    await expect(goalPanel(page).locator('p, pre')).toContainText('⊢ a + b = b + a')
-  })
-
-  test('goal panel displays multi-line goal text', async ({ page, mountApp }) => {
-    const goal = 'case left\n⊢ p\ncase right\n⊢ q'
-    await mountApp({ goalText: goal })
-
-    await page.locator('.cm-content').click()
-    await typeMultiLine(page, LEAN_MULTI_STEP_PROOF)
-    await page.locator('.cm-content').click()
-
-    await expect(goalPanel(page)).toBeVisible()
-    await expect(goalPanel(page)).toContainText('case left')
-    await expect(goalPanel(page)).toContainText('case right')
-  })
-
-  test('fence delimiters are not shown when goal contains a fenced code block', async ({
-    page,
-    mountApp,
-  }) => {
-    // The Lean LSP wraps goal text in a fenced code block.
-    await mountApp({ goalText: '```lean\n⊢ a + b = b + a\n```' })
-
-    await page.locator('.cm-content').click()
-    await page.locator('.cm-content').click()
-
-    await expect(goalPanel(page)).toBeVisible()
-    // The fence delimiters must not appear anywhere in the panel.
-    await expect(goalPanel(page)).not.toContainText('```')
-    // The goal content itself must be visible inside a <pre> block.
-    await expect(goalPanel(page).locator('pre')).toContainText('⊢ a + b = b + a')
-  })
-
-  test('prose outside fences is rendered separately from code content', async ({
-    page,
-    mountApp,
-  }) => {
-    // Lean sometimes emits a case label as prose before the fenced goal.
-    await mountApp({ goalText: 'case intro\n```lean\n⊢ True\n```' })
-
-    await page.locator('.cm-content').click()
-    await page.locator('.cm-content').click()
-
-    await expect(goalPanel(page)).toBeVisible()
-    // Prose block rendered as <p>, code block rendered as <pre>.
-    await expect(goalPanel(page).locator('p')).toContainText('case intro')
-    await expect(goalPanel(page).locator('pre')).toContainText('⊢ True')
-    await expect(goalPanel(page)).not.toContainText('```')
   })
 })
 

@@ -362,18 +362,11 @@ export function mountEditor(
   container: HTMLElement,
   initialTheme: Theme,
   onChange: (content: string) => void,
-  onCursorMove: (line: number, col: number) => void,
 ): EditorHandle {
   const themeCompartment = new Compartment()
   const updateListener = EditorView.updateListener.of((update: ViewUpdate) => {
     if (update.docChanged) {
       onChange(update.state.doc.toString())
-    }
-    if (update.selectionSet) {
-      const pos = update.state.selection.main.head
-      const line = update.state.doc.lineAt(pos)
-      // get_goal_state expects 0-indexed line/col (LSP convention)
-      onCursorMove(line.number - 1, pos - line.from)
     }
   })
 

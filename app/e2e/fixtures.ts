@@ -42,8 +42,6 @@ export interface TauriMockOptions {
   diagnostics?: DiagnosticInfoFixture[]
   /** Semantic tokens to emit via lsp-semantic-tokens event (default []) */
   semanticTokens?: SemanticTokenFixture[]
-  /** Goal text returned by get_goal_state (default '') */
-  goalText?: string
   /** Items returned by get_completions (default []) */
   completionItems?: CompletionItemFixture[]
 }
@@ -75,16 +73,10 @@ export interface CompletionItemFixture {
  * Must be called in a `page.addInitScript` before navigation.
  */
 export async function injectTauriMock(page: Page, opts: TauriMockOptions = {}): Promise<void> {
-  const {
-    setupComplete = true,
-    diagnostics = [],
-    semanticTokens = [],
-    goalText = '',
-    completionItems = [],
-  } = opts
+  const { setupComplete = true, diagnostics = [], semanticTokens = [], completionItems = [] } = opts
 
   await page.addInitScript(
-    ({ setupComplete, diagnostics, semanticTokens, goalText, completionItems }) => {
+    ({ setupComplete, diagnostics, semanticTokens, completionItems }) => {
       type Listener = (e: { payload: unknown }) => void
       const listeners = new Map<string, Listener[]>()
 
@@ -103,7 +95,6 @@ export async function injectTauriMock(page: Page, opts: TauriMockOptions = {}): 
             if (cmd === 'start_setup') return Promise.resolve(null)
             if (cmd === 'start_lsp') return Promise.resolve(null)
             if (cmd === 'update_document') return Promise.resolve(null)
-            if (cmd === 'get_goal_state') return Promise.resolve(goalText || null)
             if (cmd === 'get_completions') return Promise.resolve(completionItems)
             return Promise.resolve(null)
           },
@@ -137,7 +128,7 @@ export async function injectTauriMock(page: Page, opts: TauriMockOptions = {}): 
         },
       }
     },
-    { setupComplete, diagnostics, semanticTokens, goalText, completionItems },
+    { setupComplete, diagnostics, semanticTokens, completionItems },
   )
 }
 

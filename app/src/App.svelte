@@ -3,12 +3,9 @@
   import { invoke, listen } from './lib/tauri'
   import type { SetupProgressPayload, DiagnosticInfo, SemanticToken } from './lib/tauri'
   import Editor from './components/Editor.svelte'
-  import GoalPanel from './components/GoalPanel.svelte'
   import SetupOverlay from './components/SetupOverlay.svelte'
   import { theme, toggleTheme } from './lib/theme'
 
-  let goalText = $state('')
-  let goalVisible = $state(false)
   let setupVisible = $state(true)
   let setupMessage = $state('Checking Lean installation...')
   let setupProgress = $state(0)
@@ -20,16 +17,6 @@
     invoke('update_document', { content }).catch(() => {
       /* LSP not yet connected */
     })
-  }
-
-  async function handleCursorMove(line: number, col: number): Promise<void> {
-    try {
-      const rendered = await invoke<string | null>('get_goal_state', { line, col })
-      goalText = rendered ?? ''
-      goalVisible = !!goalText
-    } catch {
-      // LSP not yet connected; ignore
-    }
   }
 
   onMount(() => {
@@ -105,7 +92,6 @@
     {diagnostics}
     {semanticTokens}
     onchange={handleChange}
-    oncursormove={handleCursorMove}
   />
 </div>
 
@@ -121,5 +107,3 @@
 >
   {$theme === 'dracula' ? '☀' : '☾'}
 </button>
-
-<GoalPanel goal={goalText} visible={goalVisible} />
