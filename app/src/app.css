@@ -1,5 +1,6 @@
-@import 'tailwindcss';
-@import './styles/lean.css';
+@import "tailwindcss";
+@import "./styles/lean.css";
+@import "katex/dist/katex.min.css";
 
 * {
   margin: 0;

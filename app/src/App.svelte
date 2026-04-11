@@ -4,6 +4,7 @@
   import type { SetupProgressPayload, DiagnosticInfo, SemanticToken } from './lib/tauri'
   import Editor from './components/Editor.svelte'
   import SetupOverlay from './components/SetupOverlay.svelte'
+  import ChatPanel from './components/ChatPanel.svelte'
   import { theme, toggleTheme } from './lib/theme'
 
   let setupVisible = $state(true)
@@ -81,18 +82,30 @@
 />
 
 <div
-  class="fixed inset-0"
+  class="fixed inset-0 flex"
   class:bg-[#282a36]={$theme === 'dracula'}
   class:bg-white={$theme === 'light'}
   data-theme={$theme}
 >
-  <Editor
-    initialTheme={$theme}
-    theme={$theme}
-    {diagnostics}
-    {semanticTokens}
-    onchange={handleChange}
-  />
+  <!-- Editor column (takes remaining space) -->
+  <div class="flex-1 min-w-0">
+    <Editor
+      initialTheme={$theme}
+      theme={$theme}
+      {diagnostics}
+      {semanticTokens}
+      onchange={handleChange}
+    />
+  </div>
+
+  <!-- Chat panel column (fixed width, themed border) -->
+  <div
+    class="w-80 flex flex-col border-l"
+    class:border-[#44475a]={$theme === 'dracula'}
+    class:border-[#d0d7de]={$theme === 'light'}
+  >
+    <ChatPanel theme={$theme} />
+  </div>
 </div>
 
 <button

@@ -127,6 +127,36 @@ export async function injectTauriMock(page: Page, opts: TauriMockOptions = {}): 
           },
         },
       }
+
+      // Patch invoke to handle chat commands and auto-fire chat-message-complete.
+      type TauriInvoke = (cmd: string, args?: unknown) => Promise<unknown>
+      const tauri = window.__TAURI__ as { core: { invoke: TauriInvoke } }
+      const originalInvoke: TauriInvoke = tauri.core.invoke.bind(tauri.core)
+      tauri.core.invoke = function (cmd: string, args?: unknown) {
+        if (cmd === 'send_chat_message') {
+          const content = (args as { content?: string } | undefined)?.content ?? ''
+          // Fire chat-message-complete on the next tick (echo mock)
+          void Promise.resolve().then(() => {
+            for (const cb of listeners.get('chat-message-complete') ?? []) {
+              cb({
+                payload: {
+                  role: 'assistant',
+                  content: `[echo] ${content}`,
+                  timestamp: Date.now(),
+                },
+              })
+            }
+          })
+          return Promise.resolve(null)
+        }
+        if (cmd === 'get_chat_state') {
+          return Promise.resolve({ summary: null, transcript: [] })
+        }
+        if (cmd === 'load_chat_state') {
+          return Promise.resolve(null)
+        }
+        return originalInvoke(cmd, args)
+      }
     },
     { setupComplete, diagnostics, semanticTokens, completionItems },
   )

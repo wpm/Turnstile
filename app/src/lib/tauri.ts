@@ -28,6 +28,12 @@ export interface CompletionItem {
   insert_text: string | null
 }
 
+export interface ChatTurn {
+  role: 'user' | 'assistant'
+  content: string
+  timestamp: number
+}
+
 // window.__TAURI__ is injected by Tauri when withGlobalTauri: true
 declare global {
   interface Window {

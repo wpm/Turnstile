@@ -11,6 +11,7 @@
 //! Cursor move → `get_goal_state` → `$/lean/plainGoal` (awaited) → response
 //! `{ "rendered": "..." }` → frontend goal panel.
 
+pub mod chat;
 pub mod lsp;
 mod setup;
 
@@ -23,7 +24,7 @@ use tauri::{AppHandle, Emitter, Manager};
 
 use lsp::{CompletionItem, LspClient, LspStatus};
 
-struct AppState {
+pub struct AppState {
     lsp_client: Arc<tokio::sync::Mutex<Option<LspClient>>>,
     /// Absolute path to the managed Lean project directory
     project_path: PathBuf,
@@ -31,6 +32,10 @@ struct AppState {
     doc_version: AtomicI64,
     /// Whether setup is currently running (prevents double-start); shared with the setup task
     setup_running: Arc<AtomicBool>,
+    /// Chat conversation state, shared with Tauri command handlers.
+    pub chat_state: Arc<tokio::sync::Mutex<chat::ChatState>>,
+    /// LLM backend (mock or real Anthropic).
+    pub chat_backend: Arc<dyn chat::ChatBackend>,
 }
 
 impl AppState {
@@ -364,11 +369,25 @@ pub fn run() {
                 .expect("Failed to resolve app data directory")
                 .join("lean-project");
 
+            #[cfg(feature = "mock-llm")]
+            let chat_backend: Arc<dyn chat::ChatBackend> =
+                Arc::new(chat::MockBackend::from_env());
+
+            #[cfg(not(feature = "mock-llm"))]
+            let chat_backend: Arc<dyn chat::ChatBackend> = {
+                match chat::AnthropicBackend::from_env() {
+                    Ok(b) => Arc::new(b),
+                    Err(_) => Arc::new(chat::MockBackend::echo()),
+                }
+            };
+
             app.manage(AppState {
                 lsp_client: Arc::new(tokio::sync::Mutex::new(None)),
                 project_path,
                 doc_version: AtomicI64::new(2),
                 setup_running: Arc::new(AtomicBool::new(false)),
+                chat_state: Arc::new(tokio::sync::Mutex::new(chat::ChatState::default())),
+                chat_backend,
             });
 
             Ok(())
@@ -387,6 +406,9 @@ pub fn run() {
             update_document,
             get_goal_state,
             get_completions,
+            chat::send_chat_message,
+            chat::get_chat_state,
+            chat::load_chat_state,
         ])
         .run(tauri::generate_context!())
         .expect("error while running turnstile");
