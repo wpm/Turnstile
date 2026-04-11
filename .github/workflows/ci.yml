@@ -260,10 +260,14 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
+            ~/.cargo/bin/cargo-tauri
             src-tauri/target
           key: rust-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             rust-${{ runner.os }}-
+
+      - name: Install cargo-tauri
+        run: cargo install tauri-cli --locked
 
       - name: Build frontend
         working-directory: app
