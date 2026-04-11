@@ -4,13 +4,19 @@ import { test as base, type Page } from '@playwright/test'
 // Lean code snippet fixtures — reused across tests
 // ---------------------------------------------------------------------------
 
+/** First line of LEAN_SIMPLE_THEOREM (the theorem declaration). */
+export const LEAN_SIMPLE_THEOREM_LINE1 = 'theorem add_comm_simple (a b : Nat) : a + b = b + a := by'
+
 /** A simple theorem with one tactic proof step. */
-export const LEAN_SIMPLE_THEOREM = `theorem add_comm_simple (a b : Nat) : a + b = b + a := by
+export const LEAN_SIMPLE_THEOREM = `${LEAN_SIMPLE_THEOREM_LINE1}
   ring`
+
+/** Second line of LEAN_DEFINITION (the actual definition, skipping the comment). */
+export const LEAN_DEFINITION_LINE2 = 'def identity (x : α) : α := x'
 
 /** A definition with a doc comment. */
 export const LEAN_DEFINITION = `-- A simple identity function
-def identity (x : α) : α := x`
+${LEAN_DEFINITION_LINE2}`
 
 /** Code with a deliberate type error to trigger a diagnostic. */
 export const LEAN_WITH_ERROR = `def badType : Nat := "this is not a nat"`
@@ -83,15 +89,12 @@ export async function injectTauriMock(page: Page, opts: TauriMockOptions = {}): 
       const listeners = new Map<string, Listener[]>()
 
       // Expose a helper so tests can fire LSP events from outside.
-      ;(window as unknown as Record<string, unknown>)['__tauriEmit'] = (
-        event: string,
-        payload: unknown,
-      ) => {
+      window.__tauriEmit = (event: string, payload: unknown) => {
         for (const cb of listeners.get(event) ?? []) {
           cb({ payload })
         }
       }
-      ;(window as unknown as Record<string, unknown>)['__TAURI__'] = {
+      window.__TAURI__ = {
         core: {
           invoke(cmd: string) {
             if (cmd === 'get_setup_status') {
@@ -163,10 +166,7 @@ export const test = base.extend<AppFixtures>({
     await use(async (event: string, payload: unknown) => {
       await page.evaluate(
         ({ event, payload }) => {
-          ;(window as unknown as Record<string, (e: string, p: unknown) => void>)['__tauriEmit']!(
-            event,
-            payload,
-          )
+          window.__tauriEmit(event, payload)
         },
         { event, payload },
       )

@@ -3,7 +3,9 @@ import {
   test,
   expect,
   LEAN_SIMPLE_THEOREM,
+  LEAN_SIMPLE_THEOREM_LINE1,
   LEAN_DEFINITION,
+  LEAN_DEFINITION_LINE2,
   LEAN_WITH_ERROR,
   LEAN_MULTI_STEP_PROOF,
   type AppFixtures,
@@ -22,8 +24,8 @@ test.describe('SetupOverlay', () => {
     await page.addInitScript(() => {
       let resolveLsp!: () => void
       const lspReady = new Promise<void>((r) => (resolveLsp = r))
-      ;(window as unknown as Record<string, unknown>)['__resolveLsp'] = resolveLsp
-      ;(window as unknown as Record<string, unknown>)['__TAURI__'] = {
+      window.__resolveLsp = resolveLsp
+      window.__TAURI__ = {
         core: {
           invoke(cmd: string) {
             if (cmd === 'get_setup_status') {
@@ -190,7 +192,7 @@ test.describe('Semantic token highlighting', () => {
 
     // Type the fixture into the editor so the token positions are valid.
     await page.locator('.cm-content').click()
-    await page.keyboard.type(LEAN_DEFINITION.split('\n')[1]!) // skip comment line
+    await page.keyboard.type(LEAN_DEFINITION_LINE2) // skip comment line
 
     // Emit updated tokens after typing
     await emitEvent('lsp-semantic-tokens', tokens)
@@ -221,7 +223,7 @@ test.describe('Semantic token highlighting', () => {
     await mountApp({ semanticTokens: tokens })
 
     await page.locator('.cm-content').click()
-    await page.keyboard.type(LEAN_SIMPLE_THEOREM.split('\n')[0]!)
+    await page.keyboard.type(LEAN_SIMPLE_THEOREM_LINE1)
     await emitEvent('lsp-semantic-tokens', tokens)
 
     await expect(page.locator('.cm-lean-keyword').first()).toBeVisible()
@@ -582,7 +584,10 @@ const WARNING_DIAG: DiagnosticInfoFixture = {
   message: 'unused variable',
 }
 
-interface DiagFixtures { mountApp: AppFixtures['mountApp']; emitEvent: AppFixtures['emitEvent'] }
+interface DiagFixtures {
+  mountApp: AppFixtures['mountApp']
+  emitEvent: AppFixtures['emitEvent']
+}
 
 /** Type LEAN_WITH_ERROR into the editor then emit a single error diagnostic. */
 async function setupErrorDiag(
@@ -600,7 +605,7 @@ async function setupErrorDiag(
 async function setupWarningDiag(page: Page, { mountApp, emitEvent }: DiagFixtures): Promise<void> {
   await mountApp({ diagnostics: [WARNING_DIAG] })
   await page.locator('.cm-content').click()
-  await page.keyboard.type(LEAN_DEFINITION.split('\n')[1]!)
+  await page.keyboard.type(LEAN_DEFINITION_LINE2)
   await emitEvent('lsp-diagnostics', [WARNING_DIAG])
 }
 
