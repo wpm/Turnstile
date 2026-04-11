@@ -160,11 +160,7 @@ pub trait ChatBackend: Send + Sync {
 
 /// Rough token estimate: 4 characters ≈ 1 token.
 pub fn token_estimate(state: &ChatState) -> usize {
-    let summary_tokens = state
-        .summary
-        .as_deref()
-        .map(|s| s.len() / 4)
-        .unwrap_or(0);
+    let summary_tokens = state.summary.as_deref().map(|s| s.len() / 4).unwrap_or(0);
     let turn_tokens: usize = state.transcript.iter().map(|t| t.content.len() / 4).sum();
     summary_tokens + turn_tokens
 }
@@ -332,8 +328,8 @@ impl AnthropicBackend {
     pub fn from_env() -> Result<Self, String> {
         let api_key = std::env::var("ANTHROPIC_API_KEY")
             .map_err(|_| "ANTHROPIC_API_KEY environment variable not set".to_string())?;
-        let model = std::env::var("TURNSTILE_MODEL")
-            .unwrap_or_else(|_| "claude-sonnet-4-6".to_string());
+        let model =
+            std::env::var("TURNSTILE_MODEL").unwrap_or_else(|_| "claude-sonnet-4-6".to_string());
         Ok(Self {
             api_key,
             model,
@@ -514,9 +510,7 @@ pub async fn send_chat_message(
 
 /// Return the current chat state (for save-file serialisation).
 #[tauri::command]
-pub async fn get_chat_state(
-    state: tauri::State<'_, crate::AppState>,
-) -> Result<ChatState, String> {
+pub async fn get_chat_state(state: tauri::State<'_, crate::AppState>) -> Result<ChatState, String> {
     Ok(state.chat_state.lock().await.clone())
 }
 
@@ -584,9 +578,13 @@ mod tests {
     fn token_estimate_scales_with_turns() {
         let mut state = ChatState::default();
         let e0 = token_estimate(&state);
-        state.transcript.push(make_turn(Role::User, "a".repeat(400).as_str()));
+        state
+            .transcript
+            .push(make_turn(Role::User, "a".repeat(400).as_str()));
         let e1 = token_estimate(&state);
-        state.transcript.push(make_turn(Role::Assistant, "b".repeat(400).as_str()));
+        state
+            .transcript
+            .push(make_turn(Role::Assistant, "b".repeat(400).as_str()));
         let e2 = token_estimate(&state);
         assert!(e0 < e1, "estimate should grow with turns");
         assert!(e1 < e2, "estimate should grow with turns");
@@ -636,7 +634,9 @@ mod tests {
         // 4 turns → cut = max(4*3/4, 1) = 3 → 3 removed, 1 remains
         let mut state = ChatState::default();
         for i in 0..4 {
-            state.transcript.push(make_turn(Role::User, &format!("turn {i}")));
+            state
+                .transcript
+                .push(make_turn(Role::User, &format!("turn {i}")));
         }
         let cut = (state.transcript.len() * 3 / 4).max(1);
         let _ = state.transcript.drain(..cut).collect::<Vec<_>>();
@@ -654,7 +654,11 @@ mod tests {
             let cut = (n * 3 / 4).max(1);
             state.transcript.drain(..cut);
         }
-        assert_eq!(state.transcript.len(), 1, "single turn should not be summarised");
+        assert_eq!(
+            state.transcript.len(),
+            1,
+            "single turn should not be summarised"
+        );
     }
 
     #[test]
@@ -664,7 +668,9 @@ mod tests {
             ..Default::default()
         };
         // 300 chars / 4 = 75 tokens — exactly at 75 % of 100
-        state.transcript.push(make_turn(Role::User, &"a".repeat(300)));
+        state
+            .transcript
+            .push(make_turn(Role::User, &"a".repeat(300)));
         assert!(token_estimate(&state) >= state.max_tokens * 3 / 4);
     }
 }

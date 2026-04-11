@@ -370,8 +370,7 @@ pub fn run() {
                 .join("lean-project");
 
             #[cfg(feature = "mock-llm")]
-            let chat_backend: Arc<dyn chat::ChatBackend> =
-                Arc::new(chat::MockBackend::from_env());
+            let chat_backend: Arc<dyn chat::ChatBackend> = Arc::new(chat::MockBackend::from_env());
 
             #[cfg(not(feature = "mock-llm"))]
             let chat_backend: Arc<dyn chat::ChatBackend> = {
