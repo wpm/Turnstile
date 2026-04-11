@@ -1,0 +1,337 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel in-progress runs for the same branch/PR.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  # ── Lint & Format ──────────────────────────────────────────────────────
+  lint-and-format:
+    name: Lint & Format
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── Node setup ──────────────────────────────────────────────────────
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: app/package.json
+          node-version: "22"
+
+      - name: Cache node modules
+        uses: actions/cache@v4
+        with:
+          path: app/node_modules
+          key: node-modules-${{ runner.os }}-${{ hashFiles('app/package-lock.json') }}
+          restore-keys: |
+            node-modules-${{ runner.os }}-
+
+      - name: Install frontend dependencies
+        working-directory: app
+        run: npm ci
+
+      # ── Rust setup ──────────────────────────────────────────────────────
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache Rust dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: rust-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            rust-${{ runner.os }}-
+
+      # ── Frontend checks ─────────────────────────────────────────────────
+      - name: Prettier check
+        working-directory: app
+        run: npm run format:check
+
+      - name: ESLint
+        working-directory: app
+        run: npm run lint
+
+      - name: svelte-check
+        working-directory: app
+        run: npx svelte-check --tsconfig ./tsconfig.app.json
+
+      - name: TypeScript check (app)
+        working-directory: app
+        run: npx tsc --noEmit -p tsconfig.app.json
+
+      - name: TypeScript check (e2e)
+        working-directory: app
+        run: npx tsc --noEmit -p tsconfig.e2e.json
+
+      - name: TypeScript check (node)
+        working-directory: app
+        run: npx tsc --noEmit -p tsconfig.node.json
+
+      - name: Knip (dead code detection)
+        working-directory: app
+        run: npx knip
+
+      # ── Rust checks ─────────────────────────────────────────────────────
+      - name: cargo fmt --check
+        run: cargo fmt --check
+
+      - name: cargo clippy
+        run: cargo clippy -- -D warnings
+
+  # ── Unit Tests ────────────────────────────────────────────────────────
+  test-unit:
+    name: Unit Tests
+    runs-on: macos-latest
+    needs: lint-and-format
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Cache node modules
+        uses: actions/cache@v4
+        with:
+          path: app/node_modules
+          key: node-modules-${{ runner.os }}-${{ hashFiles('app/package-lock.json') }}
+          restore-keys: |
+            node-modules-${{ runner.os }}-
+
+      - name: Install frontend dependencies
+        working-directory: app
+        run: npm ci
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: rust-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            rust-${{ runner.os }}-
+
+      - name: Vitest (frontend unit tests)
+        working-directory: app
+        run: npm test
+
+      - name: cargo test --lib (Rust unit tests)
+        run: cargo test --lib
+
+  # ── Integration Tests ─────────────────────────────────────────────────
+  test-integration:
+    name: Integration Tests (Lean LSP)
+    runs-on: macos-latest
+    needs: lint-and-format
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: rust-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            rust-${{ runner.os }}-
+
+      # ── Lean toolchain via elan ──────────────────────────────────────────
+      - name: Cache elan (Lean toolchain manager)
+        id: cache-elan
+        uses: actions/cache@v4
+        with:
+          path: ~/.elan
+          key: elan-${{ runner.os }}-${{ hashFiles('src-tauri/lean-toolchain') }}
+          restore-keys: |
+            elan-${{ runner.os }}-
+
+      - name: Install elan and Lean
+        if: steps.cache-elan.outputs.cache-hit != 'true'
+        run: |
+          curl -sSf https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh \
+            | sh -s -- -y --no-modify-path
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+
+      - name: Add elan to PATH (cache hit)
+        if: steps.cache-elan.outputs.cache-hit == 'true'
+        run: echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+
+      # ── Lean project for tests ───────────────────────────────────────────
+      # The integration tests look for a Lean project at TURNSTILE_PROJECT_PATH.
+      # We create a minimal one here so the tests run instead of skipping.
+      - name: Cache Mathlib build artifacts
+        uses: actions/cache@v4
+        with:
+          path: /tmp/lean-project/.lake
+          key: mathlib-${{ runner.os }}-${{ hashFiles('src-tauri/lean-toolchain') }}
+          restore-keys: |
+            mathlib-${{ runner.os }}-
+
+      - name: Set up Lean project for integration tests
+        run: |
+          PROJECT_DIR=/tmp/lean-project
+          mkdir -p "$PROJECT_DIR"
+
+          # Create lakefile if it doesn't exist (cache miss scenario).
+          if [ ! -f "$PROJECT_DIR/lakefile.toml" ]; then
+            cat > "$PROJECT_DIR/lakefile.toml" <<'LAKEFILE'
+          name = "turnstile_ci"
+          defaultTargets = ["TurnstileCi"]
+
+          [[require]]
+          name = "mathlib"
+          from = "https://github.com/leanprover-community/mathlib4"
+          rev = "stable"
+          LAKEFILE
+
+            cat > "$PROJECT_DIR/lean-toolchain" <<'TOOLCHAIN'
+          leanprover/lean4:stable
+          TOOLCHAIN
+
+            # Create a stub Lean file to satisfy the LSP.
+            touch "$PROJECT_DIR/Proof.lean"
+
+            cd "$PROJECT_DIR"
+            lake update
+          fi
+
+          # Ensure Proof.lean exists regardless of cache hit.
+          touch "$PROJECT_DIR/Proof.lean"
+
+          echo "TURNSTILE_PROJECT_PATH=$PROJECT_DIR" >> "$GITHUB_ENV"
+          echo "TURNSTILE_LSP_CMD=$HOME/.elan/bin/lean" >> "$GITHUB_ENV"
+
+      - name: cargo test (Lean LSP integration tests)
+        run: cargo test --test lean_lsp_integration
+        timeout-minutes: 30
+        env:
+          TURNSTILE_PROJECT_PATH: ${{ env.TURNSTILE_PROJECT_PATH }}
+          TURNSTILE_LSP_CMD: ${{ env.TURNSTILE_LSP_CMD }}
+
+  # ── Build ─────────────────────────────────────────────────────────────
+  build:
+    name: Build (macOS)
+    runs-on: macos-latest
+    needs: lint-and-format
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Cache node modules
+        uses: actions/cache@v4
+        with:
+          path: app/node_modules
+          key: node-modules-${{ runner.os }}-${{ hashFiles('app/package-lock.json') }}
+          restore-keys: |
+            node-modules-${{ runner.os }}-
+
+      - name: Install frontend dependencies
+        working-directory: app
+        run: npm ci
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: rust-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            rust-${{ runner.os }}-
+
+      - name: Build frontend
+        working-directory: app
+        run: npm run build
+
+      - name: Build Tauri app
+        run: cargo tauri build
+        env:
+          # Disable app signing/notarization in CI.
+          APPLE_SIGNING_IDENTITY: "-"
+          CI: "true"
+
+      - name: Upload macOS app artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: turnstile-macos
+          path: src-tauri/target/release/bundle/macos/*.app
+          if-no-files-found: warn
+          retention-days: 7
+
+  # ── E2E Tests ─────────────────────────────────────────────────────────
+  test-e2e:
+    name: E2E Tests (Playwright)
+    runs-on: macos-latest
+    needs: [test-unit, build]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Cache node modules
+        uses: actions/cache@v4
+        with:
+          path: app/node_modules
+          key: node-modules-${{ runner.os }}-${{ hashFiles('app/package-lock.json') }}
+          restore-keys: |
+            node-modules-${{ runner.os }}-
+
+      - name: Install frontend dependencies
+        working-directory: app
+        run: npm ci
+
+      - name: Cache Playwright browsers
+        id: cache-playwright
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Caches/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('app/package-lock.json') }}
+          restore-keys: |
+            playwright-${{ runner.os }}-
+
+      - name: Install Playwright browsers
+        if: steps.cache-playwright.outputs.cache-hit != 'true'
+        working-directory: app
+        run: npx playwright install chromium --with-deps
+
+      - name: Run Playwright e2e tests
+        working-directory: app
+        run: npm run test:e2e
+        env:
+          CI: "true"
