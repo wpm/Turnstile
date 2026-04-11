@@ -1,19 +1,9 @@
 // Types matching the Rust structs serialized by the Tauri backend.
 
-export interface SetupStatusResponse {
-  complete: boolean
-  project_path: string
-}
-
 export interface SetupProgressPayload {
   phase: string // "checking" | "installing-elan" | "creating-project" | "fetching-mathlib" | "downloading-cache" | "ready" | "error"
   message: string
   progress_pct: number
-}
-
-export interface LspStatusPayload {
-  state: string // "connected" | "error" | ""
-  message: string
 }
 
 export interface DiagnosticInfo {
