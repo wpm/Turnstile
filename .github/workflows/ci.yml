@@ -179,6 +179,11 @@ jobs:
             src-tauri/target
           key: rust-test-compiled-${{ github.run_id }}-${{ github.run_attempt }}
 
+      - name: Backdate sources so Cargo trusts cached artifacts
+        run: |
+          find . -not -path '*/target/*' \( -name '*.rs' -o -name 'Cargo.toml' -o -name 'Cargo.lock' -o -name 'build.rs' \) -exec touch -t 200001010000 {} +
+          touch -t 200001010000 .cargo/config.toml
+
       - name: cargo test --lib (Rust unit tests)
         run: cargo test --lib
 
@@ -201,6 +206,11 @@ jobs:
             ~/.cargo/git
             src-tauri/target
           key: rust-test-compiled-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Backdate sources so Cargo trusts cached artifacts
+        run: |
+          find . -not -path '*/target/*' \( -name '*.rs' -o -name 'Cargo.toml' -o -name 'Cargo.lock' -o -name 'build.rs' \) -exec touch -t 200001010000 {} +
+          touch -t 200001010000 .cargo/config.toml
 
       # The integration tests use skip_if_no_project! — they skip gracefully
       # when no Lean project is present (TURNSTILE_PROJECT_PATH unset and the
