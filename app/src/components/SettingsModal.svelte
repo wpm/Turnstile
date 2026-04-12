@@ -145,8 +145,8 @@
       <span
         class="text-[13px] font-semibold"
         class:text-[#f8f8f2]={theme === 'dracula'}
-        class:text-[#24292f]={theme === 'light'}
-      >Settings</span>
+        class:text-[#24292f]={theme === 'light'}>Settings</span
+      >
       <button
         class="text-lg leading-none px-1 cursor-default"
         class:text-[#6272a4]={theme === 'dracula'}
@@ -273,8 +273,8 @@
               class="text-[13px]"
               class:text-[#f8f8f2]={theme === 'dracula'}
               class:text-[#24292f]={theme === 'light'}
-              for="model-select"
-            >Model</label>
+              for="model-select">Model</label
+            >
             <select
               id="model-select"
               class="rounded border px-2 py-1 text-[13px] focus:outline-none"
