@@ -81,6 +81,14 @@ jobs:
           cache-on-failure: true
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
+      # Pin source mtimes to the commit timestamp so that Cargo fingerprints
+      # are deterministic across jobs sharing cached artifacts.
+      - name: Normalize source timestamps for Cargo fingerprints
+        run: |
+          ts=$(git log -1 --format=%cd --date=format:%Y%m%d%H%M.%S HEAD)
+          find . -not -path '*/target/*' \( -name '*.rs' -o -name 'Cargo.toml' -o -name 'Cargo.lock' -o -name 'build.rs' \) -exec touch -t "$ts" {} +
+          touch -t "$ts" .cargo/config.toml
+
       # Fast check first — fail before clippy compiles.
       - name: cargo fmt --check
         run: cargo fmt --check
@@ -147,6 +155,12 @@ jobs:
             src-tauri/target
           key: rust-compiled-${{ github.run_id }}-${{ github.run_attempt }}
 
+      - name: Normalize source timestamps for Cargo fingerprints
+        run: |
+          ts=$(git log -1 --format=%cd --date=format:%Y%m%d%H%M.%S HEAD)
+          find . -not -path '*/target/*' \( -name '*.rs' -o -name 'Cargo.toml' -o -name 'Cargo.lock' -o -name 'build.rs' \) -exec touch -t "$ts" {} +
+          touch -t "$ts" .cargo/config.toml
+
       - name: Compile all test binaries
         run: cargo test --no-run
 
@@ -179,10 +193,11 @@ jobs:
             src-tauri/target
           key: rust-test-compiled-${{ github.run_id }}-${{ github.run_attempt }}
 
-      - name: Backdate sources so Cargo trusts cached artifacts
+      - name: Normalize source timestamps for Cargo fingerprints
         run: |
-          find . -not -path '*/target/*' \( -name '*.rs' -o -name 'Cargo.toml' -o -name 'Cargo.lock' -o -name 'build.rs' \) -exec touch -t 200001010000 {} +
-          touch -t 200001010000 .cargo/config.toml
+          ts=$(git log -1 --format=%cd --date=format:%Y%m%d%H%M.%S HEAD)
+          find . -not -path '*/target/*' \( -name '*.rs' -o -name 'Cargo.toml' -o -name 'Cargo.lock' -o -name 'build.rs' \) -exec touch -t "$ts" {} +
+          touch -t "$ts" .cargo/config.toml
 
       - name: cargo test --lib (Rust unit tests)
         run: cargo test --lib
@@ -207,10 +222,11 @@ jobs:
             src-tauri/target
           key: rust-test-compiled-${{ github.run_id }}-${{ github.run_attempt }}
 
-      - name: Backdate sources so Cargo trusts cached artifacts
+      - name: Normalize source timestamps for Cargo fingerprints
         run: |
-          find . -not -path '*/target/*' \( -name '*.rs' -o -name 'Cargo.toml' -o -name 'Cargo.lock' -o -name 'build.rs' \) -exec touch -t 200001010000 {} +
-          touch -t 200001010000 .cargo/config.toml
+          ts=$(git log -1 --format=%cd --date=format:%Y%m%d%H%M.%S HEAD)
+          find . -not -path '*/target/*' \( -name '*.rs' -o -name 'Cargo.toml' -o -name 'Cargo.lock' -o -name 'build.rs' \) -exec touch -t "$ts" {} +
+          touch -t "$ts" .cargo/config.toml
 
       # The integration tests use skip_if_no_project! — they skip gracefully
       # when no Lean project is present (TURNSTILE_PROJECT_PATH unset and the
@@ -257,6 +273,12 @@ jobs:
             ~/.cargo/git
             src-tauri/target
           key: rust-compiled-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Normalize source timestamps for Cargo fingerprints
+        run: |
+          ts=$(git log -1 --format=%cd --date=format:%Y%m%d%H%M.%S HEAD)
+          find . -not -path '*/target/*' \( -name '*.rs' -o -name 'Cargo.toml' -o -name 'Cargo.lock' -o -name 'build.rs' \) -exec touch -t "$ts" {} +
+          touch -t "$ts" .cargo/config.toml
 
       - name: Cache cargo-tauri binary
         uses: actions/cache@v4
