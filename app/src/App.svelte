@@ -508,11 +508,16 @@
       aria-valuemin={CHAT_WIDTH_MIN}
       aria-valuemax={CHAT_WIDTH_MAX}
       tabindex="0"
-      class="splitter-grip w-1.5 cursor-col-resize flex-shrink-0 bg-bg-tertiary
+      class="splitter-grip cursor-col-resize flex-shrink-0 bg-bg-tertiary flex flex-col items-center justify-center gap-1
         focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+      style="width: 10px"
       onmousedown={onSplitterDown}
       onkeydown={onSplitterKeydown}
-    ></div>
+    >
+      <span class="w-1 h-1 rounded-full bg-text-secondary opacity-40"></span>
+      <span class="w-1 h-1 rounded-full bg-text-secondary opacity-40"></span>
+      <span class="w-1 h-1 rounded-full bg-text-secondary opacity-40"></span>
+    </div>
 
     <!-- Chat panel column (resizable width) -->
     <div
