@@ -176,7 +176,8 @@
                 class="rounded border border-border bg-bg-secondary px-2 py-1
                   text-[13px] text-text-primary focus:outline-none focus:ring-1 focus:ring-accent"
                 value={settings[field.key]}
-                onchange={(e) => updateSetting(field.key, Number((e.target as HTMLSelectElement).value))}
+                onchange={(e) =>
+                  updateSetting(field.key, Number((e.target as HTMLSelectElement).value))}
                 data-testid="{field.id}-font-size-select"
               >
                 {#each FONT_SIZE_OPTIONS as size (size)}
