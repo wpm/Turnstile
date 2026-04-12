@@ -1,7 +1,12 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { invoke, listen } from './lib/tauri'
-  import type { SetupProgressPayload, DiagnosticInfo, SemanticToken } from './lib/tauri'
+  import type {
+    SetupProgressPayload,
+    DiagnosticInfo,
+    FileProgressRange,
+    SemanticToken,
+  } from './lib/tauri'
   import Editor from './components/Editor.svelte'
   import SetupOverlay from './components/SetupOverlay.svelte'
   import ChatPanel from './components/ChatPanel.svelte'
@@ -17,6 +22,7 @@
   let setupError = $state(false)
   let diagnostics = $state<DiagnosticInfo[] | null>(null)
   let semanticTokens = $state<SemanticToken[] | null>(null)
+  let fileProgress = $state<FileProgressRange[] | null>(null)
   let showSettings = $state(false)
 
   // .light on <html> so fixed-position elements (modals, overlays) inherit CSS variables.
@@ -230,6 +236,9 @@
     const tokensPromise = listen<SemanticToken[]>('lsp-semantic-tokens', (tokens) => {
       semanticTokens = tokens
     })
+    const progressPromise = listen<FileProgressRange[]>('lsp-file-progress', (ranges) => {
+      fileProgress = ranges
+    })
 
     // Listen for prose-updated events from other components
     const prosePromise = listen<{ text: string; hash: string | null }>('prose-updated', (data) => {
@@ -251,12 +260,13 @@
       })
     })
 
-    void Promise.all([diagPromise, tokensPromise, prosePromise, menuPromise]).then(
-      ([unlistenDiag, unlistenTokens, unlistenProse, unlistenMenu]) => {
+    void Promise.all([diagPromise, tokensPromise, progressPromise, prosePromise, menuPromise]).then(
+      ([unlistenDiag, unlistenTokens, unlistenProgress, unlistenProse, unlistenMenu]) => {
         void startLsp()
         return () => {
           unlistenDiag()
           unlistenTokens()
+          unlistenProgress()
           unlistenProse()
           unlistenMenu()
         }
@@ -405,6 +415,7 @@
           theme={$theme}
           {diagnostics}
           {semanticTokens}
+          {fileProgress}
           onchange={handleChange}
         />
       </div>

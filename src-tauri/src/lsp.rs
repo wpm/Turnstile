@@ -55,6 +55,14 @@ pub struct CompletionItem {
     pub insert_text: Option<String>,
 }
 
+/// A range of lines currently being elaborated by the Lean server.
+/// Emitted via the `$/lean/fileProgress` notification.
+#[derive(Clone, Serialize)]
+pub struct FileProgressRange {
+    pub start_line: u32, // 1-indexed (converted from 0-indexed LSP)
+    pub end_line: u32,   // 1-indexed
+}
+
 // ── LSP Client ────────────────────────────────────────────────────────
 
 pub struct LspClient {
@@ -518,6 +526,24 @@ pub fn parse_completion_items(result: &Value) -> Vec<CompletionItem> {
         .collect()
 }
 
+/// Parse a `$/lean/fileProgress` notification params into processing ranges.
+pub fn parse_file_progress(params: &Value) -> Vec<FileProgressRange> {
+    let Some(processing) = params.get("processing").and_then(|p| p.as_array()) else {
+        return Vec::new();
+    };
+
+    processing
+        .iter()
+        .filter_map(|item| {
+            let (sl, _sc, el, _ec) = parse_lsp_range(item.get("range")?)?;
+            Some(FileProgressRange {
+                start_line: sl + 1, // 0-indexed → 1-indexed
+                end_line: el + 1,
+            })
+        })
+        .collect()
+}
+
 /// Parse `{ "start": { "line": u32, "character": u32 }, "end": { ... } }`.
 fn parse_lsp_range(range: &Value) -> Option<(u32, u32, u32, u32)> {
     let start = range.get("start")?;
@@ -717,6 +743,50 @@ mod tests {
     #[test]
     fn parse_completion_items_null_returns_empty() {
         assert!(parse_completion_items(&json!(null)).is_empty());
+    }
+
+    #[test]
+    fn parse_file_progress_single_range() {
+        let params = json!({
+            "textDocument": { "uri": "file:///test.lean" },
+            "processing": [{
+                "range": {
+                    "start": { "line": 0, "character": 0 },
+                    "end": { "line": 10, "character": 0 }
+                }
+            }]
+        });
+        let ranges = parse_file_progress(&params);
+        assert_eq!(ranges.len(), 1);
+        assert_eq!(ranges[0].start_line, 1); // 0-indexed → 1-indexed
+        assert_eq!(ranges[0].end_line, 11);
+    }
+
+    #[test]
+    fn parse_file_progress_multiple_ranges() {
+        let params = json!({
+            "processing": [
+                { "range": { "start": { "line": 0, "character": 0 }, "end": { "line": 5, "character": 0 } } },
+                { "range": { "start": { "line": 8, "character": 0 }, "end": { "line": 12, "character": 0 } } }
+            ]
+        });
+        let ranges = parse_file_progress(&params);
+        assert_eq!(ranges.len(), 2);
+        assert_eq!(ranges[0].start_line, 1);
+        assert_eq!(ranges[0].end_line, 6);
+        assert_eq!(ranges[1].start_line, 9);
+        assert_eq!(ranges[1].end_line, 13);
+    }
+
+    #[test]
+    fn parse_file_progress_empty_processing_returns_empty() {
+        let params = json!({ "processing": [] });
+        assert!(parse_file_progress(&params).is_empty());
+    }
+
+    #[test]
+    fn parse_file_progress_missing_processing_returns_empty() {
+        assert!(parse_file_progress(&json!({})).is_empty());
     }
 
     #[test]

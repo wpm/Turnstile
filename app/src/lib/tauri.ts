@@ -28,6 +28,11 @@ export interface CompletionItem {
   insert_text: string | null
 }
 
+export interface FileProgressRange {
+  start_line: number // 1-indexed
+  end_line: number // 1-indexed
+}
+
 export interface ChatTurn {
   role: 'user' | 'assistant'
   content: string

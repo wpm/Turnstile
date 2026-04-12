@@ -336,6 +336,10 @@ fn handle_lsp_message(
                 app.emit("lsp-diagnostics", lsp::parse_diagnostics(&params))
                     .ok();
             }
+            "$/lean/fileProgress" => {
+                app.emit("lsp-file-progress", lsp::parse_file_progress(&params))
+                    .ok();
+            }
             "window/logMessage" | "window/showMessage" => {
                 if let Some(message) = params.get("message").and_then(|m| m.as_str()) {
                     log::info!("LSP: {message}");

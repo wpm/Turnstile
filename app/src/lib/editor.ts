@@ -44,7 +44,8 @@ import {
 } from '@codemirror/autocomplete'
 import { searchKeymap, highlightSelectionMatches } from '@codemirror/search'
 import { lintKeymap } from '@codemirror/lint'
-import type { CompletionItem, DiagnosticInfo, SemanticToken } from './tauri'
+import type { CompletionItem, DiagnosticInfo, FileProgressRange, SemanticToken } from './tauri'
+import { fileProgressExtension, setFileProgressEffect } from './fileProgress'
 import { tokenTypeToCssClass } from './tokenTypes'
 import type { Theme } from './theme'
 
@@ -363,6 +364,7 @@ function themeExtension(t: Theme): Extension {
 interface EditorHandle {
   applySemanticTokens(tokens: SemanticToken[]): void
   applyDiagnostics(diagnostics: DiagnosticInfo[]): void
+  applyFileProgress(ranges: FileProgressRange[]): void
   setTheme(theme: Theme): void
   destroy(): void
 }
@@ -416,6 +418,7 @@ export function mountEditor(
         diagnosticUnderlineField,
         diagnosticHoverTooltip,
         diagnosticGutter,
+        fileProgressExtension(),
         updateListener,
         baseTheme,
         themeCompartment.of(themeExtension(initialTheme)),
@@ -430,6 +433,9 @@ export function mountEditor(
     },
     applyDiagnostics(diagnostics) {
       view.dispatch({ effects: setDiagnosticsEffect.of(diagnostics) })
+    },
+    applyFileProgress(ranges) {
+      view.dispatch({ effects: setFileProgressEffect.of(ranges) })
     },
     setTheme(t: Theme) {
       view.dispatch({ effects: themeCompartment.reconfigure(themeExtension(t)) })

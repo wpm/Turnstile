@@ -105,6 +105,11 @@
   text-decoration-skip-ink: none;
 }
 
+/* Lean elaboration progress — lines currently being processed */
+.cm-lean-processing {
+  background-color: var(--progress-bg);
+}
+
 /* CodeMirror 6 full-screen editor */
 .cm-editor {
   height: 100%;
