@@ -125,11 +125,12 @@ async fn start_lsp(app: AppHandle) -> Result<(), String> {
     let token_types = client.token_types.clone();
     let pending = client.pending.clone();
     let writer = client.writer.clone();
+    let next_id = client.next_id.clone();
     let app_handle = app.clone();
 
     std::thread::spawn(move || {
         LspClient::read_messages(stdout, &pending, |msg| {
-            handle_lsp_message(&app_handle, &token_types, &writer, msg);
+            handle_lsp_message(&app_handle, &token_types, &writer, &next_id, msg);
         });
 
         app_handle
@@ -291,6 +292,7 @@ fn handle_lsp_message(
     app: &AppHandle,
     token_types: &Arc<Mutex<Vec<String>>>,
     writer: &Arc<tokio::sync::Mutex<Box<dyn std::io::Write + Send>>>,
+    next_id: &Arc<AtomicI64>,
     msg: &serde_json::Value,
 ) {
     if let Some(result) = msg.get("result") {
@@ -304,10 +306,25 @@ fn handle_lsp_message(
 
     // Server→client requests have both "method" and "id"; ack them with null.
     if let Some(id) = msg.get("id") {
-        if msg.get("method").is_some() {
+        if let Some(method) = msg.get("method").and_then(|m| m.as_str()) {
             if let Err(e) = lsp::ack_request(writer, id) {
                 log::warn!("Failed to ack LSP request: {e}");
             }
+
+            // The server says our cached semantic tokens are stale — re-request.
+            if method == "workspace/semanticTokens/refresh" {
+                let state = app.state::<AppState>();
+                let doc_uri = state.doc_uri();
+                if let Err(e) = lsp::send_request_sync(
+                    writer,
+                    next_id,
+                    "textDocument/semanticTokens/full",
+                    json!({ "textDocument": { "uri": doc_uri } }),
+                ) {
+                    log::warn!("Failed to re-request semantic tokens: {e}");
+                }
+            }
+
             return;
         }
     }

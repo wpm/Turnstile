@@ -59,7 +59,7 @@ pub struct CompletionItem {
 
 pub struct LspClient {
     process: Child,
-    next_id: AtomicI64,
+    pub next_id: Arc<AtomicI64>,
     /// Shared writer — clone the `Arc` to send messages from the reader thread via `send_raw`.
     pub writer: Arc<tokio::sync::Mutex<Box<dyn Write + Send>>>,
     /// Semantic token legend, populated during initialize (accessed from sync reader thread)
@@ -95,7 +95,7 @@ impl LspClient {
 
         Ok(Self {
             process: child,
-            next_id: AtomicI64::new(1),
+            next_id: Arc::new(AtomicI64::new(1)),
             writer: Arc::new(tokio::sync::Mutex::new(Box::new(stdin))),
             token_types: Arc::new(Mutex::new(Vec::new())),
             pending: Arc::new(Mutex::new(HashMap::new())),
@@ -285,6 +285,46 @@ pub fn ack_request(
     id: &Value,
 ) -> Result<(), String> {
     let msg = json!({ "jsonrpc": "2.0", "id": id, "result": Value::Null });
+    let body =
+        serde_json::to_string(&msg).map_err(|e| format!("JSON serialization failed: {e}"))?;
+    let header = format!("Content-Length: {}\r\n\r\n", body.len());
+    debug!(
+        "LSP → {}",
+        serde_json::to_string_pretty(&msg).unwrap_or_default()
+    );
+    let mut guard = writer.blocking_lock();
+    guard
+        .write_all(header.as_bytes())
+        .map_err(|e| format!("Write header failed: {e}"))?;
+    guard
+        .write_all(body.as_bytes())
+        .map_err(|e| format!("Write body failed: {e}"))?;
+    guard.flush().map_err(|e| format!("Flush failed: {e}"))?;
+    drop(guard);
+    Ok(())
+}
+
+/// Send a JSON-RPC request from the sync reader thread (fire-and-forget).
+///
+/// The response will arrive on the reader thread and be dispatched via the
+/// `on_message` callback (not through `pending`), so the caller does not
+/// await a result.
+///
+/// # Errors
+/// Returns an error if serialization or writing to the server fails.
+pub fn send_request_sync(
+    writer: &Arc<tokio::sync::Mutex<Box<dyn Write + Send>>>,
+    next_id: &Arc<AtomicI64>,
+    method: &str,
+    params: Value,
+) -> Result<(), String> {
+    let id = next_id.fetch_add(1, Ordering::SeqCst);
+    let msg = json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "method": method,
+        "params": params,
+    });
     let body =
         serde_json::to_string(&msg).map_err(|e| format!("JSON serialization failed: {e}"))?;
     let header = format!("Content-Length: {}\r\n\r\n", body.len());
