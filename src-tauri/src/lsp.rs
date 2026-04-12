@@ -276,6 +276,94 @@ impl LspClient {
     }
 }
 
+// ── Shutdown ─────────────────────────────────────────────────────────
+
+impl LspClient {
+    /// Gracefully shut down the LSP server process.
+    ///
+    /// Sends a `shutdown` JSON-RPC request, waits briefly for the response,
+    /// then sends an `exit` notification and waits for the child to exit.
+    /// If the process doesn't exit within the timeout, it is killed.
+    ///
+    /// This is intentionally synchronous so it can be called from `Drop`.
+    pub fn shutdown(&mut self) {
+        info!("Initiating LSP server shutdown");
+
+        // Send the `shutdown` request.
+        let id = self.next_id.fetch_add(1, Ordering::SeqCst);
+        let shutdown_msg = json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "shutdown",
+            "params": null,
+        });
+        if let Err(e) = self.send_message_sync(&shutdown_msg) {
+            warn!("Failed to send shutdown request: {e}");
+        } else {
+            // Wait briefly for the server to acknowledge.
+            std::thread::sleep(std::time::Duration::from_secs(1));
+        }
+
+        // Send the `exit` notification.
+        let exit_msg = json!({
+            "jsonrpc": "2.0",
+            "method": "exit",
+            "params": null,
+        });
+        if let Err(e) = self.send_message_sync(&exit_msg) {
+            warn!("Failed to send exit notification: {e}");
+        }
+
+        // Wait for the child to exit, with a timeout.
+        match self.process.try_wait().ok().flatten().or_else(|| {
+            std::thread::sleep(std::time::Duration::from_secs(1));
+            self.process.try_wait().ok().flatten()
+        }) {
+            Some(status) => info!("LSP server exited: {status}"),
+            None => {
+                warn!("LSP server did not exit in time, killing");
+                if let Err(e) = self.process.kill() {
+                    warn!("Failed to kill LSP server: {e}");
+                } else {
+                    // Reap the zombie.
+                    let _ = self.process.wait();
+                }
+            }
+        }
+    }
+
+    /// Write a JSON-RPC message synchronously using `try_lock`.
+    fn send_message_sync(&self, msg: &Value) -> Result<(), String> {
+        let body =
+            serde_json::to_string(msg).map_err(|e| format!("JSON serialization failed: {e}"))?;
+        let header = format!("Content-Length: {}\r\n\r\n", body.len());
+
+        debug!(
+            "LSP → {}",
+            serde_json::to_string_pretty(msg).unwrap_or_default()
+        );
+
+        let mut writer = self
+            .writer
+            .try_lock()
+            .map_err(|_| "Writer lock contended during shutdown".to_string())?;
+        writer
+            .write_all(header.as_bytes())
+            .map_err(|e| format!("Write header failed: {e}"))?;
+        writer
+            .write_all(body.as_bytes())
+            .map_err(|e| format!("Write body failed: {e}"))?;
+        writer.flush().map_err(|e| format!("Flush failed: {e}"))?;
+        Ok(())
+    }
+}
+
+impl Drop for LspClient {
+    fn drop(&mut self) {
+        self.shutdown();
+    }
+}
+
 // ── Utilities ─────────────────────────────────────────────────────────
 
 /// Send a null-result response for a server→client request.
@@ -797,5 +885,125 @@ mod tests {
                 ["snippetSupport"],
             false
         );
+    }
+
+    /// Helper: create an `LspClient` backed by `cat`, which simply reads stdin.
+    /// This gives us a real child process whose stdin we can write to.
+    fn spawn_cat_client() -> LspClient {
+        LspClient::spawn("cat", &[], Path::new("/tmp")).expect("failed to spawn cat")
+    }
+
+    /// Helper: extract all JSON-RPC messages written to a byte buffer.
+    /// Parses Content-Length framed messages.
+    fn extract_jsonrpc_messages(buf: &[u8]) -> Vec<Value> {
+        let mut msgs = Vec::new();
+        let mut cursor = std::io::Cursor::new(buf);
+        let mut reader = BufReader::new(&mut cursor);
+
+        loop {
+            let mut content_length: Option<usize> = None;
+            loop {
+                let mut line = String::new();
+                match reader.read_line(&mut line) {
+                    Ok(0) => return msgs,
+                    Ok(_) => {
+                        let trimmed = line.trim();
+                        if trimmed.is_empty() {
+                            break;
+                        }
+                        if let Some(len_str) = trimmed.strip_prefix("Content-Length: ") {
+                            content_length = len_str.parse::<usize>().ok();
+                        }
+                    }
+                    Err(_) => return msgs,
+                }
+            }
+            let Some(len) = content_length else {
+                return msgs;
+            };
+            let mut body = vec![0u8; len];
+            if std::io::Read::read_exact(&mut reader, &mut body).is_err() {
+                return msgs;
+            }
+            if let Ok(msg) = serde_json::from_slice::<Value>(&body) {
+                msgs.push(msg);
+            }
+        }
+    }
+
+    #[test]
+    fn shutdown_sends_shutdown_request_and_exit_notification() {
+        // Use a shared buffer as the writer so we can inspect the messages.
+        let buf: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
+
+        // We need a real child process that will exit on its own when stdin closes.
+        let child = Command::new("cat")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("failed to spawn cat");
+
+        // Build a writer that captures bytes.
+        #[derive(Clone)]
+        struct BufWriter(Arc<Mutex<Vec<u8>>>);
+        impl Write for BufWriter {
+            fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(data);
+                Ok(data.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let writer = BufWriter(Arc::clone(&buf));
+        let mut client = LspClient {
+            process: child,
+            next_id: Arc::new(AtomicI64::new(1)),
+            writer: Arc::new(tokio::sync::Mutex::new(Box::new(writer))),
+            token_types: Arc::new(Mutex::new(Vec::new())),
+            pending: Arc::new(Mutex::new(HashMap::new())),
+        };
+
+        // Manually call shutdown (which will also be called by Drop, but that's fine).
+        client.shutdown();
+
+        let captured = buf.lock().unwrap();
+        let msgs = extract_jsonrpc_messages(&captured);
+
+        assert!(
+            msgs.len() >= 2,
+            "Expected at least 2 messages (shutdown + exit), got {}: {msgs:?}",
+            msgs.len()
+        );
+
+        // First message: shutdown request (has id).
+        assert_eq!(msgs[0]["method"], "shutdown");
+        assert!(msgs[0].get("id").is_some(), "shutdown should have an id");
+
+        // Second message: exit notification (no id).
+        assert_eq!(msgs[1]["method"], "exit");
+        assert!(
+            msgs[1].get("id").is_none(),
+            "exit should be a notification (no id)"
+        );
+    }
+
+    #[test]
+    fn drop_does_not_panic_when_process_already_dead() {
+        let mut client = spawn_cat_client();
+        // Kill the process before drop.
+        let _ = client.process.kill();
+        let _ = client.process.wait();
+        // Drop should not panic.
+        drop(client);
+    }
+
+    #[test]
+    fn drop_does_not_panic_on_normal_client() {
+        let client = spawn_cat_client();
+        // Just dropping should work fine.
+        drop(client);
     }
 }
