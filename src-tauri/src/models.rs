@@ -18,9 +18,18 @@ pub struct ModelInfo {
 /// All models available for selection, in descending preference order.
 /// The first entry is the default.
 pub const MODELS: &[ModelInfo] = &[
-    ModelInfo { id: "claude-opus-4-6", display_name: "Claude Opus 4.6" },
-    ModelInfo { id: "claude-sonnet-4-6", display_name: "Claude Sonnet 4.6" },
-    ModelInfo { id: "claude-haiku-4-5-20251001", display_name: "Claude Haiku 4.5" },
+    ModelInfo {
+        id: "claude-opus-4-6",
+        display_name: "Claude Opus 4.6",
+    },
+    ModelInfo {
+        id: "claude-sonnet-4-6",
+        display_name: "Claude Sonnet 4.6",
+    },
+    ModelInfo {
+        id: "claude-haiku-4-5-20251001",
+        display_name: "Claude Haiku 4.5",
+    },
 ];
 
 /// The default model ID (first entry in `MODELS`).
@@ -57,7 +66,11 @@ mod tests {
     #[test]
     fn is_valid_model_id_returns_true_for_known_ids() {
         for model in MODELS {
-            assert!(is_valid_model_id(model.id), "expected {} to be valid", model.id);
+            assert!(
+                is_valid_model_id(model.id),
+                "expected {} to be valid",
+                model.id
+            );
         }
     }
 
@@ -70,7 +83,11 @@ mod tests {
     #[test]
     fn all_models_have_non_empty_display_name() {
         for model in MODELS {
-            assert!(!model.display_name.is_empty(), "model {} has empty display name", model.id);
+            assert!(
+                !model.display_name.is_empty(),
+                "model {} has empty display name",
+                model.id
+            );
         }
     }
 
