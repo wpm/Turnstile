@@ -46,6 +46,8 @@ export interface TauriMockOptions {
   semanticTokens?: SemanticTokenFixture[]
   /** Items returned by get_completions (default []) */
   completionItems?: CompletionItemFixture[]
+  /** When true, send_chat_message does NOT auto-fire chat-message-complete (default false) */
+  noAutoReply?: boolean
 }
 
 export interface DiagnosticInfoFixture {
@@ -81,10 +83,11 @@ export async function injectTauriMock(page: Page, opts: TauriMockOptions = {}): 
     diagnostics = [],
     semanticTokens = [],
     completionItems = [],
+    noAutoReply = false,
   } = opts
 
   await page.addInitScript(
-    ({ setupComplete, hasAutoSave, diagnostics, semanticTokens, completionItems }) => {
+    ({ setupComplete, hasAutoSave, diagnostics, semanticTokens, completionItems, noAutoReply }) => {
       type Listener = (e: { payload: unknown }) => void
       const listeners = new Map<string, Listener[]>()
 
@@ -159,19 +162,21 @@ export async function injectTauriMock(page: Page, opts: TauriMockOptions = {}): 
       const originalInvoke: TauriInvoke = tauri.core.invoke.bind(tauri.core)
       tauri.core.invoke = function (cmd: string, args?: unknown) {
         if (cmd === 'send_chat_message') {
-          const content = (args as { content?: string } | undefined)?.content ?? ''
-          // Fire chat-message-complete on the next tick (echo mock)
-          void Promise.resolve().then(() => {
-            for (const cb of listeners.get('chat-message-complete') ?? []) {
-              cb({
-                payload: {
-                  role: 'assistant',
-                  content: `[echo] ${content}`,
-                  timestamp: Date.now(),
-                },
-              })
-            }
-          })
+          if (!noAutoReply) {
+            const content = (args as { content?: string } | undefined)?.content ?? ''
+            // Fire chat-message-complete on the next tick (echo mock)
+            void Promise.resolve().then(() => {
+              for (const cb of listeners.get('chat-message-complete') ?? []) {
+                cb({
+                  payload: {
+                    role: 'assistant',
+                    content: `[echo] ${content}`,
+                    timestamp: Date.now(),
+                  },
+                })
+              }
+            })
+          }
           return Promise.resolve(null)
         }
         if (cmd === 'get_chat_state') {
@@ -183,7 +188,7 @@ export async function injectTauriMock(page: Page, opts: TauriMockOptions = {}): 
         return originalInvoke(cmd, args)
       }
     },
-    { setupComplete, hasAutoSave, diagnostics, semanticTokens, completionItems },
+    { setupComplete, hasAutoSave, diagnostics, semanticTokens, completionItems, noAutoReply },
   )
 }
 

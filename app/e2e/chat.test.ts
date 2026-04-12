@@ -113,10 +113,7 @@ test.describe('Message rendering', () => {
     await expect(page.locator('.chat-message-user')).toBeVisible()
   })
 
-  test('assistant reply appears after chat-message-complete event', async ({
-    page,
-    mountApp,
-  }) => {
+  test('assistant reply appears after chat-message-complete event', async ({ page, mountApp }) => {
     await mountApp()
     await chatInput(page).click()
     await page.keyboard.type('hello')
@@ -190,6 +187,102 @@ test.describe('Auto-scroll', () => {
       return scrollTop + clientHeight >= scrollHeight - 10
     })
     expect(isAtBottom).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Streaming & thinking indicator
+// ---------------------------------------------------------------------------
+
+test.describe('Streaming and thinking indicator', () => {
+  test('thinking indicator shows while waiting for assistant reply', async ({ page, mountApp }) => {
+    // Mount with a mock that does NOT auto-fire chat-message-complete
+    await mountApp({ noAutoReply: true })
+    await chatInput(page).click()
+    await page.keyboard.type('hello')
+    await page.keyboard.press('Enter')
+
+    // The thinking indicator should appear
+    await expect(page.locator('.chat-thinking-indicator')).toBeVisible({ timeout: 2000 })
+  })
+
+  test('thinking indicator disappears after chat-message-complete', async ({
+    page,
+    mountApp,
+    emitEvent,
+  }) => {
+    await mountApp({ noAutoReply: true })
+    await chatInput(page).click()
+    await page.keyboard.type('hello')
+    await page.keyboard.press('Enter')
+
+    await expect(page.locator('.chat-thinking-indicator')).toBeVisible({ timeout: 2000 })
+
+    // Simulate assistant reply completing
+    await emitEvent('chat-stream-done', null)
+    await emitEvent('chat-message-complete', {
+      role: 'assistant',
+      content: '[echo] hello',
+      timestamp: Date.now(),
+    })
+
+    await expect(page.locator('.chat-thinking-indicator')).not.toBeVisible({ timeout: 2000 })
+  })
+
+  test('streaming text appears incrementally in a bubble', async ({
+    page,
+    mountApp,
+    emitEvent,
+  }) => {
+    await mountApp({ noAutoReply: true })
+    await chatInput(page).click()
+    await page.keyboard.type('hello')
+    await page.keyboard.press('Enter')
+
+    // Send streaming deltas
+    await emitEvent('chat-stream-delta', 'Hello ')
+    await emitEvent('chat-stream-delta', 'world')
+
+    // The streaming bubble should contain the accumulated text
+    const streamingBubble = page.locator('.chat-message-streaming')
+    await expect(streamingBubble).toBeVisible({ timeout: 2000 })
+    await expect(streamingBubble).toContainText('Hello world')
+
+    // Complete the message
+    await emitEvent('chat-stream-done', null)
+    await emitEvent('chat-message-complete', {
+      role: 'assistant',
+      content: 'Hello world',
+      timestamp: Date.now(),
+    })
+
+    // Streaming bubble should be gone, replaced by normal assistant message
+    await expect(streamingBubble).not.toBeVisible({ timeout: 2000 })
+    await expect(page.locator('.chat-message-assistant')).toContainText('Hello world')
+  })
+
+  test('send button is disabled while streaming', async ({ page, mountApp, emitEvent }) => {
+    await mountApp({ noAutoReply: true })
+    await chatInput(page).click()
+    await page.keyboard.type('hello')
+    await page.keyboard.press('Enter')
+
+    // Type something new — button should still be disabled during streaming
+    await chatInput(page).click()
+    await page.keyboard.type('another message')
+    const sendBtn = page.locator('button[aria-label="Send message"]')
+    await expect(sendBtn).toBeDisabled()
+
+    // Complete the stream
+    await emitEvent('chat-stream-done', null)
+    await emitEvent('chat-message-complete', {
+      role: 'assistant',
+      content: '[echo] hello',
+      timestamp: Date.now(),
+    })
+
+    // Now send button should be enabled again
+    await expect(sendBtn).toBeEnabled({ timeout: 2000 })
   })
 })
 

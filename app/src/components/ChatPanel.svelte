@@ -29,15 +29,19 @@
   let inputText = $state('')
   let inputHeight = $state(120)
   let scrollAnchor: HTMLDivElement | null = $state(null)
+  let streaming = $state(false)
+  let streamingContent = $state('')
 
-  const canSend = $derived(inputText.trim().length > 0)
+  const canSend = $derived(inputText.trim().length > 0 && !streaming)
   const sendBtnClass = $derived(
     canSend
       ? 'bg-accent text-white hover:bg-accent-hover'
       : 'bg-bg-tertiary text-text-secondary cursor-default',
   )
 
-  let unlisten: (() => void) | null = null
+  let unlistenComplete: (() => void) | null = null
+  let unlistenDelta: (() => void) | null = null
+  let unlistenDone: (() => void) | null = null
 
   // ---------------------------------------------------------------------------
   // Lifecycle
@@ -45,9 +49,24 @@
 
   onMount(() => {
     void listen<ChatTurn>('chat-message-complete', (turn) => {
+      streaming = false
+      streamingContent = ''
       messages = [...messages, { ...turn, id: nextId++ }]
     }).then((fn) => {
-      unlisten = fn
+      unlistenComplete = fn
+    })
+
+    void listen<string>('chat-stream-delta', (text) => {
+      streamingContent += text
+    }).then((fn) => {
+      unlistenDelta = fn
+    })
+
+    void listen<unknown>('chat-stream-done', () => {
+      streaming = false
+      streamingContent = ''
+    }).then((fn) => {
+      unlistenDone = fn
     })
 
     tick()
@@ -67,19 +86,25 @@
   })
 
   onDestroy(() => {
-    unlisten?.()
+    unlistenComplete?.()
+    unlistenDelta?.()
+    unlistenDone?.()
   })
 
-  // Scroll to bottom when a new message is added or the input is resized.
-  // Track lengths explicitly so the effect only runs when they change.
+  // Scroll to bottom when a new message is added, streaming content changes,
+  // or the input is resized. Track values explicitly so the effect only runs
+  // when they change.
   let lastMessageCount = 0
   let lastInputHeight = 120 // matches inputHeight initial value
+  let lastStreamingLen = 0
   $effect(() => {
     const countChanged = messages.length !== lastMessageCount
     const heightChanged = inputHeight !== lastInputHeight
-    if (countChanged || heightChanged) {
+    const streamChanged = streamingContent.length !== lastStreamingLen
+    if (countChanged || heightChanged || streamChanged) {
       lastMessageCount = messages.length
       lastInputHeight = inputHeight
+      lastStreamingLen = streamingContent.length
       tick()
         .then(scrollToBottom)
         .catch(() => undefined)
@@ -100,6 +125,8 @@
 
     messages = [...messages, { role: 'user', content, timestamp: Date.now(), id: nextId++ }]
     inputText = ''
+    streaming = true
+    streamingContent = ''
 
     await invoke<null>('send_chat_message', { content }).catch(() => {
       /* backend not yet connected */
@@ -276,6 +303,31 @@
         </div>
       {/if}
     {/each}
+    {#if streaming}
+      <div class="flex justify-start">
+        {#if streamingContent}
+          <div
+            class="chat-message-streaming rounded-xl rounded-tl-sm px-3.5 py-2.5 text-[13px] leading-relaxed
+              max-w-[85%] break-words bg-bg-secondary border border-border text-text-primary"
+          >
+            <!-- eslint-disable-next-line svelte/no-at-html-tags -->
+            {@html renderContent(streamingContent)}
+          </div>
+        {:else}
+          <div
+            class="chat-thinking-indicator rounded-xl rounded-tl-sm px-4 py-3
+              bg-bg-secondary border border-border"
+            aria-label="Assistant is thinking"
+          >
+            <div class="flex gap-1.5 items-center">
+              <span class="thinking-dot w-1.5 h-1.5 rounded-full bg-text-secondary"></span>
+              <span class="thinking-dot w-1.5 h-1.5 rounded-full bg-text-secondary"></span>
+              <span class="thinking-dot w-1.5 h-1.5 rounded-full bg-text-secondary"></span>
+            </div>
+          </div>
+        {/if}
+      </div>
+    {/if}
     <div class="shrink-0 h-4"></div>
     <div bind:this={scrollAnchor} class="chat-scroll-anchor h-0"></div>
   </div>
@@ -350,3 +402,25 @@
     </div>
   </div>
 </div>
+
+<style>
+  .thinking-dot {
+    animation: thinking-pulse 1.4s ease-in-out infinite;
+  }
+  .thinking-dot:nth-child(2) {
+    animation-delay: 0.2s;
+  }
+  .thinking-dot:nth-child(3) {
+    animation-delay: 0.4s;
+  }
+  @keyframes thinking-pulse {
+    0%,
+    80%,
+    100% {
+      opacity: 0.25;
+    }
+    40% {
+      opacity: 1;
+    }
+  }
+</style>

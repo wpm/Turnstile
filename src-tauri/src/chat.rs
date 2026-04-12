@@ -344,6 +344,7 @@ impl ChatBackend for MockBackend {
             timestamp: Utc::now().timestamp_millis(),
         };
 
+        app.emit("chat-stream-done", ()).ok();
         app.emit("chat-message-complete", &turn).ok();
         Ok(turn)
     }
