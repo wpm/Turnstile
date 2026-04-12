@@ -9,6 +9,7 @@
   import { theme, toggleTheme } from './lib/theme'
   import { parseSettings, applySettings, setAvailableModels } from './lib/settings.svelte'
   import type { ModelInfo } from './lib/settings.svelte'
+  import { handleMenuEvent } from './lib/menu'
 
   let setupVisible = $state(true)
   let setupMessage = $state('Checking Lean installation...')
@@ -198,13 +199,27 @@
       sessionDirty = true
     })
 
-    void Promise.all([diagPromise, tokensPromise, prosePromise]).then(
-      ([unlistenDiag, unlistenTokens, unlistenProse]) => {
+    // Listen for native menu events from the Rust backend
+    const menuPromise = listen<string>('menu-event', (id) => {
+      handleMenuEvent(id, {
+        newSession: () => void newSession(),
+        openSession: () => void openSession(),
+        saveSession: () => void saveSession(),
+        saveSessionAs: () => void saveSessionAs(),
+        openSettings: () => {
+          showSettings = true
+        },
+      })
+    })
+
+    void Promise.all([diagPromise, tokensPromise, prosePromise, menuPromise]).then(
+      ([unlistenDiag, unlistenTokens, unlistenProse, unlistenMenu]) => {
         void startLsp()
         return () => {
           unlistenDiag()
           unlistenTokens()
           unlistenProse()
+          unlistenMenu()
         }
       },
     )

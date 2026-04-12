@@ -13,6 +13,7 @@
 
 pub mod chat;
 pub mod lsp;
+pub mod menu;
 pub mod models;
 pub mod session;
 mod session_commands;
@@ -415,6 +416,10 @@ pub fn run() {
             });
 
             Ok(())
+        })
+        .menu(menu::build_menu)
+        .on_menu_event(|app, event| {
+            app.emit("menu-event", event.id().0.clone()).ok();
         })
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             // A second instance was launched; focus the existing window instead.
