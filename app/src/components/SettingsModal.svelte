@@ -1,0 +1,229 @@
+<script lang="ts">
+  import { onMount } from 'svelte'
+  import {
+    FONT_SIZE_OPTIONS,
+    settings,
+    updateSetting,
+    resetToDefaults,
+  } from '../lib/settings.svelte'
+  import { invoke } from '../lib/tauri'
+
+  const { onClose } = $props()
+
+  const TABS = [
+    { id: 'appearance', label: 'Appearance' },
+    { id: 'model', label: 'Model' },
+  ]
+
+  const FONT_FIELDS = [
+    { id: 'editor', label: 'Editor', key: 'editorFontSize' as const },
+    { id: 'prose', label: 'Prose', key: 'proseFontSize' as const },
+    { id: 'chat', label: 'Chat', key: 'chatFontSize' as const },
+  ]
+
+  let activeTab = $state('appearance')
+  let windowEl = $state<HTMLElement | null>(null)
+
+  // Position state — null means "use CSS centering" on first open.
+  let posX = $state<number | null>(null)
+  let posY = $state<number | null>(null)
+
+  // Track in-flight drag listeners so they can be canceled on unmount.
+  let dragCleanup: (() => void) | null = null
+
+  onMount(() => {
+    window.addEventListener('keydown', handleKeydown)
+    return () => {
+      window.removeEventListener('keydown', handleKeydown)
+      dragCleanup?.()
+    }
+  })
+
+  const selectedModelId = $derived(
+    settings.model ??
+      (settings.availableModels.length > 0 ? (settings.availableModels[0]?.id ?? '') : ''),
+  )
+
+  // Reactive style string — recomputed only when posX/posY change.
+  const windowStyle = $derived(
+    posX === null ? '' : `position: fixed; left: ${posX}px; top: ${posY}px; transform: none;`,
+  )
+
+  function handleModelChange(e: Event) {
+    const id = (e.target as HTMLSelectElement).value
+    updateSetting('model', id)
+    invoke('set_model', { modelId: id }).catch((err: unknown) =>
+      console.error('set_model failed:', err),
+    )
+  }
+
+  function handleKeydown(e: KeyboardEvent) {
+    if (e.key === 'Escape') {
+      onClose()
+    }
+  }
+
+  function handleBackdropClick(e: MouseEvent) {
+    if (e.target === e.currentTarget) {
+      onClose()
+    }
+  }
+
+  function onTitleMousedown(e: MouseEvent) {
+    // Only drag on primary button; ignore clicks on the close button.
+    if (e.button !== 0 || (e.target as Element).closest('button')) {
+      return
+    }
+    e.preventDefault()
+
+    // Capture the modal's actual screen position at drag start — works whether
+    // the modal is still CSS-centered or already at an explicit position.
+    const rect = windowEl!.getBoundingClientRect()
+    const startX = rect.left
+    const startY = rect.top
+    const mouseStartX = e.clientX
+    const mouseStartY = e.clientY
+
+    function onMousemove(me: MouseEvent) {
+      posX = startX + (me.clientX - mouseStartX)
+      posY = startY + (me.clientY - mouseStartY)
+    }
+    function onMouseup() {
+      dragCleanup = null
+      window.removeEventListener('mousemove', onMousemove)
+      window.removeEventListener('mouseup', onMouseup)
+    }
+    dragCleanup = () => {
+      window.removeEventListener('mousemove', onMousemove)
+      window.removeEventListener('mouseup', onMouseup)
+    }
+    window.addEventListener('mousemove', onMousemove)
+    window.addEventListener('mouseup', onMouseup)
+  }
+</script>
+
+<!-- Backdrop -->
+<div
+  role="dialog"
+  aria-modal="true"
+  aria-label="Settings"
+  tabindex="-1"
+  class="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+  onclick={handleBackdropClick}
+  onkeydown={(e) => e.key === 'Escape' && onClose()}
+  data-testid="settings-modal"
+>
+  <!-- Modal window: fixed default size, user-resizable -->
+  <div
+    bind:this={windowEl}
+    style="width: 660px; height: 460px; min-width: 420px; min-height: 300px;
+      resize: both; overflow: hidden; {windowStyle}"
+    class="flex flex-col rounded-lg border border-border bg-bg-primary shadow-2xl"
+    onclick={(e) => e.stopPropagation()}
+    role="presentation"
+  >
+    <!-- Title bar — drag handle -->
+    <div
+      class="flex shrink-0 cursor-move items-center justify-between border-b border-border px-4 py-3
+        select-none"
+      onmousedown={onTitleMousedown}
+      role="presentation"
+    >
+      <span class="text-[13px] font-semibold text-text-primary">Settings</span>
+      <button
+        class="cursor-default text-text-secondary hover:text-text-primary text-lg leading-none px-1"
+        aria-label="Close settings"
+        onclick={onClose}
+      >
+        ×
+      </button>
+    </div>
+
+    <!-- Body: sidebar + content -->
+    <div class="flex flex-1 overflow-hidden">
+      <!-- Tab sidebar -->
+      <nav class="w-40 shrink-0 border-r border-border bg-bg-secondary py-2">
+        {#each TABS as tab (tab.id)}
+          <button
+            class="w-full px-4 py-1.5 text-left text-[12px]
+              {activeTab === tab.id
+              ? 'bg-accent text-white'
+              : 'text-text-secondary hover:bg-bg-tertiary hover:text-text-primary'}"
+            onclick={() => (activeTab = tab.id)}
+            data-testid="settings-tab-{tab.id}"
+          >
+            {tab.label}
+          </button>
+        {/each}
+      </nav>
+
+      <!-- Tab content -->
+      <div class="flex flex-1 flex-col overflow-y-auto p-5 gap-5">
+        {#if activeTab === 'appearance'}
+          <h3
+            class="text-[11px] font-semibold uppercase tracking-widest text-text-secondary opacity-60"
+          >
+            Font Sizes
+          </h3>
+
+          {#each FONT_FIELDS as field (field.id)}
+            <div class="flex items-center justify-between">
+              <label class="text-[13px] text-text-primary" for="{field.id}-font-size">
+                {field.label}
+              </label>
+              <select
+                id="{field.id}-font-size"
+                class="rounded border border-border bg-bg-secondary px-2 py-1
+                  text-[13px] text-text-primary focus:outline-none focus:ring-1 focus:ring-accent"
+                value={settings[field.key]}
+                onchange={(e) => updateSetting(field.key, Number((e.target as HTMLSelectElement).value))}
+                data-testid="{field.id}-font-size-select"
+              >
+                {#each FONT_SIZE_OPTIONS as size (size)}
+                  <option value={size}>{size}px</option>
+                {/each}
+              </select>
+            </div>
+          {/each}
+
+          <div class="flex-1"></div>
+
+          <div class="border-t border-border pt-4">
+            <button
+              class="rounded border border-border bg-bg-secondary px-3 py-1.5
+                text-[12px] text-text-secondary hover:bg-bg-tertiary hover:text-text-primary"
+              onclick={resetToDefaults}
+              data-testid="restore-defaults-button"
+            >
+              Restore Defaults
+            </button>
+          </div>
+        {:else if activeTab === 'model'}
+          <h3
+            class="text-[11px] font-semibold uppercase tracking-widest text-text-secondary opacity-60"
+          >
+            Language Model
+          </h3>
+
+          <div class="flex items-center justify-between">
+            <label class="text-[13px] text-text-primary" for="model-select">Model</label>
+            <select
+              id="model-select"
+              class="rounded border border-border bg-bg-secondary px-2 py-1
+                text-[13px] text-text-primary focus:outline-none focus:ring-1 focus:ring-accent"
+              value={selectedModelId}
+              onchange={handleModelChange}
+              data-testid="model-select"
+            >
+              {#each settings.availableModels as m (m.id)}
+                <option value={m.id}>{m.display_name}</option>
+              {/each}
+            </select>
+          </div>
+
+          <div class="flex-1"></div>
+        {/if}
+      </div>
+    </div>
+  </div>
+</div>

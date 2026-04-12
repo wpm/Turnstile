@@ -52,6 +52,16 @@ test.describe('SetupOverlay', () => {
             if (cmd === 'start_lsp') return Promise.resolve(null)
             if (cmd === 'update_document') return Promise.resolve(null)
             if (cmd === 'get_goal_state') return Promise.resolve(null)
+            if (cmd === 'get_settings')
+              return Promise.resolve({
+                editor_font_size: 13,
+                prose_font_size: 13,
+                chat_font_size: 13,
+                model: null,
+              })
+            if (cmd === 'get_available_models') return Promise.resolve([])
+            if (cmd === 'save_settings') return Promise.resolve(null)
+            if (cmd === 'set_model') return Promise.resolve(null)
             return Promise.resolve(null)
           },
         },

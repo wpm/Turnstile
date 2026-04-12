@@ -13,6 +13,8 @@
 
 pub mod chat;
 pub mod lsp;
+pub mod models;
+pub mod settings;
 mod setup;
 
 use std::path::PathBuf;
@@ -40,6 +42,8 @@ pub struct AppState {
     pub current_source: Arc<tokio::sync::Mutex<String>>,
     /// Current prose proof draft — read/written by LLM tool calls.
     pub current_prose: Arc<tokio::sync::Mutex<String>>,
+    /// Persisted user settings.
+    pub settings: Arc<tokio::sync::Mutex<settings::Settings>>,
 }
 
 impl AppState {
@@ -370,11 +374,14 @@ pub fn run() {
 
     tauri::Builder::default()
         .setup(|app| {
-            let project_path = app
+            let app_data_dir = app
                 .path()
                 .app_data_dir()
-                .expect("Failed to resolve app data directory")
-                .join("lean-project");
+                .expect("Failed to resolve app data directory");
+
+            let project_path = app_data_dir.join("lean-project");
+
+            let initial_settings = settings::load_settings(&app_data_dir);
 
             #[cfg(feature = "mock-llm")]
             let chat_backend: Arc<dyn chat::ChatBackend> = Arc::new(chat::MockBackend::from_env());
@@ -396,6 +403,7 @@ pub fn run() {
                 chat_backend,
                 current_source: Arc::new(tokio::sync::Mutex::new(String::new())),
                 current_prose: Arc::new(tokio::sync::Mutex::new(String::new())),
+                settings: Arc::new(tokio::sync::Mutex::new(initial_settings)),
             });
 
             Ok(())
@@ -417,6 +425,10 @@ pub fn run() {
             chat::send_chat_message,
             chat::get_chat_state,
             chat::load_chat_state,
+            settings::get_settings,
+            settings::save_settings,
+            settings::get_available_models,
+            settings::set_model,
         ])
         .run(tauri::generate_context!())
         .expect("error while running turnstile");

@@ -5,7 +5,10 @@
   import Editor from './components/Editor.svelte'
   import SetupOverlay from './components/SetupOverlay.svelte'
   import ChatPanel from './components/ChatPanel.svelte'
+  import SettingsModal from './components/SettingsModal.svelte'
   import { theme, toggleTheme } from './lib/theme'
+  import { parseSettings, applySettings, setAvailableModels } from './lib/settings.svelte'
+  import type { ModelInfo } from './lib/settings.svelte'
 
   let setupVisible = $state(true)
   let setupMessage = $state('Checking Lean installation...')
@@ -13,6 +16,7 @@
   let setupError = $state(false)
   let diagnostics = $state<DiagnosticInfo[] | null>(null)
   let semanticTokens = $state<SemanticToken[] | null>(null)
+  let showSettings = $state(false)
 
   function handleChange(content: string): void {
     invoke('update_document', { content }).catch(() => {
@@ -20,7 +24,33 @@
     })
   }
 
+  function handleKeydown(e: KeyboardEvent): void {
+    if (e.key === ',' && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault()
+      showSettings = true
+    }
+  }
+
   onMount(() => {
+    window.addEventListener('keydown', handleKeydown)
+
+    // Load persisted settings and available models from Rust backend.
+    invoke<Record<string, unknown>>('get_settings')
+      .then((raw) => {
+        applySettings(parseSettings(raw))
+      })
+      .catch(() => {
+        /* use defaults */
+      })
+
+    invoke<ModelInfo[]>('get_available_models')
+      .then((models) => {
+        setAvailableModels(models)
+      })
+      .catch(() => {
+        /* no models available */
+      })
+
     // Register listeners BEFORE calling start_lsp — same ordering constraint
     // as in the Rust/WASM version. Tauri events can arrive immediately after
     // start_lsp returns; any listener registered after would miss early events.
@@ -38,6 +68,10 @@
         unlistenTokens()
       }
     })
+
+    return () => {
+      window.removeEventListener('keydown', handleKeydown)
+    }
   })
 
   async function startLsp(): Promise<void> {
@@ -120,3 +154,7 @@
 >
   {$theme === 'dracula' ? '☀' : '☾'}
 </button>
+
+{#if showSettings}
+  <SettingsModal onClose={() => (showSettings = false)} />
+{/if}
