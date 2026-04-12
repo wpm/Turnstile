@@ -589,7 +589,7 @@ test.describe('Diagnostic underlines', () => {
     await expect(page.locator('.cm-diag-error')).toHaveCount(0)
   })
 
-  test('error underline has wavy red text-decoration in Dracula theme', async ({
+  test('error underline has wavy red text-decoration in Mocha theme', async ({
     page,
     mountApp,
     emitEvent,
@@ -600,8 +600,8 @@ test.describe('Diagnostic underlines', () => {
     await expect(underlined).toBeVisible()
     const decoration = await underlined.evaluate((el) => getComputedStyle(el).textDecoration)
     expect(decoration).toContain('wavy')
-    // #ff5555 → rgb(255, 85, 85)
-    expect(decoration).toContain('rgb(255, 85, 85)')
+    // Catppuccin Mocha red #f38ba8 → rgb(243, 139, 168)
+    expect(decoration).toContain('rgb(243, 139, 168)')
   })
 
   test('multiple diagnostics produce multiple underlined spans', async ({
