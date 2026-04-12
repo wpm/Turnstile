@@ -26,9 +26,9 @@ async function typeMultiLine(page: Page, text: string): Promise<void> {
   }
 }
 
-/** Locator for the theme toggle button (☀ / ☾). */
+/** Locator for the theme toggle button. */
 function themeToggleBtn(page: Page): Locator {
-  return page.locator('button').filter({ hasText: /[☀☾]/ })
+  return page.getByLabel('Toggle theme')
 }
 
 // ---------------------------------------------------------------------------
