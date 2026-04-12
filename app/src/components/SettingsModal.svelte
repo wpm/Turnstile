@@ -121,7 +121,7 @@
   <!-- Modal window: fixed default size, user-resizable -->
   <div
     bind:this={windowEl}
-    style="width: 660px; height: 460px; min-width: 420px; min-height: 300px;
+    style="width: 780px; height: 560px; min-width: 480px; min-height: 360px;
       resize: both; overflow: hidden; {windowStyle}"
     class="flex flex-col rounded-lg border border-border-default bg-surface shadow-2xl"
     onclick={(e) => {
@@ -131,7 +131,7 @@
   >
     <!-- Title bar — drag handle -->
     <div
-      class="flex shrink-0 cursor-move items-center justify-between border-b border-border-default px-5 py-3 select-none"
+      class="flex shrink-0 cursor-move items-center justify-between border-b border-border-default px-6 py-4 select-none"
       onmousedown={onTitleMousedown}
       role="presentation"
     >
@@ -158,10 +158,10 @@
     <!-- Body: sidebar + content -->
     <div class="flex flex-1 overflow-hidden">
       <!-- Tab sidebar -->
-      <nav class="w-40 shrink-0 border-r border-border-default bg-surface-secondary py-3">
+      <nav class="w-44 shrink-0 border-r border-border-default bg-surface-secondary py-4">
         {#each TABS as tab (tab.id)}
           <button
-            class="w-full px-4 py-2 text-left text-[13px] transition-colors"
+            class="w-full px-5 py-3 text-left text-[13px] transition-colors"
             class:bg-accent={activeTab === tab.id}
             class:text-on-accent={activeTab === tab.id}
             class:text-on-surface-secondary={activeTab !== tab.id}
@@ -176,14 +176,14 @@
       </nav>
 
       <!-- Tab content -->
-      <div class="flex flex-1 flex-col overflow-y-auto p-6 gap-5">
+      <div class="flex flex-1 flex-col overflow-y-auto p-8 gap-6">
         {#if activeTab === 'appearance'}
           <h3 class="text-[11px] font-semibold uppercase tracking-widest text-on-surface-secondary">
             Font Sizes
           </h3>
 
           {#each FONT_FIELDS as field (field.id)}
-            <div class="flex items-center justify-between py-0.5">
+            <div class="flex items-center justify-between py-2">
               <label class="text-[13px] text-on-surface" for="{field.id}-font-size">
                 {field.label}
               </label>
