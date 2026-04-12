@@ -80,7 +80,7 @@ jobs:
       - name: Cache Rust dependencies (cross-run)
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: "src-tauri -> target"
+          workspaces: ". -> target"
           cache-on-failure: true
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
@@ -135,7 +135,7 @@ jobs:
       - name: Cache Rust dependencies (cross-run)
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: "src-tauri -> target"
+          workspaces: ". -> target"
           cache-on-failure: true
           save-if: ${{ github.ref == 'refs/heads/main' }}
           # Avoid colliding with the lint-rust Swatinem cache.
@@ -158,7 +158,7 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            src-tauri/target
+            target
           key: rust-test-compiled-${{ github.run_id }}-${{ github.run_attempt }}
 
   # ── Rust Unit Tests ──────────────────────────────────────────────────
@@ -178,7 +178,7 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            src-tauri/target
+            target
           key: rust-test-compiled-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Normalize source timestamps for Cargo fingerprints
@@ -187,22 +187,8 @@ jobs:
           find . -not -path '*/target/*' \( -name '*.rs' -o -name 'Cargo.toml' -o -name 'Cargo.lock' -o -name 'build.rs' \) -exec touch -t "$ts" {} +
           touch -t "$ts" .cargo/config.toml
 
-      - name: Debug fingerprint state
-        run: |
-          echo "=== Source file timestamps ==="
-          stat -f '%m %N' src-tauri/src/main.rs Cargo.toml Cargo.lock .cargo/config.toml 2>/dev/null || stat -c '%Y %n' src-tauri/src/main.rs Cargo.toml Cargo.lock .cargo/config.toml
-          echo "=== Target fingerprint samples ==="
-          find src-tauri/target -name '*.json' -path '*/fingerprint/*' 2>/dev/null | head -5 | while read f; do
-            echo "--- $f ---"
-            stat -f '%m' "$f" 2>/dev/null || stat -c '%Y' "$f"
-            head -1 "$f"
-          done
-          echo "=== CARGO_LOG fingerprint check ==="
-
       - name: cargo test --lib (Rust unit tests)
         run: cargo test --lib
-        env:
-          CARGO_LOG: cargo::core::compiler::fingerprint=info
 
   # ── Integration Tests ────────────────────────────────────────────────
   test-rust-integration:
@@ -221,7 +207,7 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            src-tauri/target
+            target
           key: rust-test-compiled-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Normalize source timestamps for Cargo fingerprints
@@ -268,7 +254,7 @@ jobs:
       - name: Cache Rust dependencies (cross-run)
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: "src-tauri -> target"
+          workspaces: ". -> target"
           cache-on-failure: true
           # Avoid colliding with lint/test Swatinem caches.
           key: build
@@ -299,7 +285,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: turnstile-macos
-          path: src-tauri/target/release/bundle/macos/*.app
+          path: target/release/bundle/macos/*.app
           if-no-files-found: warn
           retention-days: 7
 
