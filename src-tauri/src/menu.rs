@@ -28,9 +28,7 @@ pub const ALL_CUSTOM_IDS: &[&str] = &[
 // ── Menu construction ───────────────────────────────────────────────────────
 
 /// Build the application menu bar.
-pub fn build_menu<R: Runtime>(
-    handle: &AppHandle<R>,
-) -> tauri::Result<tauri::menu::Menu<R>> {
+pub fn build_menu<R: Runtime>(handle: &AppHandle<R>) -> tauri::Result<tauri::menu::Menu<R>> {
     let mut menu = MenuBuilder::new(handle);
 
     // macOS: app-name submenu (About, Settings, Services, Hide, Quit)
@@ -58,8 +56,13 @@ pub fn build_menu<R: Runtime>(
 
     // ── File submenu (all platforms) ────────────────────────────────────────
 
-    let new_item =
-        MenuItem::with_id(handle, NEW_SESSION, "New Session", true, Some("CmdOrCtrl+N"))?;
+    let new_item = MenuItem::with_id(
+        handle,
+        NEW_SESSION,
+        "New Session",
+        true,
+        Some("CmdOrCtrl+N"),
+    )?;
     let open_item = MenuItem::with_id(
         handle,
         OPEN_SESSION,
@@ -67,8 +70,13 @@ pub fn build_menu<R: Runtime>(
         true,
         Some("CmdOrCtrl+O"),
     )?;
-    let save_item =
-        MenuItem::with_id(handle, SAVE_SESSION, "Save Session", true, Some("CmdOrCtrl+S"))?;
+    let save_item = MenuItem::with_id(
+        handle,
+        SAVE_SESSION,
+        "Save Session",
+        true,
+        Some("CmdOrCtrl+S"),
+    )?;
     let save_as_item = MenuItem::with_id(
         handle,
         SAVE_SESSION_AS,
@@ -90,7 +98,11 @@ pub fn build_menu<R: Runtime>(
     {
         let settings_item =
             MenuItem::with_id(handle, SETTINGS, "Settings...", true, Some("CmdOrCtrl+,"))?;
-        file_submenu = file_submenu.separator().item(&settings_item).separator().quit();
+        file_submenu = file_submenu
+            .separator()
+            .item(&settings_item)
+            .separator()
+            .quit();
     }
 
     menu = menu.item(&file_submenu.build()?);
@@ -126,7 +138,13 @@ mod tests {
 
     #[test]
     fn all_custom_ids_contains_required_items() {
-        let required = [NEW_SESSION, OPEN_SESSION, SAVE_SESSION, SAVE_SESSION_AS, SETTINGS];
+        let required = [
+            NEW_SESSION,
+            OPEN_SESSION,
+            SAVE_SESSION,
+            SAVE_SESSION_AS,
+            SETTINGS,
+        ];
         for id in &required {
             assert!(
                 ALL_CUSTOM_IDS.contains(id),
