@@ -223,7 +223,7 @@
             Language Model
           </h3>
 
-          <div class="flex items-center justify-between py-0.5">
+          <div class="flex items-center justify-between py-2">
             <label class="text-[13px] text-on-surface" for="model-select">Model</label>
             <select
               id="model-select"

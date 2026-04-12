@@ -202,18 +202,21 @@
 
   <!-- Input area -->
   <div
-    class="chat-input-area flex flex-col gap-3 px-4 pt-4 pb-4 border-t border-border-default bg-surface-secondary"
-    style="height: {inputHeight}px; flex-shrink: 0;"
+    class="chat-input-area flex flex-col border-t border-border-default bg-surface-secondary shrink-0"
   >
-    <textarea
-      class="chat-input flex-1 min-h-0 w-full resize-none rounded-lg border p-3 text-sm font-mono
-        outline-none bg-surface-primary text-on-surface placeholder-placeholder border-border-default
-        focus:border-border-active transition-colors"
-      placeholder="Ask about your Lean proof…"
-      bind:value={inputText}
-      onkeydown={onKeydown}
-    ></textarea>
-    <div class="flex items-center justify-between shrink-0">
+    <!-- Resizable textarea region -->
+    <div class="flex px-4 pt-4" style="height: {inputHeight}px;">
+      <textarea
+        class="chat-input flex-1 min-h-0 w-full resize-none rounded-lg border p-3 text-sm font-mono
+          outline-none bg-surface-primary text-on-surface placeholder-placeholder border-border-default
+          focus:border-border-active transition-colors"
+        placeholder="Ask about your Lean proof…"
+        bind:value={inputText}
+        onkeydown={onKeydown}
+      ></textarea>
+    </div>
+    <!-- Send bar — always visible below the textarea -->
+    <div class="flex items-center justify-between px-4 pt-3 pb-5 shrink-0">
       <span class="text-xs text-on-surface-secondary">Enter to send · Shift+Enter for newline</span>
       <button
         onclick={() => void sendMessage()}

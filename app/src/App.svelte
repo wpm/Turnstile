@@ -337,7 +337,7 @@
     ></div>
 
     <!-- Chat panel column (resizable width) -->
-    <div class="flex flex-col flex-shrink-0" style="width: {chatWidthPct}%">
+    <div class="flex flex-col flex-shrink-0 h-full" style="width: {chatWidthPct}%">
       <ChatPanel />
     </div>
   </div>
