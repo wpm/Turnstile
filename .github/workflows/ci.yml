@@ -63,6 +63,9 @@ jobs:
         run: npm run knip
 
   # ── Rust Lint & Format ───────────────────────────────────────────────
+  # clippy uses clippy-driver, not rustc, so its Cargo fingerprints are
+  # incompatible with cargo test / cargo build. This job runs independently;
+  # it does NOT share artifacts downstream.
   lint-rust:
     name: Lint Rust
     runs-on: macos-latest
@@ -77,17 +80,9 @@ jobs:
       - name: Cache Rust dependencies (cross-run)
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: "src-tauri -> target"
+          workspaces: ". -> target"
           cache-on-failure: true
           save-if: ${{ github.ref == 'refs/heads/main' }}
-
-      # Pin source mtimes to the commit timestamp so that Cargo fingerprints
-      # are deterministic across jobs sharing cached artifacts.
-      - name: Normalize source timestamps for Cargo fingerprints
-        run: |
-          ts=$(git log -1 --format=%cd --date=format:%Y%m%d%H%M.%S HEAD)
-          find . -not -path '*/target/*' \( -name '*.rs' -o -name 'Cargo.toml' -o -name 'Cargo.lock' -o -name 'build.rs' \) -exec touch -t "$ts" {} +
-          touch -t "$ts" .cargo/config.toml
 
       # Fast check first — fail before clippy compiles.
       - name: cargo fmt --check
@@ -95,16 +90,6 @@ jobs:
 
       - name: cargo clippy
         run: cargo clippy -- -D warnings
-
-      # Save compiled artifacts for downstream Rust jobs in this run.
-      - name: Save Rust artifacts for downstream jobs
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            src-tauri/target
-          key: rust-compiled-${{ github.run_id }}-${{ github.run_attempt }}
 
   # ── Frontend Unit Tests ──────────────────────────────────────────────
   test-vitest:
@@ -136,25 +121,28 @@ jobs:
         run: npm test
 
   # ── Compile Rust Tests ────────────────────────────────────────────────
+  # Independent of lint-rust: clippy-driver fingerprints are incompatible
+  # with rustc, so sharing clippy artifacts would just cause recompilation.
   compile-rust-tests:
     name: Compile Rust Tests
     runs-on: macos-latest
-    needs: lint-rust
 
     steps:
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Restore Rust artifacts from lint-rust
-        uses: actions/cache/restore@v4
+      - name: Cache Rust dependencies (cross-run)
+        uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            src-tauri/target
-          key: rust-compiled-${{ github.run_id }}-${{ github.run_attempt }}
+          workspaces: ". -> target"
+          cache-on-failure: true
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          # Avoid colliding with the lint-rust Swatinem cache.
+          key: test
 
+      # Pin source mtimes to the commit timestamp so that Cargo
+      # fingerprints are deterministic when restored in downstream jobs.
       - name: Normalize source timestamps for Cargo fingerprints
         run: |
           ts=$(git log -1 --format=%cd --date=format:%Y%m%d%H%M.%S HEAD)
@@ -170,7 +158,7 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            src-tauri/target
+            target
           key: rust-test-compiled-${{ github.run_id }}-${{ github.run_attempt }}
 
   # ── Rust Unit Tests ──────────────────────────────────────────────────
@@ -190,7 +178,7 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            src-tauri/target
+            target
           key: rust-test-compiled-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Normalize source timestamps for Cargo fingerprints
@@ -219,7 +207,7 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            src-tauri/target
+            target
           key: rust-test-compiled-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Normalize source timestamps for Cargo fingerprints
@@ -236,13 +224,11 @@ jobs:
         run: cargo test --test lean_lsp_integration
 
   # ── Build ────────────────────────────────────────────────────────────
-  # Clippy already proves compilation on PRs; only produce the full
-  # app bundle on pushes to main.
+  # Only produce the full app bundle on pushes to main.
   build:
     name: Build (macOS)
     if: github.event_name == 'push'
     runs-on: macos-latest
-    needs: lint-rust
 
     steps:
       - uses: actions/checkout@v4
@@ -265,20 +251,13 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Restore Rust artifacts from lint-rust
-        uses: actions/cache/restore@v4
+      - name: Cache Rust dependencies (cross-run)
+        uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            src-tauri/target
-          key: rust-compiled-${{ github.run_id }}-${{ github.run_attempt }}
-
-      - name: Normalize source timestamps for Cargo fingerprints
-        run: |
-          ts=$(git log -1 --format=%cd --date=format:%Y%m%d%H%M.%S HEAD)
-          find . -not -path '*/target/*' \( -name '*.rs' -o -name 'Cargo.toml' -o -name 'Cargo.lock' -o -name 'build.rs' \) -exec touch -t "$ts" {} +
-          touch -t "$ts" .cargo/config.toml
+          workspaces: ". -> target"
+          cache-on-failure: true
+          # Avoid colliding with lint/test Swatinem caches.
+          key: build
 
       - name: Cache cargo-tauri binary
         uses: actions/cache@v4
@@ -306,7 +285,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: turnstile-macos
-          path: src-tauri/target/release/bundle/macos/*.app
+          path: target/release/bundle/macos/*.app
           if-no-files-found: warn
           retention-days: 7
 
