@@ -50,11 +50,11 @@ test.describe('Visual audit', () => {
     await page.getByLabel('Toggle theme').click()
     await expect(page.locator('html')).toHaveClass(/light/)
 
-    // --bg-primary: #ffffff in light theme
+    // --bg-primary: #eff1f5 (Catppuccin Latte base) in light theme
     const editorBg = await page
       .locator('.cm-editor')
       .evaluate((el) => getComputedStyle(el).backgroundColor)
-    expect(editorBg).toBe('rgb(255, 255, 255)')
+    expect(editorBg).toBe('rgb(239, 241, 245)')
 
     await page.screenshot({ path: path.join(SCREENSHOT_DIR, '03-light-main.png'), fullPage: true })
   })
@@ -200,7 +200,7 @@ test.describe('Visual audit', () => {
 
     const sendBtn = page.locator('button[aria-label="Send message"]')
     const filledBg = await sendBtn.evaluate((el) => getComputedStyle(el).backgroundColor)
-    expect(filledBg).toBe('rgb(0, 122, 204)')
+    expect(filledBg).toBe('rgb(137, 180, 250)') // Catppuccin Mocha blue: #89b4fa
     await expect(sendBtn).toBeEnabled()
   })
 

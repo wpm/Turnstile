@@ -64,73 +64,73 @@
     'JetBrains Mono', ui-monospace, 'SF Mono', 'Cascadia Mono', 'Segoe UI Mono', monospace;
 }
 
-/* ── Dark theme (default) ─────────────────────────────────────────────── */
+/* ── Dark theme — Catppuccin Mocha ────────────────────────────────────── */
 
 :root {
-  --bg-primary: #1e1e1e;
-  --bg-secondary: #252526;
-  --bg-tertiary: #2d2d30;
-  --border: #3e3e42;
-  --text-primary: #e0e0e0;
-  --text-secondary: #cccccc;
-  --accent: #007acc;
-  --accent-hover: #1084d7;
-  --accent-active: #0d5fa3;
-  --error: #f48771;
-  --warning: #dcdcaa;
-  --success: #4ec9b0;
-  --progress: #007acc;
+  --bg-primary: #1e1e2e; /* base */
+  --bg-secondary: #181825; /* mantle */
+  --bg-tertiary: #313244; /* surface0 */
+  --border: #45475a; /* surface1 */
+  --text-primary: #cdd6f4; /* text */
+  --text-secondary: #9399b2; /* overlay2 */
+  --accent: #89b4fa; /* blue */
+  --accent-hover: #b4befe; /* lavender */
+  --accent-active: #7287fd; /* lavender (latte, for contrast on hover) */
+  --error: #f38ba8; /* red */
+  --warning: #f9e2af; /* yellow */
+  --success: #a6e3a1; /* green */
+  --progress: #89b4fa; /* blue */
 
   /* Semi-transparent color variants for selection and diagnostic backgrounds */
-  --selection-bg: rgba(0, 122, 204, 0.3);
-  --accent-bg: rgba(0, 122, 204, 0.2);
-  --error-bg: rgba(244, 135, 113, 0.1);
-  --warning-bg: rgba(220, 220, 170, 0.1);
-  --progress-bg: rgba(0, 122, 204, 0.08);
+  --selection-bg: rgba(137, 180, 250, 0.25); /* blue/25% */
+  --accent-bg: rgba(137, 180, 250, 0.15); /* blue/15% */
+  --error-bg: rgba(243, 139, 168, 0.1); /* red/10% */
+  --warning-bg: rgba(249, 226, 175, 0.1); /* yellow/10% */
+  --progress-bg: rgba(137, 180, 250, 0.08); /* blue/8% */
 
-  /* CodeMirror syntax colors (dark) */
-  --cm-keyword: #569cd6;
-  --cm-type: #4ec9b0;
-  --cm-function: #dcdcaa;
-  --cm-string: #ce9178;
-  --cm-number: #b5cea8;
-  --cm-comment: #6a9955;
+  /* CodeMirror syntax colors — Mocha */
+  --cm-keyword: #cba6f7; /* mauve */
+  --cm-type: #94e2d5; /* teal */
+  --cm-function: #89b4fa; /* blue */
+  --cm-string: #a6e3a1; /* green */
+  --cm-number: #fab387; /* peach */
+  --cm-comment: #6c7086; /* overlay0 */
 }
 
-/* ── Light theme ──────────────────────────────────────────────────────── */
+/* ── Light theme — Catppuccin Latte ──────────────────────────────────── */
 /* Applied to <html> so CSS variables override :root everywhere, including
    fixed-position elements (modals, overlays) that don't inherit from a
    child div. */
 
 html.light {
-  --bg-primary: #ffffff;
-  --bg-secondary: #f3f3f3;
-  --bg-tertiary: #e8e8e8;
-  --border: #d4d4d4;
-  --text-primary: #1e1e1e;
-  --text-secondary: #555555;
-  --accent: #007acc;
-  --accent-hover: #005fa3;
-  --accent-active: #004f8a;
-  --error: #e05252;
-  --warning: #8b6914;
-  --success: #1a7a5e;
-  --progress: #007acc;
+  --bg-primary: #eff1f5; /* base */
+  --bg-secondary: #e6e9ef; /* mantle */
+  --bg-tertiary: #ccd0da; /* surface0 */
+  --border: #bcc0cc; /* surface1 */
+  --text-primary: #4c4f69; /* text */
+  --text-secondary: #7c7f93; /* overlay2 */
+  --accent: #1e66f5; /* blue */
+  --accent-hover: #7287fd; /* lavender */
+  --accent-active: #5b6ef5; /* blue darkened */
+  --error: #d20f39; /* red */
+  --warning: #df8e1d; /* yellow */
+  --success: #40a02b; /* green */
+  --progress: #1e66f5; /* blue */
 
-  /* Semi-transparent color variants — lighter opacities suit the white background */
-  --selection-bg: rgba(0, 122, 204, 0.2);
-  --accent-bg: rgba(0, 122, 204, 0.15);
-  --error-bg: rgba(224, 82, 82, 0.1);
-  --warning-bg: rgba(139, 105, 20, 0.1);
-  --progress-bg: rgba(0, 122, 204, 0.06);
+  /* Semi-transparent color variants — lighter opacities suit the pale background */
+  --selection-bg: rgba(30, 102, 245, 0.2); /* blue/20% */
+  --accent-bg: rgba(30, 102, 245, 0.12); /* blue/12% */
+  --error-bg: rgba(210, 15, 57, 0.08); /* red/8% */
+  --warning-bg: rgba(223, 142, 29, 0.1); /* yellow/10% */
+  --progress-bg: rgba(30, 102, 245, 0.06); /* blue/6% */
 
-  /* CodeMirror syntax colors (light) */
-  --cm-keyword: #0000ff;
-  --cm-type: #267f99;
-  --cm-function: #795e26;
-  --cm-string: #a31515;
-  --cm-number: #098658;
-  --cm-comment: #008000;
+  /* CodeMirror syntax colors — Latte */
+  --cm-keyword: #8839ef; /* mauve */
+  --cm-type: #179299; /* teal */
+  --cm-function: #1e66f5; /* blue */
+  --cm-string: #40a02b; /* green */
+  --cm-number: #fe640b; /* peach */
+  --cm-comment: #9ca0b0; /* overlay1 */
 }
 
 /* ── Global reset ─────────────────────────────────────────────────────── */
@@ -365,27 +365,15 @@ html.light {
 
 /* ── Splitter grip indicator ──────────────────────────────────────────── */
 
-.splitter-grip {
-  position: relative;
-}
-
-.splitter-grip::after {
-  content: '';
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  width: 3px;
-  height: 28px;
-  border-radius: 2px;
-  background: var(--border);
-  opacity: 0.5;
-  transition: opacity 0.15s;
-}
-
-.splitter-grip:hover::after {
+.splitter-grip:hover span {
   opacity: 1;
   background: var(--accent);
+}
+
+.splitter-grip span {
+  transition:
+    opacity 0.15s,
+    background 0.15s;
 }
 
 /* ── LSP activity blink ───────────────────────────────────────────────── */
