@@ -353,9 +353,9 @@ impl ChatBackend for MockBackend {
 // AnthropicBackend (real LLM; excluded when mock-llm feature is active)
 // ---------------------------------------------------------------------------
 
-/// System prompt loaded at compile time from specs/chat-prompt.md.
+/// System prompt loaded at compile time from prompts/system.md.
 #[cfg(not(feature = "mock-llm"))]
-const SYSTEM_PROMPT: &str = include_str!("../../specs/chat-prompt.md");
+const SYSTEM_PROMPT: &str = include_str!("prompts/system.md");
 
 #[cfg(not(feature = "mock-llm"))]
 pub struct AnthropicBackend {
