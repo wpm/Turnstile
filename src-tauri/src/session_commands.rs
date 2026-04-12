@@ -11,7 +11,7 @@
 //! - `get_last_session` — read last_session.txt from app data dir
 //! - `set_last_session` — write path to last_session.txt
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 
 use tauri::{AppHandle, Emitter, Manager};
@@ -32,13 +32,29 @@ fn autosave_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(app_data_dir(app)?.join("autosave.turn"))
 }
 
-fn last_session_path(app: &AppHandle) -> Result<PathBuf, String> {
-    Ok(app_data_dir(app)?.join("last_session.txt"))
-}
-
 /// Emit a `session-loaded` event so the frontend can restore UI state.
 fn emit_session_loaded(app: &AppHandle, state: &SessionState) {
     app.emit("session-loaded", state).ok();
+}
+
+/// Read the last-opened session path from `{dir}/last_session.txt`.
+fn read_last_session(dir: &Path) -> Option<String> {
+    let path = dir.join("last_session.txt");
+    std::fs::read_to_string(&path).ok().and_then(|s| {
+        let trimmed = s.trim().to_string();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        }
+    })
+}
+
+/// Write the last-opened session path to `{dir}/last_session.txt`.
+fn write_last_session(dir: &Path, session_path: &Path) -> Result<(), String> {
+    let txt_path = dir.join("last_session.txt");
+    std::fs::write(&txt_path, session_path.to_string_lossy().as_ref())
+        .map_err(|e| format!("Failed to write last_session.txt: {e}"))
 }
 
 // ── Commands ──────────────────────────────────────────────────────────
@@ -134,6 +150,9 @@ pub async fn save_session(
     match path {
         Some(p) => {
             do_save(&app, &state, &p, proof_lean, prose_text, prose_hash, meta).await?;
+            if let Ok(data_dir) = app_data_dir(&app) {
+                write_last_session(&data_dir, &p).ok();
+            }
         }
         None => {
             save_session_as(app, proof_lean, prose_text, prose_hash, meta, state).await?;
@@ -174,14 +193,17 @@ pub async fn save_session_as(
         &app, &state, &file_path, proof_lean, prose_text, prose_hash, meta,
     )
     .await?;
-    *state.current_session_path.lock().await = Some(file_path);
+    *state.current_session_path.lock().await = Some(file_path.clone());
+    if let Ok(data_dir) = app_data_dir(&app) {
+        write_last_session(&data_dir, &file_path).ok();
+    }
     Ok(())
 }
 
 async fn do_save(
     _app: &AppHandle,
     state: &AppState,
-    path: &std::path::Path,
+    path: &Path,
     proof_lean: String,
     prose_text: String,
     prose_hash: Option<String>,
@@ -271,23 +293,41 @@ pub fn delete_auto_save(app: AppHandle) -> Result<(), String> {
 /// Read `{app_data_dir}/last_session.txt` and return the path if it exists.
 #[tauri::command]
 pub fn get_last_session(app: AppHandle) -> Result<Option<String>, String> {
-    let path = last_session_path(&app)?;
-    if !path.exists() {
-        return Ok(None);
-    }
-    let content = std::fs::read_to_string(&path)
-        .map_err(|e| format!("Failed to read last_session.txt: {e}"))?;
-    let trimmed = content.trim().to_string();
-    if trimmed.is_empty() {
-        Ok(None)
-    } else {
-        Ok(Some(trimmed))
-    }
+    let dir = app_data_dir(&app)?;
+    Ok(read_last_session(&dir))
 }
 
 /// Write `path` to `{app_data_dir}/last_session.txt`.
 #[tauri::command]
 pub fn set_last_session(app: AppHandle, path: String) -> Result<(), String> {
-    let txt_path = last_session_path(&app)?;
-    std::fs::write(&txt_path, path).map_err(|e| format!("Failed to write last_session.txt: {e}"))
+    let dir = app_data_dir(&app)?;
+    write_last_session(&dir, Path::new(&path))
+}
+
+// ── Tests ────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn last_session_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        write_last_session(dir.path(), Path::new("/home/user/proof.turn")).unwrap();
+        let result = read_last_session(dir.path());
+        assert_eq!(result, Some("/home/user/proof.turn".to_string()));
+    }
+
+    #[test]
+    fn last_session_returns_none_when_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(read_last_session(dir.path()), None);
+    }
+
+    #[test]
+    fn last_session_returns_none_when_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("last_session.txt"), "").unwrap();
+        assert_eq!(read_last_session(dir.path()), None);
+    }
 }

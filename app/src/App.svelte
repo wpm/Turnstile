@@ -12,7 +12,12 @@
   import ChatPanel from './components/ChatPanel.svelte'
   import SettingsModal from './components/SettingsModal.svelte'
   import { theme, toggleTheme } from './lib/theme'
-  import { parseSettings, applySettings, setAvailableModels } from './lib/settings.svelte'
+  import {
+    parseSettings,
+    applySettings,
+    setAvailableModels,
+    updateSetting,
+  } from './lib/settings.svelte'
   import type { ModelInfo } from './lib/settings.svelte'
   import { handleMenuEvent } from './lib/menu'
 
@@ -213,7 +218,9 @@
     // Load persisted settings and available models from Rust backend.
     invoke<Record<string, unknown>>('get_settings')
       .then((raw) => {
-        applySettings(parseSettings(raw))
+        const parsed = parseSettings(raw)
+        applySettings(parsed)
+        theme.set(parsed.theme)
       })
       .catch(() => {
         /* use defaults */
@@ -247,6 +254,35 @@
       sessionDirty = true
     })
 
+    // Listen for session-loaded events emitted by open_session / new_session.
+    interface SessionLoadedPayload {
+      meta: {
+        format_version: number
+        created_at: string
+        saved_at: string
+        cursor_line: number
+        cursor_col: number
+        editor_scroll_top: number
+        chat_width_pct: number
+      }
+      proof_lean: string
+      prose: { text: string; tactic_state_hash: string | null }
+      transcript: { role: string; content: string; timestamp: number }[]
+      summary: string | null
+    }
+    const sessionLoadedPromise = listen<SessionLoadedPayload>('session-loaded', (session) => {
+      editorContent = session.proof_lean
+      proseText = session.prose.text
+      proseHash = session.prose.tactic_state_hash
+      if (session.meta.chat_width_pct > 0) {
+        chatWidthPct = session.meta.chat_width_pct
+      }
+      sessionDirty = false
+      invoke('update_document', { content: session.proof_lean }).catch(() => {
+        /* LSP not yet connected */
+      })
+    })
+
     // Listen for native menu events from the Rust backend
     const menuPromise = listen<string>('menu-event', (id) => {
       handleMenuEvent(id, {
@@ -260,14 +296,29 @@
       })
     })
 
-    void Promise.all([diagPromise, tokensPromise, progressPromise, prosePromise, menuPromise]).then(
-      ([unlistenDiag, unlistenTokens, unlistenProgress, unlistenProse, unlistenMenu]) => {
+    void Promise.all([
+      diagPromise,
+      tokensPromise,
+      progressPromise,
+      prosePromise,
+      sessionLoadedPromise,
+      menuPromise,
+    ]).then(
+      ([
+        unlistenDiag,
+        unlistenTokens,
+        unlistenProgress,
+        unlistenProse,
+        unlistenSessionLoaded,
+        unlistenMenu,
+      ]) => {
         void startLsp()
         return () => {
           unlistenDiag()
           unlistenTokens()
           unlistenProgress()
           unlistenProse()
+          unlistenSessionLoaded()
           unlistenMenu()
         }
       },
@@ -322,6 +373,14 @@
       // Get the autosave path for restoration
       autoSavePath = null // The backend knows the path; open_session with null will use it
       showRecoveryPrompt = true
+    } else {
+      // No autosave — try reopening the last saved session.
+      const lastPath = await invoke<string | null>('get_last_session').catch(() => null)
+      if (lastPath) {
+        await invoke('open_session', { path: lastPath }).catch(() => {
+          // File may have been moved/deleted since last run — silently ignore.
+        })
+      }
     }
   }
 </script>
@@ -446,7 +505,11 @@
       <ChatPanel
         theme={$theme}
         onToggleTheme={() => {
-          theme.update(toggleTheme)
+          theme.update((current) => {
+            const next = toggleTheme(current)
+            updateSetting('theme', next)
+            return next
+          })
         }}
       />
     </div>

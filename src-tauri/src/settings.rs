@@ -11,6 +11,10 @@ use tauri::Manager;
 
 use crate::models;
 
+fn default_theme() -> String {
+    "dark".to_string()
+}
+
 /// Persisted application settings.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
@@ -23,6 +27,9 @@ pub struct Settings {
     pub chat_font_size: u8,
     /// Selected model ID.  `None` means "use the backend default".
     pub model: Option<String>,
+    /// UI theme: `"dark"` or `"light"`.
+    #[serde(default = "default_theme")]
+    pub theme: String,
 }
 
 impl Default for Settings {
@@ -32,6 +39,7 @@ impl Default for Settings {
             prose_font_size: 13,
             chat_font_size: 13,
             model: None,
+            theme: default_theme(),
         }
     }
 }
@@ -160,6 +168,7 @@ mod tests {
             prose_font_size: 14,
             chat_font_size: 12,
             model: Some("claude-sonnet-4-6".to_string()),
+            theme: "light".to_string(),
         };
 
         save_settings_to_disk(&original, dir.path()).expect("save should succeed");
@@ -183,5 +192,35 @@ mod tests {
         // serde's default field values kick in for missing keys.
         let s = load_settings(dir.path());
         assert_eq!(s, Settings::default());
+    }
+
+    #[test]
+    fn theme_defaults_to_dark() {
+        assert_eq!(Settings::default().theme, "dark");
+    }
+
+    #[test]
+    fn theme_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        let original = Settings {
+            theme: "light".to_string(),
+            ..Settings::default()
+        };
+        save_settings_to_disk(&original, dir.path()).unwrap();
+        let loaded = load_settings(dir.path());
+        assert_eq!(loaded.theme, "light");
+    }
+
+    #[test]
+    fn theme_falls_back_on_missing_key() {
+        let dir = tempfile::tempdir().unwrap();
+        // JSON without a "theme" key — serde field default kicks in.
+        std::fs::write(
+            dir.path().join("settings.json"),
+            br#"{"editor_font_size": 14}"#,
+        )
+        .unwrap();
+        let s = load_settings(dir.path());
+        assert_eq!(s.theme, "dark");
     }
 }

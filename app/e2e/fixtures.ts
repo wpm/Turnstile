@@ -113,6 +113,7 @@ export async function injectTauriMock(page: Page, opts: TauriMockOptions = {}): 
                 prose_font_size: 13,
                 chat_font_size: 13,
                 model: null,
+                theme: 'dark',
               })
             if (cmd === 'get_available_models')
               return Promise.resolve([
@@ -124,6 +125,8 @@ export async function injectTauriMock(page: Page, opts: TauriMockOptions = {}): 
             if (cmd === 'set_model') return Promise.resolve(null)
             if (cmd === 'check_auto_save') return Promise.resolve(hasAutoSave)
             if (cmd === 'delete_auto_save') return Promise.resolve(null)
+            if (cmd === 'get_last_session') return Promise.resolve(null)
+            if (cmd === 'set_last_session') return Promise.resolve(null)
             return Promise.resolve(null)
           },
         },

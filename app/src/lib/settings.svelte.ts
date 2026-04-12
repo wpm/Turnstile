@@ -7,6 +7,7 @@
  */
 
 import { invoke } from './tauri'
+import type { Theme } from './theme'
 
 /** Selectable font sizes offered in the Settings UI. */
 export const FONT_SIZE_OPTIONS = [10, 11, 12, 13, 14, 15, 16, 18, 20]
@@ -20,6 +21,7 @@ const DEFAULT_SETTINGS = {
   proseFontSize: 13,
   chatFontSize: 13,
   model: null as string | null,
+  theme: 'dark' as Theme,
 }
 
 interface SettingsData {
@@ -27,6 +29,7 @@ interface SettingsData {
   proseFontSize: number
   chatFontSize: number
   model: string | null
+  theme: Theme
 }
 
 export interface ModelInfo {
@@ -56,6 +59,10 @@ export function parseSettings(raw: Record<string, unknown> | null | undefined): 
         ? raw['chat_font_size']
         : DEFAULT_SETTINGS.chatFontSize,
     model: typeof raw['model'] === 'string' ? raw['model'] : DEFAULT_SETTINGS.model,
+    theme:
+      raw['theme'] === 'dark' || raw['theme'] === 'light'
+        ? (raw['theme'] as Theme)
+        : DEFAULT_SETTINGS.theme,
   }
 }
 
@@ -68,6 +75,7 @@ function serializeSettings(s: SettingsData): Record<string, unknown> {
     prose_font_size: s.proseFontSize,
     chat_font_size: s.chatFontSize,
     model: s.model,
+    theme: s.theme,
   }
 }
 
@@ -77,6 +85,7 @@ let editorFontSize = $state(DEFAULT_SETTINGS.editorFontSize)
 let proseFontSize = $state(DEFAULT_SETTINGS.proseFontSize)
 let chatFontSize = $state(DEFAULT_SETTINGS.chatFontSize)
 let model = $state<string | null>(DEFAULT_SETTINGS.model)
+let themeValue = $state<Theme>(DEFAULT_SETTINGS.theme)
 let availableModels = $state<ModelInfo[]>([])
 
 export const settings = {
@@ -91,6 +100,9 @@ export const settings = {
   },
   get model() {
     return model
+  },
+  get theme() {
+    return themeValue
   },
   get availableModels() {
     return availableModels
@@ -110,10 +122,11 @@ export function applySettings(s: SettingsData): void {
   proseFontSize = s.proseFontSize
   chatFontSize = s.chatFontSize
   model = s.model
+  themeValue = s.theme
 }
 
 function currentValues(): SettingsData {
-  return { editorFontSize, proseFontSize, chatFontSize, model }
+  return { editorFontSize, proseFontSize, chatFontSize, model, theme: themeValue }
 }
 
 export function updateSetting(key: keyof SettingsData, value: number | string | null): void {
@@ -125,6 +138,8 @@ export function updateSetting(key: keyof SettingsData, value: number | string | 
     chatFontSize = value
   } else if (key === 'model') {
     model = typeof value === 'string' ? value : null
+  } else if (key === 'theme') {
+    themeValue = value === 'light' ? 'light' : 'dark'
   }
   const s = serializeSettings(currentValues())
   invoke('save_settings', { settings: s }).catch((err: unknown) => {
@@ -137,6 +152,7 @@ export function resetToDefaults(): void {
   proseFontSize = DEFAULT_SETTINGS.proseFontSize
   chatFontSize = DEFAULT_SETTINGS.chatFontSize
   model = DEFAULT_SETTINGS.model
+  themeValue = DEFAULT_SETTINGS.theme
   const s = serializeSettings(DEFAULT_SETTINGS)
   invoke('save_settings', { settings: s }).catch((err: unknown) => {
     console.error('save_settings failed:', err)
