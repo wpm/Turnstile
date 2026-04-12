@@ -127,9 +127,9 @@ jobs:
         working-directory: app
         run: npm test
 
-  # ── Rust Unit Tests ──────────────────────────────────────────────────
-  test-rust-unit:
-    name: Unit Tests (Rust)
+  # ── Compile Rust Tests ────────────────────────────────────────────────
+  compile-rust-tests:
+    name: Compile Rust Tests
     runs-on: macos-latest
     needs: lint-rust
 
@@ -146,6 +146,38 @@ jobs:
             ~/.cargo/git
             src-tauri/target
           key: rust-compiled-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Compile all test binaries
+        run: cargo test --no-run
+
+      - name: Save compiled test artifacts for downstream jobs
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: rust-test-compiled-${{ github.run_id }}-${{ github.run_attempt }}
+
+  # ── Rust Unit Tests ──────────────────────────────────────────────────
+  test-rust-unit:
+    name: Unit Tests (Rust)
+    runs-on: macos-latest
+    needs: compile-rust-tests
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Restore Rust test artifacts
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: rust-test-compiled-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: cargo test --lib (Rust unit tests)
         run: cargo test --lib
@@ -154,21 +186,21 @@ jobs:
   test-rust-integration:
     name: Integration Tests (Lean LSP)
     runs-on: macos-latest
-    needs: lint-rust
+    needs: compile-rust-tests
 
     steps:
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Restore Rust artifacts from lint-rust
+      - name: Restore Rust test artifacts
         uses: actions/cache/restore@v4
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             src-tauri/target
-          key: rust-compiled-${{ github.run_id }}-${{ github.run_attempt }}
+          key: rust-test-compiled-${{ github.run_id }}-${{ github.run_attempt }}
 
       # The integration tests use skip_if_no_project! — they skip gracefully
       # when no Lean project is present (TURNSTILE_PROJECT_PATH unset and the
@@ -300,6 +332,7 @@ jobs:
     needs:
       - lint-frontend
       - lint-rust
+      - compile-rust-tests
       - test-vitest
       - test-rust-unit
       - test-rust-integration
