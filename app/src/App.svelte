@@ -18,6 +18,26 @@
   let semanticTokens = $state<SemanticToken[] | null>(null)
   let showSettings = $state(false)
 
+  // Splitter state for resizable chat panel
+  let chatWidthPct = $state(25)
+  let splitterDragging = $state(false)
+
+  function onSplitterDown(e: MouseEvent): void {
+    e.preventDefault()
+    splitterDragging = true
+    const onMove = (ev: MouseEvent): void => {
+      const pct = ((window.innerWidth - ev.clientX) / window.innerWidth) * 100
+      chatWidthPct = Math.min(60, Math.max(10, pct))
+    }
+    const onUp = (): void => {
+      splitterDragging = false
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }
+
   // Session state
   let editorContent = $state('')
   let proseText = $state('')
@@ -43,7 +63,7 @@
       cursor_line: 0,
       cursor_col: 0,
       editor_scroll_top: 0,
-      chat_width_pct: 25,
+      chat_width_pct: chatWidthPct,
     }
   }
 
@@ -304,12 +324,21 @@
     />
   </div>
 
-  <!-- Chat panel column (fixed width, themed border) -->
+  <!-- Draggable vertical splitter -->
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
-    class="w-80 flex flex-col border-l"
-    class:border-[#44475a]={$theme === 'dracula'}
-    class:border-[#d0d7de]={$theme === 'light'}
-  >
+    class="w-1 cursor-col-resize transition-colors flex-shrink-0"
+    class:bg-[#44475a]={$theme === 'dracula' && !splitterDragging}
+    class:bg-[#6272a4]={$theme === 'dracula' && splitterDragging}
+    class:bg-[#d0d7de]={$theme === 'light' && !splitterDragging}
+    class:bg-[#0969da]={$theme === 'light' && splitterDragging}
+    class:hover:bg-[#6272a4]={$theme === 'dracula'}
+    class:hover:bg-[#0969da]={$theme === 'light'}
+    onmousedown={onSplitterDown}
+  ></div>
+
+  <!-- Chat panel column (resizable width) -->
+  <div class="flex flex-col flex-shrink-0" style="width: {chatWidthPct}%">
     <ChatPanel theme={$theme} />
   </div>
 </div>
