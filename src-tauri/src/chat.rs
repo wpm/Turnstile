@@ -50,7 +50,7 @@ pub struct Turn {
     pub timestamp: i64,
 }
 
-/// Serialisable snapshot of the conversation — the unit stored in `.intuit` files.
+/// Serialisable snapshot of the conversation — the unit stored in `.turn` files.
 ///
 /// ```json
 /// {
@@ -91,6 +91,7 @@ impl Default for ChatState {
 pub struct ToolDefinition {
     pub name: String,
     pub description: String,
+    pub input_schema: serde_json::Value,
 }
 
 pub fn default_tools() -> Vec<ToolDefinition> {
@@ -98,18 +99,54 @@ pub fn default_tools() -> Vec<ToolDefinition> {
         ToolDefinition {
             name: "read_lean_source".into(),
             description: "Read the current Lean source file contents.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {},
+                "required": []
+            }),
         },
         ToolDefinition {
             name: "read_tactic_state".into(),
-            description: "Read the tactic state at a given cursor position.".into(),
+            description: "Read the tactic state at a given cursor position in the Lean source. \
+                          If position is omitted, returns tactic state for every tactic step."
+                .into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "line": {
+                        "type": "integer",
+                        "description": "0-indexed line in the Lean source (optional)"
+                    },
+                    "column": {
+                        "type": "integer",
+                        "description": "0-indexed column in the Lean source (optional)"
+                    }
+                },
+                "required": []
+            }),
         },
         ToolDefinition {
             name: "read_prose".into(),
-            description: "Read the current prose / markdown content.".into(),
+            description: "Read the current prose proof draft (LaTeX).".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {},
+                "required": []
+            }),
         },
         ToolDefinition {
             name: "update_prose".into(),
-            description: "Replace the prose / markdown content with new text.".into(),
+            description: "Replace the prose proof draft with a new version.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "text": {
+                        "type": "string",
+                        "description": "The new prose proof text, a complete replacement."
+                    }
+                },
+                "required": ["text"]
+            }),
         },
     ]
 }
@@ -316,6 +353,10 @@ impl ChatBackend for MockBackend {
 // AnthropicBackend (real LLM; excluded when mock-llm feature is active)
 // ---------------------------------------------------------------------------
 
+/// System prompt loaded at compile time from specs/chat-prompt.md.
+#[cfg(not(feature = "mock-llm"))]
+const SYSTEM_PROMPT: &str = include_str!("../../specs/chat-prompt.md");
+
 #[cfg(not(feature = "mock-llm"))]
 pub struct AnthropicBackend {
     api_key: String,
@@ -328,8 +369,8 @@ impl AnthropicBackend {
     pub fn from_env() -> Result<Self, String> {
         let api_key = std::env::var("ANTHROPIC_API_KEY")
             .map_err(|_| "ANTHROPIC_API_KEY environment variable not set".to_string())?;
-        let model =
-            std::env::var("TURNSTILE_MODEL").unwrap_or_else(|_| "claude-sonnet-4-6".to_string());
+        let model = std::env::var("TURNSTILE_MODEL")
+            .unwrap_or_else(|_| "claude-sonnet-4-20250514".to_string());
         Ok(Self {
             api_key,
             model,
@@ -345,61 +386,107 @@ impl AnthropicBackend {
             client: reqwest::Client::new(),
         }
     }
-}
 
-#[cfg(not(feature = "mock-llm"))]
-#[async_trait]
-impl ChatBackend for AnthropicBackend {
-    async fn send_message(
-        &self,
-        state: &ChatState,
-        _tools: &[ToolDefinition],
+    /// Dispatch a tool call from the LLM and return the result string.
+    async fn dispatch_tool(
+        tool_name: &str,
+        tool_input: &serde_json::Value,
         app: &AppHandle,
-        user_content: &str,
-    ) -> Result<Turn, ChatError> {
+    ) -> String {
+        use tauri::Manager;
+        let state = app.state::<crate::AppState>();
+
+        match tool_name {
+            "read_lean_source" => state.current_source.lock().await.clone(),
+            "read_tactic_state" => {
+                // Delegate to the LSP if available.
+                let line = tool_input
+                    .get("line")
+                    .and_then(|v| v.as_u64())
+                    .map(|v| v as u32);
+                let col = tool_input
+                    .get("column")
+                    .and_then(|v| v.as_u64())
+                    .map(|v| v as u32);
+                let lsp_lock = state.lsp_client.lock().await;
+                match lsp_lock.as_ref() {
+                    Some(client) => {
+                        let doc_uri = state.doc_uri();
+                        if let (Some(l), Some(c)) = (line, col) {
+                            let result = client
+                                .send_request_await(
+                                    "$/lean/plainGoal",
+                                    serde_json::json!({
+                                        "textDocument": { "uri": doc_uri },
+                                        "position": { "line": l, "character": c },
+                                    }),
+                                )
+                                .await;
+                            match result {
+                                Ok(v) => v
+                                    .get("rendered")
+                                    .and_then(|r| r.as_str())
+                                    .unwrap_or("(no goal)")
+                                    .to_string(),
+                                Err(e) => format!("Error reading tactic state: {e}"),
+                            }
+                        } else {
+                            "(no position provided — pass line and column to query goal state)"
+                                .to_string()
+                        }
+                    }
+                    None => "(LSP not connected)".to_string(),
+                }
+            }
+            "read_prose" => state.current_prose.lock().await.clone(),
+            "update_prose" => {
+                let text = tool_input
+                    .get("text")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                *state.current_prose.lock().await = text.clone();
+                app.emit("prose-updated", &text).ok();
+                "Prose updated successfully.".to_string()
+            }
+            other => format!("Unknown tool: {other}"),
+        }
+    }
+
+    /// Stream one request to the Anthropic API and collect the full response.
+    ///
+    /// Returns `(stop_reason, full_text, tool_use_blocks)` where `tool_use_blocks`
+    /// is a list of `(id, name, input_json)` for any tool calls in the response.
+    async fn stream_request(
+        &self,
+        messages: &[serde_json::Value],
+        tools: &[ToolDefinition],
+        app: &AppHandle,
+    ) -> Result<(String, String, Vec<(String, String, serde_json::Value)>), ChatError> {
         use futures_util::StreamExt;
 
-        if self.api_key.is_empty() {
-            let turn = Turn {
-                role: Role::Assistant,
-                content: "ANTHROPIC_API_KEY is not set. Please set it and restart.".to_string(),
-                timestamp: Utc::now().timestamp_millis(),
-            };
-            app.emit("chat-message-complete", &turn).ok();
-            return Ok(turn);
-        }
+        let tools_json: Vec<serde_json::Value> = tools
+            .iter()
+            .map(|t| {
+                serde_json::json!({
+                    "name": t.name,
+                    "description": t.description,
+                    "input_schema": t.input_schema,
+                })
+            })
+            .collect();
 
-        // Build messages array from state + new user message.
-        let mut messages: Vec<serde_json::Value> = Vec::new();
-
-        if let Some(summary) = &state.summary {
-            messages.push(serde_json::json!({
-                "role": "user",
-                "content": format!("[Conversation summary]\n{summary}")
-            }));
-            messages.push(serde_json::json!({
-                "role": "assistant",
-                "content": "Understood."
-            }));
-        }
-
-        for turn in &state.transcript {
-            let role = match turn.role {
-                Role::User => "user",
-                Role::Assistant => "assistant",
-                Role::System => continue,
-            };
-            messages.push(serde_json::json!({ "role": role, "content": turn.content }));
-        }
-
-        messages.push(serde_json::json!({ "role": "user", "content": user_content }));
-
-        let body = serde_json::json!({
+        let mut body = serde_json::json!({
             "model": self.model,
-            "max_tokens": 4096,
+            "max_tokens": 8192,
             "stream": true,
+            "system": SYSTEM_PROMPT,
             "messages": messages,
         });
+
+        if !tools_json.is_empty() {
+            body["tools"] = serde_json::Value::Array(tools_json);
+        }
 
         let response = self
             .client
@@ -420,42 +507,216 @@ impl ChatBackend for AnthropicBackend {
 
         let mut stream = response.bytes_stream();
         let mut full_text = String::new();
+        let mut stop_reason = String::new();
         let mut buf = String::new();
+
+        // Tool use accumulation: block index → (id, name, accumulated input json string)
+        let mut tool_blocks: std::collections::HashMap<usize, (String, String, String)> =
+            std::collections::HashMap::new();
+        let mut current_tool_idx: Option<usize> = None;
 
         while let Some(chunk) = stream.next().await {
             let bytes = chunk.map_err(|e| ChatError(format!("Stream error: {e}")))?;
             buf.push_str(&String::from_utf8_lossy(&bytes));
 
-            // Process complete SSE events (terminated by \n\n).
             while let Some(pos) = buf.find("\n\n") {
                 let event = buf[..pos].to_string();
                 buf = buf[pos + 2..].to_string();
 
                 for line in event.lines() {
-                    if let Some(data) = line.strip_prefix("data: ") {
-                        if data == "[DONE]" {
-                            break;
-                        }
-                        if let Ok(v) = serde_json::from_str::<serde_json::Value>(data) {
-                            if let Some(delta) = v
-                                .get("delta")
-                                .and_then(|d| d.get("text"))
-                                .and_then(|t| t.as_str())
-                            {
-                                full_text.push_str(delta);
-                                app.emit("chat-stream-delta", delta).ok();
+                    let Some(data) = line.strip_prefix("data: ") else {
+                        continue;
+                    };
+                    if data == "[DONE]" {
+                        break;
+                    }
+                    let Ok(v) = serde_json::from_str::<serde_json::Value>(data) else {
+                        continue;
+                    };
+
+                    let event_type = v.get("type").and_then(|t| t.as_str()).unwrap_or("");
+
+                    match event_type {
+                        "content_block_start" => {
+                            if let Some(block) = v.get("content_block") {
+                                let block_type =
+                                    block.get("type").and_then(|t| t.as_str()).unwrap_or("");
+                                if block_type == "tool_use" {
+                                    let idx = v.get("index").and_then(|i| i.as_u64()).unwrap_or(0)
+                                        as usize;
+                                    let id = block
+                                        .get("id")
+                                        .and_then(|i| i.as_str())
+                                        .unwrap_or("")
+                                        .to_string();
+                                    let name = block
+                                        .get("name")
+                                        .and_then(|n| n.as_str())
+                                        .unwrap_or("")
+                                        .to_string();
+                                    tool_blocks.insert(idx, (id, name, String::new()));
+                                    current_tool_idx = Some(idx);
+                                } else {
+                                    current_tool_idx = None;
+                                }
                             }
                         }
+                        "content_block_delta" => {
+                            if let Some(delta) = v.get("delta") {
+                                let delta_type =
+                                    delta.get("type").and_then(|t| t.as_str()).unwrap_or("");
+                                match delta_type {
+                                    "text_delta" => {
+                                        if let Some(text) =
+                                            delta.get("text").and_then(|t| t.as_str())
+                                        {
+                                            full_text.push_str(text);
+                                            app.emit("chat-stream-delta", text).ok();
+                                        }
+                                    }
+                                    "input_json_delta" => {
+                                        if let Some(idx) = current_tool_idx {
+                                            if let Some(partial) =
+                                                delta.get("partial_json").and_then(|p| p.as_str())
+                                            {
+                                                if let Some(block) = tool_blocks.get_mut(&idx) {
+                                                    block.2.push_str(partial);
+                                                }
+                                            }
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                        "message_delta" => {
+                            if let Some(delta) = v.get("delta") {
+                                if let Some(reason) =
+                                    delta.get("stop_reason").and_then(|r| r.as_str())
+                                {
+                                    stop_reason = reason.to_string();
+                                }
+                            }
+                        }
+                        _ => {}
                     }
                 }
             }
         }
 
+        // Parse accumulated tool input JSON strings.
+        let tool_calls: Vec<(String, String, serde_json::Value)> = tool_blocks
+            .into_values()
+            .map(|(id, name, json_str)| {
+                let input = serde_json::from_str(&json_str)
+                    .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+                (id, name, input)
+            })
+            .collect();
+
+        Ok((stop_reason, full_text, tool_calls))
+    }
+}
+
+#[cfg(not(feature = "mock-llm"))]
+#[async_trait]
+impl ChatBackend for AnthropicBackend {
+    async fn send_message(
+        &self,
+        state: &ChatState,
+        tools: &[ToolDefinition],
+        app: &AppHandle,
+        user_content: &str,
+    ) -> Result<Turn, ChatError> {
+        if self.api_key.is_empty() {
+            let turn = Turn {
+                role: Role::Assistant,
+                content: "ANTHROPIC_API_KEY is not set. Please set it and restart.".to_string(),
+                timestamp: Utc::now().timestamp_millis(),
+            };
+            app.emit("chat-message-complete", &turn).ok();
+            return Ok(turn);
+        }
+
+        // Build the initial messages array from chat state + new user message.
+        let mut messages: Vec<serde_json::Value> = Vec::new();
+
+        if let Some(summary) = &state.summary {
+            messages.push(serde_json::json!({
+                "role": "assistant",
+                "content": format!("[Conversation summary]\n{summary}")
+            }));
+        }
+
+        for turn in &state.transcript {
+            let role = match turn.role {
+                Role::User => "user",
+                Role::Assistant => "assistant",
+                Role::System => continue,
+            };
+            messages.push(serde_json::json!({ "role": role, "content": turn.content }));
+        }
+
+        messages.push(serde_json::json!({ "role": "user", "content": user_content }));
+
+        // Multi-turn tool use loop until stop_reason == "end_turn".
+        let mut full_assistant_text = String::new();
+
+        loop {
+            let (stop_reason, text_chunk, tool_calls) =
+                self.stream_request(&messages, tools, app).await?;
+
+            full_assistant_text.push_str(&text_chunk);
+
+            if stop_reason == "tool_use" && !tool_calls.is_empty() {
+                // Build the assistant message with mixed text + tool_use content blocks.
+                let mut assistant_content: Vec<serde_json::Value> = Vec::new();
+                if !text_chunk.is_empty() {
+                    assistant_content.push(serde_json::json!({
+                        "type": "text",
+                        "text": text_chunk
+                    }));
+                }
+                for (id, name, input) in &tool_calls {
+                    assistant_content.push(serde_json::json!({
+                        "type": "tool_use",
+                        "id": id,
+                        "name": name,
+                        "input": input
+                    }));
+                }
+                messages.push(serde_json::json!({
+                    "role": "assistant",
+                    "content": assistant_content
+                }));
+
+                // Execute each tool call and build tool_result blocks.
+                let mut tool_results: Vec<serde_json::Value> = Vec::new();
+                for (id, name, input) in &tool_calls {
+                    let result = Self::dispatch_tool(name, input, app).await;
+                    tool_results.push(serde_json::json!({
+                        "type": "tool_result",
+                        "tool_use_id": id,
+                        "content": result
+                    }));
+                }
+                messages.push(serde_json::json!({
+                    "role": "user",
+                    "content": tool_results
+                }));
+                // Continue the loop with updated messages.
+            } else {
+                // end_turn or no tool calls — we're done.
+                break;
+            }
+        }
+
         let turn = Turn {
             role: Role::Assistant,
-            content: full_text,
+            content: full_assistant_text,
             timestamp: Utc::now().timestamp_millis(),
         };
+        app.emit("chat-stream-done", ()).ok();
         app.emit("chat-message-complete", &turn).ok();
         Ok(turn)
     }
@@ -514,7 +775,7 @@ pub async fn get_chat_state(state: tauri::State<'_, crate::AppState>) -> Result<
     Ok(state.chat_state.lock().await.clone())
 }
 
-/// Replace the chat state (for restoring from a `.intuit` save file).
+/// Replace the chat state (for restoring from a `.turn` save file).
 #[tauri::command]
 pub async fn load_chat_state(
     new_state: ChatState,
@@ -570,6 +831,31 @@ mod tests {
     fn chat_state_default_max_tokens_is_200k() {
         let state = ChatState::default();
         assert_eq!(state.max_tokens, 200_000);
+    }
+
+    // -- Tool definitions ----------------------------------------------------
+
+    #[test]
+    fn default_tools_has_four_entries() {
+        let tools = default_tools();
+        assert_eq!(tools.len(), 4);
+        let names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
+        assert!(names.contains(&"read_lean_source"));
+        assert!(names.contains(&"read_tactic_state"));
+        assert!(names.contains(&"read_prose"));
+        assert!(names.contains(&"update_prose"));
+    }
+
+    #[test]
+    fn tools_have_valid_input_schema() {
+        for tool in default_tools() {
+            assert_eq!(
+                tool.input_schema.get("type").and_then(|v| v.as_str()),
+                Some("object"),
+                "tool {} input_schema must have type=object",
+                tool.name
+            );
+        }
     }
 
     // -- Token estimate -------------------------------------------------------

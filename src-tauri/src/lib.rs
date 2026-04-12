@@ -25,7 +25,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use lsp::{CompletionItem, LspClient, LspStatus};
 
 pub struct AppState {
-    lsp_client: Arc<tokio::sync::Mutex<Option<LspClient>>>,
+    pub lsp_client: Arc<tokio::sync::Mutex<Option<LspClient>>>,
     /// Absolute path to the managed Lean project directory
     project_path: PathBuf,
     /// Document version counter (starts at 2; didOpen uses version 1)
@@ -36,6 +36,10 @@ pub struct AppState {
     pub chat_state: Arc<tokio::sync::Mutex<chat::ChatState>>,
     /// LLM backend (mock or real Anthropic).
     pub chat_backend: Arc<dyn chat::ChatBackend>,
+    /// Current Lean source text — synced on every `update_document` call.
+    pub current_source: Arc<tokio::sync::Mutex<String>>,
+    /// Current prose proof draft — read/written by LLM tool calls.
+    pub current_prose: Arc<tokio::sync::Mutex<String>>,
 }
 
 impl AppState {
@@ -166,6 +170,9 @@ async fn update_document(app: AppHandle, content: String) -> Result<(), String> 
     let state = app.state::<AppState>();
     let doc_uri = state.doc_uri();
     let version = state.doc_version.fetch_add(1, Ordering::SeqCst);
+
+    // Keep current_source in sync so the LLM can read it via read_lean_source.
+    *state.current_source.lock().await = content.clone();
 
     // Clone the client Arc so we can release the lock before the semantic token request.
     let client_arc = {
@@ -387,6 +394,8 @@ pub fn run() {
                 setup_running: Arc::new(AtomicBool::new(false)),
                 chat_state: Arc::new(tokio::sync::Mutex::new(chat::ChatState::default())),
                 chat_backend,
+                current_source: Arc::new(tokio::sync::Mutex::new(String::new())),
+                current_prose: Arc::new(tokio::sync::Mutex::new(String::new())),
             });
 
             Ok(())
