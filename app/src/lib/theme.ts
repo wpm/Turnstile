@@ -1,9 +1,9 @@
 import { writable } from 'svelte/store'
 
-export type Theme = 'dracula' | 'light'
+export type Theme = 'mocha' | 'latte'
 
-export const theme = writable<Theme>('dracula')
+export const theme = writable<Theme>('mocha')
 
 export function toggleTheme(current: Theme): Theme {
-  return current === 'dracula' ? 'light' : 'dracula'
+  return current === 'mocha' ? 'latte' : 'mocha'
 }

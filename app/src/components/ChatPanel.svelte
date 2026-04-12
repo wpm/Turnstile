@@ -2,16 +2,9 @@
   import { onMount, onDestroy, tick } from 'svelte'
   import { invoke, listen } from '../lib/tauri'
   import type { ChatTurn } from '../lib/tauri'
-  import type { Theme } from '../lib/theme'
   import { parseMathSegments, renderMath } from '../lib/math'
   import { highlightLean } from '../lib/leanHighlight'
   import { escapeHtml } from '../lib/chatUtils'
-
-  interface Props {
-    theme: Theme
-  }
-
-  let { theme }: Props = $props()
 
   // ---------------------------------------------------------------------------
   // State
@@ -162,23 +155,16 @@
 </script>
 
 <div
-  class="chat-panel flex flex-col h-full"
-  class:bg-[#282a36]={theme === 'dracula'}
-  class:text-[#f8f8f2]={theme === 'dracula'}
-  class:bg-white={theme === 'light'}
-  class:text-[#24292f]={theme === 'light'}
+  class="chat-panel flex flex-col h-full border-l border-border-default bg-surface text-on-surface"
 >
   <!-- Message history -->
-  <div class="chat-history flex-1 overflow-y-auto p-3 space-y-2">
+  <div class="chat-history flex-1 overflow-y-auto p-4 space-y-3">
     {#each messages as message (message.id)}
       <div
-        class="chat-message rounded-lg px-3 py-2 text-sm max-w-full break-words"
+        class="chat-message rounded-lg px-4 py-3 text-sm max-w-full break-words"
         class:chat-message-user={message.role === 'user'}
         class:chat-message-assistant={message.role === 'assistant'}
-        class:bg-[#44475a]={message.role === 'user' && theme === 'dracula'}
-        class:bg-[#eaeef2]={message.role === 'user' && theme === 'light'}
-        class:text-[#f8f8f2]={message.role === 'user' && theme === 'dracula'}
-        class:text-[#24292f]={message.role === 'user' && theme === 'light'}
+        class:bg-surface-tertiary={message.role === 'user'}
         class:ml-4={message.role === 'user'}
         class:italic={message.role === 'assistant'}
       >
@@ -192,11 +178,8 @@
 
   <!-- Resize handle -->
   <div
-    class="chat-resize-handle h-1.5 cursor-row-resize select-none"
-    class:bg-[#44475a]={theme === 'dracula'}
-    class:hover:bg-[#6272a4]={theme === 'dracula'}
-    class:bg-[#d0d7de]={theme === 'light'}
-    class:hover:bg-[#0550ae]={theme === 'light'}
+    class="chat-resize-handle h-1.5 cursor-row-resize select-none bg-border-default
+      hover:bg-border-active transition-colors"
     role="separator"
     aria-orientation="horizontal"
     onpointerdown={onResizePointerDown}
@@ -206,43 +189,26 @@
 
   <!-- Input area -->
   <div
-    class="chat-input-area flex flex-col gap-2 p-2"
+    class="chat-input-area flex flex-col gap-2.5 p-3 bg-surface-secondary"
     style="height: {inputHeight}px; flex-shrink: 0;"
-    class:bg-[#21222c]={theme === 'dracula'}
-    class:bg-[#f6f8fa]={theme === 'light'}
   >
     <textarea
-      class="chat-input flex-1 min-h-0 w-full resize-none rounded border p-2 text-sm font-mono outline-none"
-      class:bg-[#21222c]={theme === 'dracula'}
-      class:text-[#f8f8f2]={theme === 'dracula'}
-      class:placeholder-[#6272a4]={theme === 'dracula'}
-      class:border-[#44475a]={theme === 'dracula'}
-      class:bg-[#f6f8fa]={theme === 'light'}
-      class:text-[#24292f]={theme === 'light'}
-      class:placeholder-[#8c959f]={theme === 'light'}
-      class:border-[#d0d7de]={theme === 'light'}
+      class="chat-input flex-1 min-h-0 w-full resize-none rounded-md border p-2.5 text-sm font-mono
+        outline-none bg-surface-secondary text-on-surface placeholder-placeholder border-border-default
+        focus:border-border-active transition-colors"
       placeholder="Ask about your Lean proof…"
       bind:value={inputText}
       onkeydown={onKeydown}
     ></textarea>
     <div class="flex items-center justify-between shrink-0">
-      <span
-        class="text-[11px]"
-        class:text-[#6272a4]={theme === 'dracula'}
-        class:text-[#8c959f]={theme === 'light'}>Enter to send · Shift+Enter for newline</span
-      >
+      <span class="text-xs text-on-surface-secondary">Enter to send · Shift+Enter for newline</span>
       <button
         onclick={() => void sendMessage()}
         aria-label="Send message"
-        class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium
+        class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium
+          bg-accent text-on-accent hover:bg-accent-hover
           transition-all active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed
           disabled:active:scale-100"
-        class:bg-[#50fa7b]={theme === 'dracula'}
-        class:text-[#282a36]={theme === 'dracula'}
-        class:hover:bg-[#69ff8f]={theme === 'dracula'}
-        class:bg-[#0969da]={theme === 'light'}
-        class:text-white={theme === 'light'}
-        class:hover:bg-[#0550ae]={theme === 'light'}
         disabled={!inputText.trim()}
       >
         <svg

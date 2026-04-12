@@ -2,6 +2,69 @@
 @import './styles/lean.css';
 @import 'katex/dist/katex.min.css';
 
+/* ── Tailwind v4 theme tokens ─────────────────────────────────────────
+   These register semantic color names as first-class Tailwind utilities.
+   Usage: bg-surface, text-on-surface, border-default, etc.              */
+
+@theme inline {
+  --color-surface: var(--bg-primary);
+  --color-surface-secondary: var(--bg-secondary);
+  --color-surface-tertiary: var(--bg-tertiary);
+  --color-on-surface: var(--text-primary);
+  --color-on-surface-secondary: var(--text-secondary);
+  --color-on-surface-inverse: var(--text-inverse);
+  --color-border-default: var(--border-primary);
+  --color-border-active: var(--border-active);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-on-accent: var(--accent-text);
+  --color-error: var(--error);
+  --color-progress: var(--progress);
+  --color-placeholder: var(--placeholder);
+}
+
+/* ── Catppuccin Mocha (dark) ──────────────────────────────────────────── */
+
+[data-theme='mocha'] {
+  --bg-primary: #1e1e2e; /* base */
+  --bg-secondary: #181825; /* mantle */
+  --bg-tertiary: #313244; /* surface0 */
+  --text-primary: #cdd6f4; /* text */
+  --text-secondary: #6c7086; /* overlay0 */
+  --text-inverse: #1e1e2e; /* base */
+  --border-primary: #45475a; /* surface1 */
+  --border-active: #89b4fa; /* blue */
+  --accent: #89b4fa; /* blue */
+  --accent-hover: #74c7ec; /* sapphire */
+  --accent-text: #1e1e2e; /* base */
+  --error: #f38ba8; /* red */
+  --warning: #fab387; /* peach */
+  --progress: #cba6f7; /* mauve */
+  --placeholder: #6c7086; /* overlay0 */
+}
+
+/* ── Catppuccin Latte (light) ─────────────────────────────────────────── */
+
+[data-theme='latte'] {
+  --bg-primary: #eff1f5; /* base */
+  --bg-secondary: #e6e9ef; /* mantle */
+  --bg-tertiary: #ccd0da; /* surface0 */
+  --text-primary: #4c4f69; /* text */
+  --text-secondary: #9ca0b0; /* overlay0 */
+  --text-inverse: #eff1f5; /* base */
+  --border-primary: #bcc0cc; /* surface1 */
+  --border-active: #1e66f5; /* blue */
+  --accent: #1e66f5; /* blue */
+  --accent-hover: #209fb5; /* sapphire */
+  --accent-text: #eff1f5; /* base */
+  --error: #d20f39; /* red */
+  --warning: #fe640b; /* peach */
+  --progress: #8839ef; /* mauve */
+  --placeholder: #9ca0b0; /* overlay0 */
+}
+
+/* ── Global reset ─────────────────────────────────────────────────────── */
+
 * {
   margin: 0;
   padding: 0;
@@ -13,4 +76,14 @@ body,
 #app {
   width: 100%;
   height: 100%;
+}
+
+/* ── Chat inline code (Lean highlighting inside chat messages) ────────── */
+
+.chat-lean-code {
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 0.9em;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: var(--bg-tertiary);
 }

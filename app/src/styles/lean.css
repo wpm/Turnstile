@@ -1,63 +1,63 @@
-/* Lean LSP diagnostic gutter markers */
+/* Lean LSP diagnostic gutter markers — use CSS variable colors */
 .lean-diag-error {
-  color: #ff5555;
+  color: var(--error);
   font-size: 10px;
   line-height: 1.5;
   cursor: pointer;
 }
 
 .lean-diag-warning {
-  color: #ffb86c;
+  color: var(--warning);
   font-size: 10px;
   line-height: 1.5;
   cursor: pointer;
 }
 
 .lean-diag-info {
-  color: #8be9fd;
+  color: var(--accent);
   font-size: 10px;
   line-height: 1.5;
   cursor: pointer;
 }
 
-/* Lean 4 semantic token highlighting (Dracula palette) */
+/* Lean 4 semantic token highlighting — Catppuccin Mocha (default/dark) */
 .cm-lean-keyword {
-  color: #ff79c6;
+  color: #cba6f7; /* mauve */
 }
 .cm-lean-type {
-  color: #8be9fd;
+  color: #f9e2af; /* yellow */
 }
 .cm-lean-function {
-  color: #50fa7b;
+  color: #89b4fa; /* blue */
 }
 .cm-lean-variable {
-  color: #f8f8f2;
+  color: #cdd6f4; /* text */
 }
 .cm-lean-namespace {
-  color: #8be9fd;
+  color: #94e2d5; /* teal */
 }
 .cm-lean-enum-member {
-  color: #ffb86c;
+  color: #fab387; /* peach */
 }
 .cm-lean-macro {
-  color: #ff79c6;
+  color: #f5c2e7; /* pink */
   font-style: italic;
 }
 .cm-lean-comment {
-  color: #6272a4;
+  color: #6c7086; /* overlay0 */
   font-style: italic;
 }
 .cm-lean-string {
-  color: #f1fa8c;
+  color: #a6e3a1; /* green */
 }
 .cm-lean-number {
-  color: #bd93f9;
+  color: #fab387; /* peach */
 }
 .cm-lean-operator {
-  color: #ff79c6;
+  color: #89dceb; /* sky */
 }
 .cm-lean-decorator {
-  color: #ff5555;
+  color: #f38ba8; /* red */
 }
 
 /* Lean LSP diagnostic hover popup */
@@ -70,134 +70,87 @@
   max-width: 480px;
   white-space: pre-wrap;
   word-break: break-word;
-  background: #21222c;
-  border: 1px solid #44475a;
-  color: #f8f8f2;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
+  color: var(--text-primary);
 }
 
 .lean-diag-popup-error {
-  border-left: 3px solid #ff5555;
+  border-left: 3px solid var(--error);
 }
 
 .lean-diag-popup-warning {
-  border-left: 3px solid #ffb86c;
+  border-left: 3px solid var(--warning);
 }
 
 .lean-diag-popup-info {
-  border-left: 3px solid #8be9fd;
+  border-left: 3px solid var(--accent);
 }
 
-[data-theme='light'] .lean-diag-popup {
-  background: #ffffff;
-  border-color: #d0d7de;
-  color: #24292f;
-}
-
-[data-theme='light'] .lean-diag-popup-error {
-  border-left-color: #cf222e;
-}
-
-[data-theme='light'] .lean-diag-popup-warning {
-  border-left-color: #9a6700;
-}
-
-[data-theme='light'] .lean-diag-popup-info {
-  border-left-color: #0550ae;
-}
-
-/* Lean LSP diagnostic underlines (Dracula palette) */
+/* Lean LSP diagnostic underlines */
 .cm-diag-error {
-  text-decoration: underline wavy #ff5555;
+  text-decoration: underline wavy var(--error);
   text-decoration-skip-ink: none;
 }
 
 .cm-diag-warning {
-  text-decoration: underline wavy #ffb86c;
+  text-decoration: underline wavy var(--warning);
   text-decoration-skip-ink: none;
 }
 
 .cm-diag-info {
-  text-decoration: underline wavy #8be9fd;
+  text-decoration: underline wavy var(--accent);
   text-decoration-skip-ink: none;
 }
 
-[data-theme='light'] .cm-diag-error {
-  text-decoration: underline wavy #cf222e;
-  text-decoration-skip-ink: none;
-}
-
-[data-theme='light'] .cm-diag-warning {
-  text-decoration: underline wavy #9a6700;
-  text-decoration-skip-ink: none;
-}
-
-[data-theme='light'] .cm-diag-info {
-  text-decoration: underline wavy #0550ae;
-  text-decoration-skip-ink: none;
-}
-
-/* CodeMirror 6 full-screen editor — Dracula (default) */
+/* CodeMirror 6 full-screen editor */
 .cm-editor {
   height: 100%;
-  background-color: #282a36;
+  background-color: var(--bg-primary);
 }
 
 .cm-editor.cm-focused {
   outline: none;
 }
 
-/* Light theme overrides (GitHub Light palette) */
-[data-theme='light'] .lean-diag-error {
-  color: #cf222e;
+/* Catppuccin Latte (light) — syntax highlighting overrides */
+[data-theme='latte'] .cm-lean-keyword {
+  color: #8839ef; /* mauve */
 }
-[data-theme='light'] .lean-diag-warning {
-  color: #9a6700;
+[data-theme='latte'] .cm-lean-type {
+  color: #df8e1d; /* yellow */
 }
-[data-theme='light'] .lean-diag-info {
-  color: #0550ae;
+[data-theme='latte'] .cm-lean-function {
+  color: #1e66f5; /* blue */
 }
-
-[data-theme='light'] .cm-lean-keyword {
-  color: #cf222e;
+[data-theme='latte'] .cm-lean-variable {
+  color: #4c4f69; /* text */
 }
-[data-theme='light'] .cm-lean-type {
-  color: #953800;
+[data-theme='latte'] .cm-lean-namespace {
+  color: #179299; /* teal */
 }
-[data-theme='light'] .cm-lean-function {
-  color: #8250df;
+[data-theme='latte'] .cm-lean-enum-member {
+  color: #fe640b; /* peach */
 }
-[data-theme='light'] .cm-lean-variable {
-  color: #24292f;
-}
-[data-theme='light'] .cm-lean-namespace {
-  color: #953800;
-}
-[data-theme='light'] .cm-lean-enum-member {
-  color: #0550ae;
-}
-[data-theme='light'] .cm-lean-macro {
-  color: #cf222e;
+[data-theme='latte'] .cm-lean-macro {
+  color: #ea76cb; /* pink */
   font-style: italic;
 }
-[data-theme='light'] .cm-lean-comment {
-  color: #6e7781;
+[data-theme='latte'] .cm-lean-comment {
+  color: #9ca0b0; /* overlay0 */
   font-style: italic;
 }
-[data-theme='light'] .cm-lean-string {
-  color: #0a3069;
+[data-theme='latte'] .cm-lean-string {
+  color: #40a02b; /* green */
 }
-[data-theme='light'] .cm-lean-number {
-  color: #0550ae;
+[data-theme='latte'] .cm-lean-number {
+  color: #fe640b; /* peach */
 }
-[data-theme='light'] .cm-lean-operator {
-  color: #cf222e;
+[data-theme='latte'] .cm-lean-operator {
+  color: #04a5e5; /* sky */
 }
-[data-theme='light'] .cm-lean-decorator {
-  color: #cf222e;
-}
-
-[data-theme='light'] .cm-editor {
-  background-color: #ffffff;
+[data-theme='latte'] .cm-lean-decorator {
+  color: #d20f39; /* red */
 }
 
 /* Selection highlight — CM6's drawSelection layer does not render in WKWebView,
@@ -205,10 +158,10 @@
    used instead. */
 .cm-editor .cm-line ::selection,
 .cm-editor .cm-line::selection {
-  background-color: #6272a4 !important;
+  background-color: #45475a !important; /* surface1 mocha */
 }
 
-[data-theme='light'] .cm-editor .cm-line ::selection,
-[data-theme='light'] .cm-editor .cm-line::selection {
-  background-color: #add8ff !important;
+[data-theme='latte'] .cm-editor .cm-line ::selection,
+[data-theme='latte'] .cm-editor .cm-line::selection {
+  background-color: #bcc0cc !important; /* surface1 latte */
 }

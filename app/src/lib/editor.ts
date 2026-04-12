@@ -318,37 +318,47 @@ const baseTheme = EditorView.baseTheme({
   },
 })
 
-const draculaTheme = EditorView.theme(
+// Shared color theme using CSS custom properties — the actual values are set
+// by [data-theme="mocha"] / [data-theme="latte"] selectors in app.css.
+// We still need the themeCompartment to toggle CM6's `dark` boolean for
+// scrollbar appearance and highlight-style fallback.
+const darkTheme = EditorView.theme(
   {
-    '&': { height: '100%', backgroundColor: '#282a36', color: '#f8f8f2' },
-    '.cm-content': { caretColor: '#f8f8f2' },
-    '.cm-cursor': { borderLeftColor: '#f8f8f2' },
-    '.cm-activeLine': { backgroundColor: '#44475a' },
-    '.cm-gutters': { backgroundColor: '#21222c', color: '#6272a4', border: 'none' },
-    '.cm-activeLineGutter': { backgroundColor: '#44475a' },
+    '&': { height: '100%', backgroundColor: 'var(--bg-primary)', color: 'var(--text-primary)' },
+    '.cm-content': { caretColor: 'var(--text-primary)' },
+    '.cm-cursor': { borderLeftColor: 'var(--text-primary)' },
+    '.cm-activeLine': { backgroundColor: 'var(--bg-tertiary)' },
+    '.cm-gutters': {
+      backgroundColor: 'var(--bg-secondary)',
+      color: 'var(--text-secondary)',
+      border: 'none',
+      paddingLeft: '8px',
+    },
+    '.cm-activeLineGutter': { backgroundColor: 'var(--bg-tertiary)' },
   },
   { dark: true },
 )
 
 const lightTheme = EditorView.theme(
   {
-    '&': { height: '100%', backgroundColor: '#ffffff', color: '#24292f' },
-    '.cm-content': { caretColor: '#24292f' },
-    '.cm-cursor': { borderLeftColor: '#24292f' },
-    '.cm-activeLine': { backgroundColor: '#f6f8fa' },
+    '&': { height: '100%', backgroundColor: 'var(--bg-primary)', color: 'var(--text-primary)' },
+    '.cm-content': { caretColor: 'var(--text-primary)' },
+    '.cm-cursor': { borderLeftColor: 'var(--text-primary)' },
+    '.cm-activeLine': { backgroundColor: 'var(--bg-secondary)' },
     '.cm-gutters': {
-      backgroundColor: '#f6f8fa',
-      color: '#6e7781',
+      backgroundColor: 'var(--bg-secondary)',
+      color: 'var(--text-secondary)',
       border: 'none',
-      borderRight: '1px solid #d0d7de',
+      borderRight: '1px solid var(--border-primary)',
+      paddingLeft: '8px',
     },
-    '.cm-activeLineGutter': { backgroundColor: '#eaeef2' },
+    '.cm-activeLineGutter': { backgroundColor: 'var(--bg-tertiary)' },
   },
   { dark: false },
 )
 
 function themeExtension(t: Theme): Extension {
-  return t === 'dracula' ? draculaTheme : lightTheme
+  return t === 'mocha' ? darkTheme : lightTheme
 }
 
 interface EditorHandle {

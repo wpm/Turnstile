@@ -262,100 +262,82 @@
   }
 </script>
 
-{#if showRecoveryPrompt}
-  <!-- Recovery prompt overlay -->
-  <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-    <div
-      class="rounded-lg p-6 shadow-xl max-w-sm w-full mx-4"
-      class:bg-[#282a36]={$theme === 'dracula'}
-      class:text-[#f8f8f2]={$theme === 'dracula'}
-      class:bg-white={$theme === 'light'}
-      class:text-[#24292f]={$theme === 'light'}
-    >
-      <h2 class="text-lg font-semibold mb-3">Restore unsaved session?</h2>
-      <p class="text-sm mb-5 opacity-75">
-        An unsaved session was found from your last Turnstile session.
-      </p>
-      <div class="flex gap-3 justify-end">
-        <button
-          onclick={() => void discardAutoSave()}
-          class="px-4 py-2 rounded text-sm font-mono opacity-75 hover:opacity-100 transition-opacity"
-          class:bg-[#44475a]={$theme === 'dracula'}
-          class:bg-[#eaeef2]={$theme === 'light'}
-        >
-          No, discard
-        </button>
-        <button
-          onclick={() => void restoreAutoSave()}
-          class="px-4 py-2 rounded text-sm font-mono font-semibold hover:opacity-90 transition-opacity"
-          class:bg-[#50fa7b]={$theme === 'dracula'}
-          class:text-[#282a36]={$theme === 'dracula'}
-          class:bg-[#0969da]={$theme === 'light'}
-          class:text-white={$theme === 'light'}
-        >
-          Yes, restore
-        </button>
+<!-- Root themed container — everything lives inside so CSS variables cascade -->
+<div class="fixed inset-0" data-theme={$theme}>
+  {#if showRecoveryPrompt}
+    <!-- Recovery prompt overlay -->
+    <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+      <div class="rounded-lg p-6 shadow-xl max-w-sm w-full mx-4 bg-surface text-on-surface">
+        <h2 class="text-lg font-semibold mb-3">Restore unsaved session?</h2>
+        <p class="text-sm mb-5 text-on-surface-secondary">
+          An unsaved session was found from your last Turnstile session.
+        </p>
+        <div class="flex gap-3 justify-end">
+          <button
+            onclick={() => void discardAutoSave()}
+            class="px-4 py-2 rounded-md text-sm font-mono bg-surface-tertiary text-on-surface-secondary
+              hover:text-on-surface transition-colors"
+          >
+            No, discard
+          </button>
+          <button
+            onclick={() => void restoreAutoSave()}
+            class="px-4 py-2 rounded-md text-sm font-mono font-semibold bg-accent text-on-accent
+              hover:bg-accent-hover transition-colors"
+          >
+            Yes, restore
+          </button>
+        </div>
       </div>
     </div>
+  {/if}
+
+  <SetupOverlay
+    visible={setupVisible}
+    message={setupMessage}
+    progress={setupProgress}
+    isError={setupError}
+  />
+
+  <div class="flex h-full bg-surface">
+    <!-- Editor column (takes remaining space) -->
+    <div class="flex-1 min-w-0">
+      <Editor
+        initialTheme={$theme}
+        theme={$theme}
+        {diagnostics}
+        {semanticTokens}
+        onchange={handleChange}
+      />
+    </div>
+
+    <!-- Draggable vertical splitter -->
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div
+      class="w-1.5 cursor-col-resize transition-colors flex-shrink-0"
+      class:bg-border-default={!splitterDragging}
+      class:bg-border-active={splitterDragging}
+      class:hover:bg-border-active={!splitterDragging}
+      onmousedown={onSplitterDown}
+    ></div>
+
+    <!-- Chat panel column (resizable width) -->
+    <div class="flex flex-col flex-shrink-0" style="width: {chatWidthPct}%">
+      <ChatPanel />
+    </div>
   </div>
-{/if}
 
-<SetupOverlay
-  visible={setupVisible}
-  message={setupMessage}
-  progress={setupProgress}
-  isError={setupError}
-/>
+  <button
+    onclick={() => {
+      theme.update(toggleTheme)
+    }}
+    class="fixed top-3 right-3 z-20 px-2.5 py-1.5 rounded-md text-sm font-mono
+      bg-surface-tertiary text-on-surface-secondary opacity-60 hover:opacity-100 transition-opacity"
+  >
+    {$theme === 'mocha' ? '☀' : '☾'}
+  </button>
 
-<div
-  class="fixed inset-0 flex"
-  class:bg-[#282a36]={$theme === 'dracula'}
-  class:bg-white={$theme === 'light'}
-  data-theme={$theme}
->
-  <!-- Editor column (takes remaining space) -->
-  <div class="flex-1 min-w-0">
-    <Editor
-      initialTheme={$theme}
-      theme={$theme}
-      {diagnostics}
-      {semanticTokens}
-      onchange={handleChange}
-    />
-  </div>
-
-  <!-- Draggable vertical splitter -->
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div
-    class="w-1 cursor-col-resize transition-colors flex-shrink-0"
-    class:bg-[#44475a]={$theme === 'dracula' && !splitterDragging}
-    class:bg-[#6272a4]={$theme === 'dracula' && splitterDragging}
-    class:bg-[#d0d7de]={$theme === 'light' && !splitterDragging}
-    class:bg-[#0969da]={$theme === 'light' && splitterDragging}
-    class:hover:bg-[#6272a4]={$theme === 'dracula'}
-    class:hover:bg-[#0969da]={$theme === 'light'}
-    onmousedown={onSplitterDown}
-  ></div>
-
-  <!-- Chat panel column (resizable width) -->
-  <div class="flex flex-col flex-shrink-0" style="width: {chatWidthPct}%">
-    <ChatPanel theme={$theme} />
-  </div>
+  {#if showSettings}
+    <SettingsModal onClose={() => (showSettings = false)} />
+  {/if}
 </div>
-
-<button
-  onclick={() => {
-    theme.update(toggleTheme)
-  }}
-  class="fixed top-2 right-2 z-20 px-2 py-1 rounded text-xs font-mono opacity-60 hover:opacity-100 transition-opacity"
-  class:bg-[#44475a]={$theme === 'dracula'}
-  class:text-[#f8f8f2]={$theme === 'dracula'}
-  class:bg-[#eaeef2]={$theme === 'light'}
-  class:text-[#24292f]={$theme === 'light'}
->
-  {$theme === 'dracula' ? '☀' : '☾'}
-</button>
-
-{#if showSettings}
-  <SettingsModal theme={$theme} onClose={() => (showSettings = false)} />
-{/if}

@@ -7,9 +7,8 @@
     resetToDefaults,
   } from '../lib/settings.svelte'
   import { invoke } from '../lib/tauri'
-  import type { Theme } from '../lib/theme'
 
-  const { theme, onClose }: { theme: Theme; onClose: () => void } = $props()
+  const { onClose }: { onClose: () => void } = $props()
 
   const TABS = [
     { id: 'appearance', label: 'Appearance' },
@@ -124,11 +123,7 @@
     bind:this={windowEl}
     style="width: 660px; height: 460px; min-width: 420px; min-height: 300px;
       resize: both; overflow: hidden; {windowStyle}"
-    class="flex flex-col rounded-lg border shadow-2xl"
-    class:bg-[#282a36]={theme === 'dracula'}
-    class:border-[#44475a]={theme === 'dracula'}
-    class:bg-white={theme === 'light'}
-    class:border-[#d0d7de]={theme === 'light'}
+    class="flex flex-col rounded-lg border border-border-default bg-surface shadow-2xl"
     onclick={(e) => {
       e.stopPropagation()
     }}
@@ -136,23 +131,13 @@
   >
     <!-- Title bar — drag handle -->
     <div
-      class="flex shrink-0 cursor-move items-center justify-between border-b px-4 py-3 select-none"
-      class:border-[#44475a]={theme === 'dracula'}
-      class:border-[#d0d7de]={theme === 'light'}
+      class="flex shrink-0 cursor-move items-center justify-between border-b border-border-default px-5 py-3 select-none"
       onmousedown={onTitleMousedown}
       role="presentation"
     >
-      <span
-        class="text-[13px] font-semibold"
-        class:text-[#f8f8f2]={theme === 'dracula'}
-        class:text-[#24292f]={theme === 'light'}>Settings</span
-      >
+      <span class="text-[13px] font-semibold text-on-surface">Settings</span>
       <button
-        class="text-lg leading-none px-1 cursor-default"
-        class:text-[#6272a4]={theme === 'dracula'}
-        class:hover:text-[#f8f8f2]={theme === 'dracula'}
-        class:text-[#8c959f]={theme === 'light'}
-        class:hover:text-[#24292f]={theme === 'light'}
+        class="text-lg leading-none px-1 cursor-default text-on-surface-secondary hover:text-on-surface transition-colors"
         aria-label="Close settings"
         onclick={onClose}
       >
@@ -163,26 +148,15 @@
     <!-- Body: sidebar + content -->
     <div class="flex flex-1 overflow-hidden">
       <!-- Tab sidebar -->
-      <nav
-        class="w-40 shrink-0 border-r py-2"
-        class:bg-[#21222c]={theme === 'dracula'}
-        class:border-[#44475a]={theme === 'dracula'}
-        class:bg-[#f6f8fa]={theme === 'light'}
-        class:border-[#d0d7de]={theme === 'light'}
-      >
+      <nav class="w-40 shrink-0 border-r border-border-default bg-surface-secondary py-3">
         {#each TABS as tab (tab.id)}
           <button
-            class="w-full px-4 py-1.5 text-left text-[12px]"
-            class:bg-[#50fa7b]={activeTab === tab.id && theme === 'dracula'}
-            class:text-[#282a36]={activeTab === tab.id && theme === 'dracula'}
-            class:bg-[#0969da]={activeTab === tab.id && theme === 'light'}
-            class:text-white={activeTab === tab.id && theme === 'light'}
-            class:text-[#6272a4]={activeTab !== tab.id && theme === 'dracula'}
-            class:hover:bg-[#282a36]={activeTab !== tab.id && theme === 'dracula'}
-            class:hover:text-[#f8f8f2]={activeTab !== tab.id && theme === 'dracula'}
-            class:text-[#8c959f]={activeTab !== tab.id && theme === 'light'}
-            class:hover:bg-[#eaeef2]={activeTab !== tab.id && theme === 'light'}
-            class:hover:text-[#24292f]={activeTab !== tab.id && theme === 'light'}
+            class="w-full px-4 py-2 text-left text-[13px] transition-colors"
+            class:bg-accent={activeTab === tab.id}
+            class:text-on-accent={activeTab === tab.id}
+            class:text-on-surface-secondary={activeTab !== tab.id}
+            class:hover:bg-surface-tertiary={activeTab !== tab.id}
+            class:hover:text-on-surface={activeTab !== tab.id}
             onclick={() => (activeTab = tab.id)}
             data-testid="settings-tab-{tab.id}"
           >
@@ -192,35 +166,22 @@
       </nav>
 
       <!-- Tab content -->
-      <div class="flex flex-1 flex-col overflow-y-auto p-5 gap-5">
+      <div class="flex flex-1 flex-col overflow-y-auto p-6 gap-5">
         {#if activeTab === 'appearance'}
-          <h3
-            class="text-[11px] font-semibold uppercase tracking-widest opacity-60"
-            class:text-[#6272a4]={theme === 'dracula'}
-            class:text-[#8c959f]={theme === 'light'}
-          >
+          <h3 class="text-[11px] font-semibold uppercase tracking-widest text-on-surface-secondary">
             Font Sizes
           </h3>
 
           {#each FONT_FIELDS as field (field.id)}
-            <div class="flex items-center justify-between">
-              <label
-                class="text-[13px]"
-                class:text-[#f8f8f2]={theme === 'dracula'}
-                class:text-[#24292f]={theme === 'light'}
-                for="{field.id}-font-size"
-              >
+            <div class="flex items-center justify-between py-0.5">
+              <label class="text-[13px] text-on-surface" for="{field.id}-font-size">
                 {field.label}
               </label>
               <select
                 id="{field.id}-font-size"
-                class="rounded border px-2 py-1 text-[13px] focus:outline-none"
-                class:bg-[#44475a]={theme === 'dracula'}
-                class:border-[#44475a]={theme === 'dracula'}
-                class:text-[#f8f8f2]={theme === 'dracula'}
-                class:bg-[#eaeef2]={theme === 'light'}
-                class:border-[#d0d7de]={theme === 'light'}
-                class:text-[#24292f]={theme === 'light'}
+                class="rounded-md border px-3 py-1.5 text-[13px] focus:outline-none
+                  bg-surface-tertiary border-border-default text-on-surface
+                  focus:border-border-active transition-colors"
                 value={settings[field.key]}
                 onchange={(e) => {
                   updateSetting(field.key, Number((e.target as HTMLSelectElement).value))
@@ -236,23 +197,11 @@
 
           <div class="flex-1"></div>
 
-          <div
-            class="border-t pt-4"
-            class:border-[#44475a]={theme === 'dracula'}
-            class:border-[#d0d7de]={theme === 'light'}
-          >
+          <div class="border-t border-border-default pt-4">
             <button
-              class="rounded border px-3 py-1.5 text-[12px]"
-              class:border-[#44475a]={theme === 'dracula'}
-              class:bg-[#44475a]={theme === 'dracula'}
-              class:text-[#6272a4]={theme === 'dracula'}
-              class:hover:bg-[#21222c]={theme === 'dracula'}
-              class:hover:text-[#f8f8f2]={theme === 'dracula'}
-              class:border-[#d0d7de]={theme === 'light'}
-              class:bg-[#eaeef2]={theme === 'light'}
-              class:text-[#8c959f]={theme === 'light'}
-              class:hover:bg-[#f6f8fa]={theme === 'light'}
-              class:hover:text-[#24292f]={theme === 'light'}
+              class="rounded-md border px-3 py-1.5 text-[12px]
+                border-border-default bg-surface-tertiary text-on-surface-secondary
+                hover:bg-surface-secondary hover:text-on-surface transition-colors"
               onclick={resetToDefaults}
               data-testid="restore-defaults-button"
             >
@@ -260,30 +209,17 @@
             </button>
           </div>
         {:else if activeTab === 'model'}
-          <h3
-            class="text-[11px] font-semibold uppercase tracking-widest opacity-60"
-            class:text-[#6272a4]={theme === 'dracula'}
-            class:text-[#8c959f]={theme === 'light'}
-          >
+          <h3 class="text-[11px] font-semibold uppercase tracking-widest text-on-surface-secondary">
             Language Model
           </h3>
 
-          <div class="flex items-center justify-between">
-            <label
-              class="text-[13px]"
-              class:text-[#f8f8f2]={theme === 'dracula'}
-              class:text-[#24292f]={theme === 'light'}
-              for="model-select">Model</label
-            >
+          <div class="flex items-center justify-between py-0.5">
+            <label class="text-[13px] text-on-surface" for="model-select">Model</label>
             <select
               id="model-select"
-              class="rounded border px-2 py-1 text-[13px] focus:outline-none"
-              class:bg-[#44475a]={theme === 'dracula'}
-              class:border-[#44475a]={theme === 'dracula'}
-              class:text-[#f8f8f2]={theme === 'dracula'}
-              class:bg-[#eaeef2]={theme === 'light'}
-              class:border-[#d0d7de]={theme === 'light'}
-              class:text-[#24292f]={theme === 'light'}
+              class="rounded-md border px-3 py-1.5 text-[13px] focus:outline-none
+                bg-surface-tertiary border-border-default text-on-surface
+                focus:border-border-active transition-colors"
               value={selectedModelId}
               onchange={handleModelChange}
               data-testid="model-select"
