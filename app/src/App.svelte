@@ -6,6 +6,7 @@
     DiagnosticInfo,
     FileProgressRange,
     SemanticToken,
+    SessionState,
   } from './lib/tauri'
   import Editor from './components/Editor.svelte'
   import SetupOverlay from './components/SetupOverlay.svelte'
@@ -72,6 +73,7 @@
   }
 
   // Session state
+  let editorRef = $state<Editor | null>(null)
   let editorContent = $state('')
   let proseText = $state('')
   let proseHash = $state<string | null>(null)
@@ -254,33 +256,14 @@
       sessionDirty = true
     })
 
-    // Listen for session-loaded events emitted by open_session / new_session.
-    interface SessionLoadedPayload {
-      meta: {
-        format_version: number
-        created_at: string
-        saved_at: string
-        cursor_line: number
-        cursor_col: number
-        editor_scroll_top: number
-        chat_width_pct: number
-      }
-      proof_lean: string
-      prose: { text: string; tactic_state_hash: string | null }
-      transcript: { role: string; content: string; timestamp: number }[]
-      summary: string | null
-    }
-    const sessionLoadedPromise = listen<SessionLoadedPayload>('session-loaded', (session) => {
-      editorContent = session.proof_lean
+    // Listen for session-loaded events (open/new session)
+    const sessionPromise = listen<SessionState>('session-loaded', (session) => {
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Svelte 5 bind:this doesn't expose exported functions in the component type
+      editorRef?.setContent(session.proof_lean)
       proseText = session.prose.text
       proseHash = session.prose.tactic_state_hash
-      if (session.meta.chat_width_pct > 0) {
-        chatWidthPct = session.meta.chat_width_pct
-      }
+      chatWidthPct = session.meta.chat_width_pct || 25
       sessionDirty = false
-      invoke('update_document', { content: session.proof_lean }).catch(() => {
-        /* LSP not yet connected */
-      })
     })
 
     // Listen for native menu events from the Rust backend
@@ -301,7 +284,7 @@
       tokensPromise,
       progressPromise,
       prosePromise,
-      sessionLoadedPromise,
+      sessionPromise,
       menuPromise,
     ]).then(
       ([
@@ -309,7 +292,7 @@
         unlistenTokens,
         unlistenProgress,
         unlistenProse,
-        unlistenSessionLoaded,
+        unlistenSession,
         unlistenMenu,
       ]) => {
         void startLsp()
@@ -318,7 +301,7 @@
           unlistenTokens()
           unlistenProgress()
           unlistenProse()
-          unlistenSessionLoaded()
+          unlistenSession()
           unlistenMenu()
         }
       },
@@ -470,6 +453,7 @@
       </div>
       <div class="flex-1 min-h-0">
         <Editor
+          bind:this={editorRef}
           initialTheme={$theme}
           theme={$theme}
           {diagnostics}

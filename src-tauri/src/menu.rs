@@ -5,8 +5,8 @@
 //! Settings, Hide/Show, and Quit — following Apple HIG.  On Windows/Linux
 //! Settings and Quit live inside the File menu instead.
 
-use tauri::menu::{MenuBuilder, MenuItem, SubmenuBuilder};
-use tauri::{AppHandle, Runtime};
+use tauri::menu::{AboutMetadata, MenuBuilder, MenuItem, SubmenuBuilder};
+use tauri::{include_image, AppHandle, Runtime};
 
 // ── Menu item IDs (public so tests can assert on them) ──────────────────────
 
@@ -38,7 +38,10 @@ pub fn build_menu<R: Runtime>(handle: &AppHandle<R>) -> tauri::Result<tauri::men
             MenuItem::with_id(handle, SETTINGS, "Settings...", true, Some("CmdOrCtrl+,"))?;
 
         let app_submenu = SubmenuBuilder::new(handle, "Turnstile")
-            .about(None)
+            .about(Some(AboutMetadata {
+                icon: Some(include_image!("./icons/32x32.png")),
+                ..Default::default()
+            }))
             .separator()
             .item(&settings_item)
             .separator()

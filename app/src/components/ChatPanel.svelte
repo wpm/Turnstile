@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy, tick } from 'svelte'
   import { invoke, listen } from '../lib/tauri'
-  import type { ChatTurn } from '../lib/tauri'
+  import type { ChatTurn, SessionState } from '../lib/tauri'
   import type { Theme } from '../lib/theme'
   import { parseMathSegments, renderMath } from '../lib/math'
   import { highlightLean } from '../lib/leanHighlight'
@@ -42,6 +42,7 @@
   let unlistenComplete: (() => void) | null = null
   let unlistenDelta: (() => void) | null = null
   let unlistenDone: (() => void) | null = null
+  let unlistenSession: (() => void) | null = null
 
   // ---------------------------------------------------------------------------
   // Lifecycle
@@ -69,6 +70,19 @@
       unlistenDone = fn
     })
 
+    void listen<SessionState>('session-loaded', (session) => {
+      messages = session.transcript.map((t) => ({
+        role: t.role,
+        content: t.content,
+        timestamp: t.timestamp,
+        id: nextId++,
+      }))
+      streaming = false
+      streamingContent = ''
+    }).then((fn) => {
+      unlistenSession = fn
+    })
+
     tick()
       .then(scrollToBottom)
       .catch(() => undefined)
@@ -89,6 +103,7 @@
     unlistenComplete?.()
     unlistenDelta?.()
     unlistenDone?.()
+    unlistenSession?.()
   })
 
   // Scroll to bottom when a new message is added, streaming content changes,

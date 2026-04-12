@@ -39,6 +39,24 @@ export interface ChatTurn {
   timestamp: number
 }
 
+export interface SessionMeta {
+  format_version: number
+  created_at: string
+  saved_at: string
+  cursor_line: number
+  cursor_col: number
+  editor_scroll_top: number
+  chat_width_pct: number
+}
+
+export interface SessionState {
+  meta: SessionMeta
+  proof_lean: string
+  prose: { text: string; tactic_state_hash: string | null }
+  transcript: ChatTurn[]
+  summary: string | null
+}
+
 // window.__TAURI__ is injected by Tauri when withGlobalTauri: true
 declare global {
   interface Window {

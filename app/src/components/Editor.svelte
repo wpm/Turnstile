@@ -25,6 +25,10 @@
   let container: HTMLDivElement
   let handle = $state<ReturnType<typeof mountEditor> | null>(null)
 
+  export function setContent(text: string): void {
+    handle?.setContent(text)
+  }
+
   $effect(() => {
     handle?.setTheme(theme)
   })

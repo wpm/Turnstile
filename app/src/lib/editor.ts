@@ -365,6 +365,7 @@ interface EditorHandle {
   applySemanticTokens(tokens: SemanticToken[]): void
   applyDiagnostics(diagnostics: DiagnosticInfo[]): void
   applyFileProgress(ranges: FileProgressRange[]): void
+  setContent(text: string): void
   setTheme(theme: Theme): void
   destroy(): void
 }
@@ -436,6 +437,11 @@ export function mountEditor(
     },
     applyFileProgress(ranges) {
       view.dispatch({ effects: setFileProgressEffect.of(ranges) })
+    },
+    setContent(text: string) {
+      view.dispatch({
+        changes: { from: 0, to: view.state.doc.length, insert: text },
+      })
     },
     setTheme(t: Theme) {
       view.dispatch({ effects: themeCompartment.reconfigure(themeExtension(t)) })
