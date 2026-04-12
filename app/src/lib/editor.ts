@@ -3,7 +3,6 @@ import {
   StateField,
   StateEffect,
   RangeSet,
-  type Text,
   Compartment,
   type Extension,
   type Range,
@@ -46,36 +45,14 @@ import { searchKeymap, highlightSelectionMatches } from '@codemirror/search'
 import { lintKeymap } from '@codemirror/lint'
 import type { CompletionItem, DiagnosticInfo, FileProgressRange, SemanticToken } from './tauri'
 import { fileProgressExtension, setFileProgressEffect } from './fileProgress'
-import { tokenTypeToCssClass } from './tokenTypes'
+import {
+  diagRange,
+  diagnosticGutterClass,
+  diagnosticPopupClass,
+  diagnosticSeverityClass,
+  semanticTokenRange,
+} from './editorHelpers'
 import type { Theme } from './theme'
-
-// ---------------------------------------------------------------------------
-// Bounds-checking helpers — exported for unit testing
-// ---------------------------------------------------------------------------
-
-interface DocInfo {
-  lines: number
-  lineLength: (lineNum: number) => number
-}
-
-/**
- * Compute the character offset range [from, to) for a semantic token in
- * a document, or `null` if the token falls outside document bounds.
- *
- * `lineNum` is 1-indexed.  `col` is a 0-indexed character offset within
- * the line.  `length` is the number of characters the token spans.
- */
-export function tokenRange(
-  lineNum: number,
-  col: number,
-  length: number,
-  doc: DocInfo,
-): { from: number; to: number } | null {
-  if (lineNum < 1 || lineNum > doc.lines) return null
-  const lineLen = doc.lineLength(lineNum)
-  if (col < 0 || col + length > lineLen) return null
-  return { from: col, to: col + length }
-}
 
 // ---------------------------------------------------------------------------
 // Effects — used to dispatch state changes from outside the editor
@@ -98,24 +75,9 @@ const semanticTokensField = StateField.define<DecorationSet>({
       if (effect.is(setSemanticTokensEffect)) {
         const ranges: Range<Decoration>[] = []
         for (const token of effect.value) {
-          const cssClass = tokenTypeToCssClass(token.token_type)
-          if (!cssClass) continue
-
-          // Tokens are 1-indexed from backend; CM6 lines are also 1-indexed
-          // via doc.line(n) but positions are character offsets from 0.
-          const lineNum = token.line // 1-indexed
-          if (lineNum < 1 || lineNum > tr.state.doc.lines) continue
-
-          const line = tr.state.doc.line(lineNum)
-          const lineLen = line.to - line.from
-          if (token.col < 0 || token.col + token.length > lineLen) continue
-
-          const from = line.from + token.col
-          const to = line.from + token.col + token.length
-
-          if (from >= 0 && to <= tr.state.doc.length && from <= to) {
-            ranges.push(Decoration.mark({ class: cssClass }).range(from, to))
-          }
+          const r = semanticTokenRange(token, tr.state.doc)
+          if (!r) continue
+          ranges.push(Decoration.mark({ class: r.cssClass }).range(r.from, r.to))
         }
         // RangeSet requires ranges sorted by `from`
         ranges.sort((a, b) => a.from - b.from)
@@ -160,37 +122,11 @@ const diagnosticUnderlineField = StateField.define<DecorationSet>({
       if (effect.is(setDiagnosticsEffect)) {
         const ranges: Range<Decoration>[] = []
         for (const diag of effect.value) {
-          const cssClass =
-            diag.severity === 1
-              ? 'cm-diag-error'
-              : diag.severity === 2
-                ? 'cm-diag-warning'
-                : 'cm-diag-info'
-
-          // DiagnosticInfo uses 1-indexed lines; CM6 doc.line() is also 1-indexed.
-          const startLineNum = diag.start_line
-          const endLineNum = diag.end_line
-          if (
-            startLineNum < 1 ||
-            startLineNum > tr.state.doc.lines ||
-            endLineNum < 1 ||
-            endLineNum > tr.state.doc.lines
+          const r = diagRange(diag, tr.state.doc)
+          if (!r) continue
+          ranges.push(
+            Decoration.mark({ class: diagnosticSeverityClass(diag.severity) }).range(r.from, r.to),
           )
-            continue
-
-          const startLine = tr.state.doc.line(startLineNum)
-          const endLine = tr.state.doc.line(endLineNum)
-          const startLineLen = startLine.to - startLine.from
-          const endLineLen = endLine.to - endLine.from
-          if (diag.start_col < 0 || diag.start_col > startLineLen) continue
-          if (diag.end_col < 0 || diag.end_col > endLineLen) continue
-
-          const from = startLine.from + diag.start_col
-          const to = endLine.from + diag.end_col
-
-          if (from >= 0 && to <= tr.state.doc.length && from < to) {
-            ranges.push(Decoration.mark({ class: cssClass }).range(from, to))
-          }
         }
         ranges.sort((a, b) => a.from - b.from)
         decorations = RangeSet.of(ranges)
@@ -219,21 +155,6 @@ const diagnosticListField = StateField.define<DiagnosticInfo[]>({
   },
 })
 
-/** Returns the CM6 document offset range [from, to) for a DiagnosticInfo. */
-function diagRange(diag: DiagnosticInfo, doc: Text): { from: number; to: number } | null {
-  if (
-    diag.start_line < 1 ||
-    diag.start_line > doc.lines ||
-    diag.end_line < 1 ||
-    diag.end_line > doc.lines
-  )
-    return null
-  const from = doc.line(diag.start_line).from + diag.start_col
-  const to = doc.line(diag.end_line).from + diag.end_col
-  if (from < 0 || to > doc.length || from >= to) return null
-  return { from, to }
-}
-
 const diagnosticHoverTooltip = hoverTooltip((view, pos) => {
   const diags = view.state.field(diagnosticListField)
   const hit = diags.find((d) => {
@@ -242,19 +163,12 @@ const diagnosticHoverTooltip = hoverTooltip((view, pos) => {
   })
   if (!hit) return null
 
-  const severityClass =
-    hit.severity === 1
-      ? 'lean-diag-popup-error'
-      : hit.severity === 2
-        ? 'lean-diag-popup-warning'
-        : 'lean-diag-popup-info'
-
   return {
     pos,
     above: true,
     create() {
       const dom = document.createElement('div')
-      dom.className = `lean-diag-popup ${severityClass}`
+      dom.className = `lean-diag-popup ${diagnosticPopupClass(hit.severity)}`
       dom.textContent = hit.message
       return { dom }
     },
@@ -288,14 +202,7 @@ const diagnosticGutter = gutter({
     const diag = view.state.field(diagnosticsField).get(lineNum)
     if (!diag) return null
 
-    const cssClass =
-      diag.severity === 1
-        ? 'lean-diag-error'
-        : diag.severity === 2
-          ? 'lean-diag-warning'
-          : 'lean-diag-info'
-
-    return new DiagnosticMarker(cssClass)
+    return new DiagnosticMarker(diagnosticGutterClass(diag.severity))
   },
   initialSpacer: () => new DiagnosticMarker('lean-diag-info'),
 })
