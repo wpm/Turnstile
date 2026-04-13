@@ -3,9 +3,7 @@
   import { invoke, listen } from '../lib/tauri'
   import type { ChatTurn, SessionState } from '../lib/tauri'
   import type { Theme } from '../lib/theme'
-  import { parseMathSegments, renderMath } from '../lib/math'
-  import { highlightLean } from '../lib/leanHighlight'
-  import { escapeHtml } from '../lib/leanHighlight'
+  import { renderContent } from '../lib/renderContent'
   import { showError } from '../lib/errorNotification.svelte'
 
   // ---------------------------------------------------------------------------
@@ -206,33 +204,6 @@
       e.preventDefault()
       inputHeight = INPUT_HEIGHT_MAX
     }
-  }
-
-  // ---------------------------------------------------------------------------
-  // Rich content rendering
-  // ---------------------------------------------------------------------------
-
-  function renderContent(content: string): string {
-    const parts = content.split(/(`[^`]+`)/)
-    let html = ''
-
-    for (const part of parts) {
-      if (part.startsWith('`') && part.endsWith('`') && part.length > 2) {
-        const code = part.slice(1, -1)
-        html += `<code class="chat-lean-code">${highlightLean(code)}</code>`
-      } else {
-        const segments = parseMathSegments(part)
-        for (const seg of segments) {
-          if (seg.type === 'math') {
-            html += renderMath(seg.content, seg.display)
-          } else {
-            html += escapeHtml(seg.content)
-          }
-        }
-      }
-    }
-
-    return html
   }
 </script>
 
