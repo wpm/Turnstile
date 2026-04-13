@@ -137,6 +137,73 @@ describe('renderContent', () => {
     })
   })
 
+  // ── LaTeX environments ──────────────────────────────────────────────
+
+  describe('LaTeX environments', () => {
+    it('renders theorem with bold label', () => {
+      const html = renderContent('\\begin{theorem}If $p$ is prime then $p > 1$.\\end{theorem}')
+      expect(html).toContain('<strong>')
+      expect(html).toContain('Theorem.')
+      expect(html).toContain('katex')
+    })
+
+    it('renders proof with italic label and QED square', () => {
+      const html = renderContent('\\begin{proof}Assume $n = 0$.\\end{proof}')
+      expect(html).toContain('<em>')
+      expect(html).toContain('Proof.')
+      expect(html).toContain('katex')
+      // QED square
+      expect(html).toContain('\\square')
+    })
+
+    it('renders optional title in brackets', () => {
+      const html = renderContent(
+        '\\begin{theorem}[Euclid]There are infinitely many primes.\\end{theorem}',
+      )
+      expect(html).toContain('Theorem (Euclid).')
+    })
+
+    it('renders proof with optional title', () => {
+      const html = renderContent('\\begin{proof}[Proof by contradiction]Assume not.\\end{proof}')
+      expect(html).toContain('Proof (Proof by contradiction).')
+    })
+
+    it('renders multiple sequential environments', () => {
+      const input = '\\begin{theorem}Statement.\\end{theorem}\n\\begin{proof}Obvious.\\end{proof}'
+      const html = renderContent(input)
+      expect(html).toContain('Theorem.')
+      expect(html).toContain('Proof.')
+    })
+
+    it('does not convert environments inside code fences', () => {
+      const html = renderContent('```\n\\begin{theorem}Not converted\\end{theorem}\n```')
+      expect(html).not.toContain('<strong>Theorem')
+    })
+
+    it('renders math inside environments via KaTeX', () => {
+      const html = renderContent(
+        '\\begin{lemma}For all $n \\in \\mathbb{N}$, $n \\geq 0$.\\end{lemma}',
+      )
+      expect(html).toContain('<strong>')
+      expect(html).toContain('Lemma.')
+      expect(html).toContain('katex')
+    })
+
+    it('leaves unknown environments as-is', () => {
+      const html = renderContent('\\begin{figure}A figure\\end{figure}')
+      expect(html).toContain('\\begin{figure}')
+    })
+
+    it('renders all supported environment types', () => {
+      for (const env of ['lemma', 'proposition', 'corollary', 'definition', 'remark', 'example']) {
+        const html = renderContent(`\\begin{${env}}Content.\\end{${env}}`)
+        const name = env.charAt(0).toUpperCase() + env.slice(1)
+        expect(html).toContain(`${name}.`)
+        expect(html).toContain('<strong>')
+      }
+    })
+  })
+
   // ── Edge cases ──────────────────────────────────────────────────────
 
   describe('edge cases', () => {
