@@ -105,6 +105,15 @@
   let recoveryPromptEl = $state<HTMLElement | null>(null)
   let recoveryTriggerEl: Element | null = null
 
+  // When the Editor remounts (e.g. after toggling prose → formal), restore the
+  // current content into the fresh CodeMirror instance.
+  $effect(() => {
+    if (editorRef && editorContent) {
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Svelte 5 bind:this doesn't expose exported functions in the component type
+      editorRef.setContent(editorContent)
+    }
+  })
+
   // Focus management for the recovery prompt: move focus in on open, return on close.
   $effect(() => {
     if (showRecoveryPrompt) {
