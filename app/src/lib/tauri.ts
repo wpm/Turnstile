@@ -47,6 +47,7 @@ export interface SessionMeta {
   cursor_col: number
   editor_scroll_top: number
   chat_width_pct: number
+  proof_view?: string
 }
 
 export interface SessionState {

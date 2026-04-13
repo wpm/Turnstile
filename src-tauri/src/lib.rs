@@ -21,7 +21,7 @@ pub mod settings;
 mod setup;
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use serde_json::json;
@@ -53,6 +53,14 @@ pub struct AppState {
     pub session_dirty: Arc<AtomicBool>,
     /// Latest LSP diagnostics for the Lean source file.
     pub current_diagnostics: Arc<Mutex<Vec<lsp::DiagnosticInfo>>>,
+    /// Whether the formal proof has changed since the last prose generation.
+    pub prose_dirty: Arc<AtomicBool>,
+    /// Monotonically increasing sequence number for prose generation requests.
+    /// Used to discard stale results when the source changes mid-generation.
+    pub prose_generation_seq: Arc<AtomicU64>,
+    /// Hash of the Lean source that produced the current prose. Empty if no
+    /// prose has been generated yet.
+    pub prose_source_hash: Arc<Mutex<String>>,
 }
 
 impl AppState {
@@ -230,7 +238,100 @@ async fn update_document(app: AppHandle, content: String) -> Result<(), String> 
         }
     }
 
+    // Mark prose as dirty and kick off a debounced background regeneration.
+    state.prose_dirty.store(true, Ordering::SeqCst);
+    let seq = state.prose_generation_seq.fetch_add(1, Ordering::SeqCst) + 1;
+    spawn_prose_regeneration(app.clone(), seq);
+
     Ok(())
+}
+
+/// Spawn a background task that waits for the editing debounce period, then
+/// regenerates the prose proof if the source has settled and compiles cleanly.
+fn spawn_prose_regeneration(app: AppHandle, seq: u64) {
+    tokio::spawn(async move {
+        // Debounce: wait 2 seconds for edits to settle.
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+        let state = app.state::<AppState>();
+
+        loop {
+            // Check if this task is still current (no newer edit arrived).
+            let current_seq = state.prose_generation_seq.load(Ordering::SeqCst);
+            if current_seq != seq {
+                return; // A newer edit superseded us.
+            }
+
+            // Check that there are zero errors in diagnostics.
+            let has_errors = {
+                let diags = state.current_diagnostics.lock().unwrap();
+                diags.iter().any(|d| d.severity == 1)
+            };
+            if has_errors {
+                return; // Don't translate a broken proof.
+            }
+
+            // Check if the source actually changed from what we last translated.
+            let source = state.current_source.lock().await.clone();
+            let source_hash = chat::compute_source_hash(&source);
+            {
+                let existing_hash = state.prose_source_hash.lock().unwrap();
+                if *existing_hash == source_hash {
+                    return; // Source hasn't changed (e.g. type then undo).
+                }
+            }
+
+            if source.trim().is_empty() {
+                return; // Nothing to translate.
+            }
+
+            // Clear dirty flag before starting generation.
+            state.prose_dirty.store(false, Ordering::SeqCst);
+
+            // Generate prose via the LLM.
+            let backend = state.chat_backend.clone();
+            let result = backend
+                .send_raw_message(chat::TRANSLATOR_PROMPT, &source, &app)
+                .await;
+
+            // Check if we're still current after the (potentially long) LLM call.
+            let current_seq = state.prose_generation_seq.load(Ordering::SeqCst);
+            if current_seq != seq {
+                return; // Source changed during generation; discard.
+            }
+
+            if let Ok(turn) = result {
+                // Store the result.
+                *state.current_prose.lock().await = turn.content.clone();
+                *state.prose_source_hash.lock().unwrap() = source_hash;
+
+                #[derive(serde::Serialize)]
+                struct ProsePayload {
+                    text: String,
+                    hash: Option<String>,
+                }
+                let hash = chat::compute_source_hash(&source);
+                app.emit(
+                    "prose-updated",
+                    &ProsePayload {
+                        text: turn.content,
+                        hash: Some(hash),
+                    },
+                )
+                .ok();
+
+                state.session_dirty.store(true, Ordering::SeqCst);
+            }
+
+            // If an edit arrived during generation, re-trigger (loop back with debounce).
+            if state.prose_dirty.load(Ordering::SeqCst) {
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                continue;
+            }
+
+            return; // Done — prose is up to date.
+        }
+    });
 }
 
 #[tauri::command]
@@ -439,6 +540,9 @@ pub fn run() {
                 current_session_path: Arc::new(tokio::sync::Mutex::new(None)),
                 session_dirty: Arc::new(AtomicBool::new(false)),
                 current_diagnostics: Arc::new(Mutex::new(Vec::new())),
+                prose_dirty: Arc::new(AtomicBool::new(false)),
+                prose_generation_seq: Arc::new(AtomicU64::new(0)),
+                prose_source_hash: Arc::new(Mutex::new(String::new())),
             });
 
             Ok(())
@@ -466,6 +570,7 @@ pub fn run() {
             chat::send_chat_message,
             chat::get_chat_state,
             chat::load_chat_state,
+            chat::generate_prose,
             settings::get_settings,
             settings::save_settings,
             settings::get_available_models,

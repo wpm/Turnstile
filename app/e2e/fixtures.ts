@@ -127,6 +127,20 @@ export async function injectTauriMock(page: Page, opts: TauriMockOptions = {}): 
             if (cmd === 'delete_auto_save') return Promise.resolve(null)
             if (cmd === 'get_last_session') return Promise.resolve(null)
             if (cmd === 'set_last_session') return Promise.resolve(null)
+            if (cmd === 'generate_prose') {
+              // Simulate async prose generation — emit prose-updated after a tick.
+              void Promise.resolve().then(() => {
+                for (const cb2 of listeners.get('prose-updated') ?? []) {
+                  cb2({
+                    payload: {
+                      text: '\\begin{theorem}[Mock]\nA mock prose proof.\n\\end{theorem}\n\n\\begin{proof}\nTrivial. $\\square$\n\\end{proof}',
+                      hash: 'mock-hash',
+                    },
+                  })
+                }
+              })
+              return Promise.resolve('mock prose')
+            }
             return Promise.resolve(null)
           },
         },
