@@ -9,7 +9,7 @@
 use tauri::include_image;
 #[cfg(target_os = "macos")]
 use tauri::menu::AboutMetadata;
-use tauri::menu::{MenuBuilder, MenuItem, SubmenuBuilder};
+use tauri::menu::{MenuBuilder, MenuItem, MenuItemKind, SubmenuBuilder};
 use tauri::{AppHandle, Runtime};
 
 // ── Menu item IDs (public so tests can assert on them) ──────────────────────
@@ -81,7 +81,7 @@ pub fn build_menu<R: Runtime>(handle: &AppHandle<R>) -> tauri::Result<tauri::men
         handle,
         SAVE_SESSION,
         "Save Session",
-        true,
+        false,
         Some("CmdOrCtrl+S"),
     )?;
     let save_as_item = MenuItem::with_id(
@@ -129,6 +129,27 @@ pub fn build_menu<R: Runtime>(handle: &AppHandle<R>) -> tauri::Result<tauri::men
     menu = menu.item(&edit_submenu);
 
     menu.build()
+}
+
+// ── Commands ───────────────────────────────────────────────────────────
+
+/// Enable or disable a menu item by its ID.
+#[tauri::command]
+pub fn set_menu_item_enabled(app: AppHandle, id: String, enabled: bool) -> Result<(), String> {
+    let menu = app
+        .menu()
+        .ok_or_else(|| "No application menu found".to_string())?;
+
+    let item = menu
+        .get(&id)
+        .ok_or_else(|| format!("Menu item '{id}' not found"))?;
+
+    match item {
+        MenuItemKind::MenuItem(mi) => mi
+            .set_enabled(enabled)
+            .map_err(|e| format!("Failed to set enabled: {e}")),
+        _ => Err(format!("Menu item '{id}' is not a regular MenuItem")),
+    }
 }
 
 #[cfg(test)]
