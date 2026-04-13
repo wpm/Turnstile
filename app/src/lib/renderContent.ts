@@ -7,10 +7,11 @@
  *
  * Pipeline:
  *   1. Protect fenced code blocks from math extraction
- *   2. Extract math delimiters as placeholders
- *   3. Restore code fences (so ``marked`` processes them)
- *   4. Run ``marked.parse`` with a custom renderer for Lean highlighting
- *   5. Replace math placeholders with KaTeX-rendered HTML
+ *   2. Convert LaTeX environments (theorem, proof, …) to markdown
+ *   3. Extract math delimiters as placeholders
+ *   4. Restore code fences (so ``marked`` processes them)
+ *   5. Run ``marked.parse`` with a custom renderer for Lean highlighting
+ *   6. Replace math placeholders with KaTeX-rendered HTML
  */
 
 import { Marked } from 'marked'
@@ -59,7 +60,45 @@ function restoreCodeFences(text: string, fences: Map<string, string>): string {
   return result
 }
 
-// ── Step 2: Extract math delimiters ─────────────────────────────────────
+// ── Step 2: Convert LaTeX environments to markdown ─────────────────────
+
+const SUPPORTED_ENVS = [
+  'theorem',
+  'lemma',
+  'proposition',
+  'corollary',
+  'definition',
+  'remark',
+  'example',
+  'proof',
+]
+
+const ENV_RE = new RegExp(
+  `\\\\begin\\{(${SUPPORTED_ENVS.join('|')})\\}` +
+    `(?:\\[([^\\]]*)\\])?` +
+    `([\\s\\S]*?)` +
+    `\\\\end\\{\\1\\}`,
+  'g',
+)
+
+function capitalize(s: string): string {
+  return s.charAt(0).toUpperCase() + s.slice(1)
+}
+
+function convertLatexEnvironments(text: string): string {
+  return text.replace(ENV_RE, (_, env: string, title: string | undefined, body: string) => {
+    const trimmed = body.trim()
+    if (env === 'proof') {
+      const label = title ? `*Proof (${title}).*` : '*Proof.*'
+      return `${label} ${trimmed} $\\square$`
+    }
+    const name = capitalize(env)
+    const label = title ? `**${name} (${title}).**` : `**${name}.**`
+    return `${label} ${trimmed}`
+  })
+}
+
+// ── Step 3: Extract math delimiters ─────────────────────────────────────
 
 // Match $$...$$ (display) first, then $...$ (inline).
 const MATH_RE = /\$\$([\s\S]*?)\$\$|\$((?:[^$\\]|\\.)+?)\$/g
@@ -82,7 +121,7 @@ function extractMath(text: string): { cleaned: string; segments: Map<string, Mat
   return { cleaned, segments }
 }
 
-// ── Step 5: Restore math placeholders with KaTeX HTML ───────────────────
+// ── Step 6: Restore math placeholders with KaTeX HTML ──────────────────
 
 function restoreMath(html: string, segments: Map<string, MathEntry>): string {
   let result = html
@@ -92,7 +131,7 @@ function restoreMath(html: string, segments: Map<string, MathEntry>): string {
   return result
 }
 
-// ── Step 4: Configure marked with custom renderer ───────────────────────
+// ── Step 5: Configure marked with custom renderer ──────────────────────
 
 const marked = new Marked({
   gfm: true,
@@ -123,15 +162,18 @@ export function renderContent(content: string): string {
   // 1. Protect code fences from math extraction
   const { cleaned: noFences, fences } = protectCodeFences(content)
 
-  // 2. Extract math as placeholders
-  const { cleaned: noMath, segments } = extractMath(noFences)
+  // 2. Convert LaTeX environments to markdown
+  const noEnvs = convertLatexEnvironments(noFences)
 
-  // 3. Restore code fences for marked to process
+  // 3. Extract math as placeholders
+  const { cleaned: noMath, segments } = extractMath(noEnvs)
+
+  // 4. Restore code fences for marked to process
   const restored = restoreCodeFences(noMath, fences)
 
-  // 4. Parse markdown
+  // 5. Parse markdown
   const html = marked.parse(restored) as string
 
-  // 5. Replace math placeholders with KaTeX output
+  // 6. Replace math placeholders with KaTeX output
   return restoreMath(html, segments)
 }
