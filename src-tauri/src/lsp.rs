@@ -1006,4 +1006,70 @@ mod tests {
         // Just dropping should work fine.
         drop(client);
     }
+
+    #[test]
+    fn path_to_file_uri_encodes_hash() {
+        let path = Path::new("/home/user/my#project");
+        let uri = path_to_file_uri(path);
+        assert!(
+            uri.contains("%23"),
+            "hash should be percent-encoded, got: {uri}"
+        );
+    }
+
+    #[test]
+    fn parse_token_legend_missing_provider_returns_empty() {
+        // capabilities present but no semanticTokensProvider key
+        let result = json!({ "capabilities": { "textDocument": {} } });
+        assert!(parse_token_legend(&result).is_empty());
+    }
+
+    #[test]
+    fn parse_file_progress_skips_malformed_range() {
+        let params = json!({
+            "processing": [
+                { "range": { "start": { "character": 0 }, "end": { "line": 5, "character": 0 } } },
+                { "range": { "start": { "line": 1, "character": 0 }, "end": { "line": 3, "character": 0 } } }
+            ]
+        });
+        let ranges = parse_file_progress(&params);
+        assert_eq!(ranges.len(), 1, "malformed entry should be skipped");
+        assert_eq!(ranges[0].start_line, 2);
+    }
+
+    #[test]
+    fn parse_diagnostics_defaults_severity_to_1() {
+        let params = json!({
+            "diagnostics": [{
+                "range": {
+                    "start": { "line": 0, "character": 0 },
+                    "end":   { "line": 0, "character": 1 }
+                },
+                "message": "err"
+            }]
+        });
+        let diags = parse_diagnostics(&params);
+        assert_eq!(diags[0].severity, 1);
+    }
+
+    #[test]
+    fn parse_diagnostics_defaults_message_to_empty() {
+        let params = json!({
+            "diagnostics": [{
+                "range": {
+                    "start": { "line": 0, "character": 0 },
+                    "end":   { "line": 0, "character": 1 }
+                },
+                "severity": 2
+            }]
+        });
+        let diags = parse_diagnostics(&params);
+        assert_eq!(diags[0].message, "");
+    }
+
+    #[test]
+    fn initialize_params_process_id_matches() {
+        let params = initialize_params("file:///tmp");
+        assert_eq!(params["processId"], std::process::id());
+    }
 }

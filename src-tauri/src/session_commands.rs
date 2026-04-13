@@ -330,4 +330,33 @@ mod tests {
         std::fs::write(dir.path().join("last_session.txt"), "").unwrap();
         assert_eq!(read_last_session(dir.path()), None);
     }
+
+    #[test]
+    fn last_session_returns_none_when_whitespace_only() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("last_session.txt"), "  \n  ").unwrap();
+        assert_eq!(read_last_session(dir.path()), None);
+    }
+
+    #[test]
+    fn last_session_round_trip_with_spaces_in_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let path_with_spaces = Path::new("/home/user/my proofs/session.turn");
+        write_last_session(dir.path(), path_with_spaces).unwrap();
+        assert_eq!(
+            read_last_session(dir.path()),
+            Some("/home/user/my proofs/session.turn".to_string())
+        );
+    }
+
+    #[test]
+    fn last_session_overwrite_returns_new_path() {
+        let dir = tempfile::tempdir().unwrap();
+        write_last_session(dir.path(), Path::new("/old/path.turn")).unwrap();
+        write_last_session(dir.path(), Path::new("/new/path.turn")).unwrap();
+        assert_eq!(
+            read_last_session(dir.path()),
+            Some("/new/path.turn".to_string())
+        );
+    }
 }

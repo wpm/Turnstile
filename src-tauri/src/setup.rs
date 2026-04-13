@@ -556,4 +556,59 @@ mod tests {
         );
         assert!(path_str.ends_with("lake") || path_str.ends_with("lake.exe"));
     }
+
+    #[test]
+    fn setup_incomplete_when_version_wrong() {
+        let dir = temp_project();
+        let sentinel = json!({
+            "version": "999",
+            "mathlib_rev": MATHLIB_REV,
+            "lean_toolchain": LEAN_TOOLCHAIN,
+        });
+        fs::write(
+            dir.path().join(".turnstile-ready"),
+            serde_json::to_string(&sentinel).unwrap(),
+        )
+        .unwrap();
+        assert!(!check_setup_complete(dir.path()));
+    }
+
+    #[test]
+    fn setup_incomplete_when_version_missing() {
+        let dir = temp_project();
+        let sentinel = json!({
+            "mathlib_rev": MATHLIB_REV,
+            "lean_toolchain": LEAN_TOOLCHAIN,
+        });
+        fs::write(
+            dir.path().join(".turnstile-ready"),
+            serde_json::to_string(&sentinel).unwrap(),
+        )
+        .unwrap();
+        assert!(!check_setup_complete(dir.path()));
+    }
+
+    #[test]
+    fn setup_complete_ignores_extra_fields() {
+        let dir = temp_project();
+        let mut sentinel = json!({
+            "version": SENTINEL_VERSION,
+            "mathlib_rev": MATHLIB_REV,
+            "lean_toolchain": LEAN_TOOLCHAIN,
+        });
+        sentinel["extra_field"] = json!("ignored");
+        fs::write(
+            dir.path().join(".turnstile-ready"),
+            serde_json::to_string(&sentinel).unwrap(),
+        )
+        .unwrap();
+        assert!(check_setup_complete(dir.path()));
+    }
+
+    #[test]
+    fn setup_incomplete_when_sentinel_empty() {
+        let dir = temp_project();
+        fs::write(dir.path().join(".turnstile-ready"), "").unwrap();
+        assert!(!check_setup_complete(dir.path()));
+    }
 }

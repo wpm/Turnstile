@@ -223,4 +223,31 @@ mod tests {
         let s = load_settings(dir.path());
         assert_eq!(s.theme, "dark");
     }
+
+    #[test]
+    fn partial_json_loads_specified_fields_defaults_rest() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("settings.json"),
+            br#"{"editor_font_size": 20}"#,
+        )
+        .unwrap();
+        let s = load_settings(dir.path());
+        assert_eq!(s.editor_font_size, 20);
+        assert_eq!(s.prose_font_size, 13); // default
+        assert_eq!(s.chat_font_size, 13); // default
+        assert_eq!(s.model, None); // default
+    }
+
+    #[test]
+    fn extra_unknown_keys_ignored() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("settings.json"),
+            br#"{"editor_font_size": 15, "unknown_future_field": true}"#,
+        )
+        .unwrap();
+        let s = load_settings(dir.path());
+        assert_eq!(s.editor_font_size, 15);
+    }
 }
