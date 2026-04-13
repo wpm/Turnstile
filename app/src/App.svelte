@@ -15,9 +15,10 @@
   import ProofViewToggle from './components/ProofViewToggle.svelte'
   import ProsePanel from './components/ProsePanel.svelte'
   import { renderContent } from './lib/renderContent'
-  import { settings } from './lib/settings.svelte'
-  import { theme, toggleTheme } from './lib/theme'
+  import { theme, systemTheme, toggleTheme, resolveTheme } from './lib/theme'
+  import type { ResolvedTheme } from './lib/theme'
   import {
+    settings,
     parseSettings,
     applySettings,
     setAvailableModels,
@@ -36,9 +37,14 @@
   let fileProgress = $state<FileProgressRange[] | null>(null)
   let showSettings = $state(false)
 
+  // Derive the concrete dark/light theme from the preference + OS setting.
+  let resolved: ResolvedTheme = $derived(resolveTheme($theme, $systemTheme))
+
   // .light on <html> so fixed-position elements (modals, overlays) inherit CSS variables.
+  // data-theme-resolved disables the CSS prefers-color-scheme fallback once JS is in control.
   $effect(() => {
-    document.documentElement.classList.toggle('light', $theme === 'light')
+    document.documentElement.setAttribute('data-theme-resolved', '')
+    document.documentElement.classList.toggle('light', resolved === 'light')
   })
 
   // Splitter state for resizable chat panel
@@ -240,6 +246,14 @@
   onMount(() => {
     window.addEventListener('keydown', handleKeydown)
 
+    // Track the OS color-scheme preference so "auto" mode can react in real time.
+    const mql = window.matchMedia('(prefers-color-scheme: dark)')
+    systemTheme.set(mql.matches ? 'dark' : 'light')
+    const onSystemChange = (e: MediaQueryListEvent): void => {
+      systemTheme.set(e.matches ? 'dark' : 'light')
+    }
+    mql.addEventListener('change', onSystemChange)
+
     // Load persisted settings and available models from Rust backend.
     invoke<Record<string, unknown>>('get_settings')
       .then((raw) => {
@@ -339,6 +353,7 @@
     return () => {
       clearInterval(autoSaveTimer)
       window.removeEventListener('keydown', handleKeydown)
+      mql.removeEventListener('change', onSystemChange)
     }
   })
 
@@ -518,8 +533,8 @@
         {#if proofView === 'formal'}
           <Editor
             bind:this={editorRef}
-            initialTheme={$theme}
-            theme={$theme}
+            initialTheme={resolved}
+            theme={resolved}
             {diagnostics}
             {semanticTokens}
             {fileProgress}
@@ -563,15 +578,13 @@
       style="width: {chatWidthPct}%"
     >
       <ChatPanel
-        theme={$theme}
+        theme={resolved}
         onToggleTheme={() => {
-          theme.update((current) => {
-            const next = toggleTheme(current)
-            void updateSetting('theme', next).catch((err: unknown) => {
-              const msg = err instanceof Error ? err.message : String(err)
-              showError(`Failed to save theme: ${msg}`)
-            })
-            return next
+          const next = toggleTheme(resolved)
+          theme.set(next)
+          void updateSetting('theme', next).catch((err: unknown) => {
+            const msg = err instanceof Error ? err.message : String(err)
+            showError(`Failed to save theme: ${msg}`)
           })
         }}
       />

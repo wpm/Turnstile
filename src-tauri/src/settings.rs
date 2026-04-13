@@ -12,7 +12,7 @@ use tauri::Manager;
 use crate::models;
 
 fn default_theme() -> String {
-    "dark".to_string()
+    "auto".to_string()
 }
 
 /// Persisted application settings.
@@ -195,12 +195,12 @@ mod tests {
     }
 
     #[test]
-    fn theme_defaults_to_dark() {
-        assert_eq!(Settings::default().theme, "dark");
+    fn theme_defaults_to_auto() {
+        assert_eq!(Settings::default().theme, "auto");
     }
 
     #[test]
-    fn theme_round_trip() {
+    fn theme_round_trip_light() {
         let dir = tempfile::tempdir().unwrap();
         let original = Settings {
             theme: "light".to_string(),
@@ -209,6 +209,18 @@ mod tests {
         save_settings_to_disk(&original, dir.path()).unwrap();
         let loaded = load_settings(dir.path());
         assert_eq!(loaded.theme, "light");
+    }
+
+    #[test]
+    fn theme_round_trip_auto() {
+        let dir = tempfile::tempdir().unwrap();
+        let original = Settings {
+            theme: "auto".to_string(),
+            ..Settings::default()
+        };
+        save_settings_to_disk(&original, dir.path()).unwrap();
+        let loaded = load_settings(dir.path());
+        assert_eq!(loaded.theme, "auto");
     }
 
     #[test]
@@ -221,7 +233,7 @@ mod tests {
         )
         .unwrap();
         let s = load_settings(dir.path());
-        assert_eq!(s.theme, "dark");
+        assert_eq!(s.theme, "auto");
     }
 
     #[test]

@@ -15,24 +15,34 @@ vi.mock('./tauri', () => ({
 }))
 
 describe('parseSettings theme field', () => {
-  it('parses theme from raw settings', () => {
+  it('parses theme "light" from raw settings', () => {
     const s = parseSettings({ theme: 'light' })
     expect(s.theme).toBe('light')
   })
 
-  it('defaults theme to dark when missing', () => {
+  it('parses theme "dark" from raw settings', () => {
+    const s = parseSettings({ theme: 'dark' })
+    expect(s.theme).toBe('dark')
+  })
+
+  it('parses theme "auto" from raw settings', () => {
+    const s = parseSettings({ theme: 'auto' })
+    expect(s.theme).toBe('auto')
+  })
+
+  it('defaults theme to auto when missing', () => {
     const s = parseSettings({})
-    expect(s.theme).toBe('dark')
+    expect(s.theme).toBe('auto')
   })
 
-  it('defaults theme to dark when invalid type', () => {
+  it('defaults theme to auto when invalid type', () => {
     const s = parseSettings({ theme: 123 })
-    expect(s.theme).toBe('dark')
+    expect(s.theme).toBe('auto')
   })
 
-  it('defaults theme to dark when unrecognized value', () => {
+  it('defaults theme to auto when unrecognized value', () => {
     const s = parseSettings({ theme: 'purple' })
-    expect(s.theme).toBe('dark')
+    expect(s.theme).toBe('auto')
   })
 })
 
@@ -85,7 +95,7 @@ describe('resetToDefaults', () => {
     await resetToDefaults()
     expect(settings.editorFontSize).toBe(13)
     expect(settings.model).toBeNull()
-    expect(settings.theme).toBe('dark')
+    expect(settings.theme).toBe('auto')
   })
 
   it('rolls back when backend save fails', async () => {

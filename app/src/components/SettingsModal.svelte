@@ -3,7 +3,15 @@
   import { FONT_SIZE_OPTIONS, settings, createDraft } from '../lib/settings.svelte'
   import { invoke } from '../lib/tauri'
   import { showError } from '../lib/errorNotification.svelte'
+  import { theme } from '../lib/theme'
+  import type { ThemePreference } from '../lib/theme'
   import SelectField from './SelectField.svelte'
+
+  const THEME_OPTIONS: { value: ThemePreference; label: string }[] = [
+    { value: 'auto', label: 'Auto (follow system)' },
+    { value: 'light', label: 'Light' },
+    { value: 'dark', label: 'Dark' },
+  ]
 
   const { onClose }: { onClose: () => void } = $props()
 
@@ -279,6 +287,28 @@
           class="settings-tab-panel flex flex-1 flex-col overflow-y-auto p-5 gap-5"
         >
           {#if tab.id === 'appearance'}
+            <h3 class="text-[11px] font-semibold uppercase tracking-widest text-text-secondary">
+              Theme
+            </h3>
+
+            <div class="flex items-center justify-between">
+              <span id="theme-select-label" class="text-[13px] text-text-primary">Appearance</span>
+              <SelectField
+                id="theme-select"
+                value={settings.theme}
+                options={THEME_OPTIONS}
+                onchange={(v) => {
+                  const pref = v as ThemePreference
+                  theme.set(pref)
+                  void updateSetting('theme', pref).catch((err: unknown) => {
+                    const msg = err instanceof Error ? err.message : String(err)
+                    showError(`Failed to save setting: ${msg}`)
+                  })
+                }}
+                data-testid="theme-select"
+              />
+            </div>
+
             <h3 class="text-[11px] font-semibold uppercase tracking-widest text-text-secondary">
               Font Sizes
             </h3>

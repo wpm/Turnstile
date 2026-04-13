@@ -2,7 +2,7 @@
   import { onMount, onDestroy, tick } from 'svelte'
   import { invoke, listen } from '../lib/tauri'
   import type { ChatTurn, SessionState } from '../lib/tauri'
-  import type { Theme } from '../lib/theme'
+  import type { ResolvedTheme } from '../lib/theme'
   import { renderContent } from '../lib/renderContent'
   import { showError } from '../lib/errorNotification.svelte'
   import { findAbbrevReplacement, applyAbbrevReplacement } from '../lib/leanAbbrev'
@@ -21,7 +21,7 @@
   // ---------------------------------------------------------------------------
 
   interface Props {
-    theme: Theme
+    theme: ResolvedTheme
     onToggleTheme: () => void
   }
 
