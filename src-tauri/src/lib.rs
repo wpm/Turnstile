@@ -51,6 +51,8 @@ pub struct AppState {
     pub current_session_path: Arc<tokio::sync::Mutex<Option<PathBuf>>>,
     /// Whether the session has unsaved changes.
     pub session_dirty: Arc<AtomicBool>,
+    /// Latest LSP diagnostics for the Lean source file.
+    pub current_diagnostics: Arc<Mutex<Vec<lsp::DiagnosticInfo>>>,
 }
 
 impl AppState {
@@ -333,8 +335,10 @@ fn handle_lsp_message(
         let params = msg.get("params").cloned().unwrap_or_else(|| json!({}));
         match method {
             "textDocument/publishDiagnostics" => {
-                app.emit("lsp-diagnostics", lsp::parse_diagnostics(&params))
-                    .ok();
+                let diagnostics = lsp::parse_diagnostics(&params);
+                let state = app.state::<AppState>();
+                *state.current_diagnostics.lock().unwrap() = diagnostics.clone();
+                app.emit("lsp-diagnostics", diagnostics).ok();
             }
             "$/lean/fileProgress" => {
                 app.emit("lsp-file-progress", lsp::parse_file_progress(&params))
@@ -434,6 +438,7 @@ pub fn run() {
                 settings: Arc::new(tokio::sync::Mutex::new(initial_settings)),
                 current_session_path: Arc::new(tokio::sync::Mutex::new(None)),
                 session_dirty: Arc::new(AtomicBool::new(false)),
+                current_diagnostics: Arc::new(Mutex::new(Vec::new())),
             });
 
             Ok(())

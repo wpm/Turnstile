@@ -148,6 +148,18 @@ pub fn default_tools() -> Vec<ToolDefinition> {
                 "required": ["text"]
             }),
         },
+        ToolDefinition {
+            name: "read_diagnostics".into(),
+            description: "Read the current Lean compiler diagnostics (errors and warnings). \
+                          Returns a list of errors and warnings with their locations and \
+                          messages. Info and hint diagnostics are excluded."
+                .into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {},
+                "required": []
+            }),
+        },
     ]
 }
 
@@ -449,6 +461,28 @@ impl AnthropicBackend {
                 *state.current_prose.lock().await = text.clone();
                 app.emit("prose-updated", &text).ok();
                 "Prose updated successfully.".to_string()
+            }
+            "read_diagnostics" => {
+                let all = state.current_diagnostics.lock().unwrap().clone();
+                let filtered: Vec<_> = all
+                    .iter()
+                    .filter(|d| d.severity == 1 || d.severity == 2)
+                    .collect();
+                if filtered.is_empty() {
+                    "No errors or warnings.".to_string()
+                } else {
+                    filtered
+                        .iter()
+                        .map(|d| {
+                            let kind = if d.severity == 1 { "error" } else { "warning" };
+                            format!(
+                                "{} (line {}, col {}–{}:{}): {}",
+                                kind, d.start_line, d.start_col, d.end_line, d.end_col, d.message
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                }
             }
             other => format!("Unknown tool: {other}"),
         }
@@ -837,14 +871,15 @@ mod tests {
     // -- Tool definitions ----------------------------------------------------
 
     #[test]
-    fn default_tools_has_four_entries() {
+    fn default_tools_has_five_entries() {
         let tools = default_tools();
-        assert_eq!(tools.len(), 4);
+        assert_eq!(tools.len(), 5);
         let names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
         assert!(names.contains(&"read_lean_source"));
         assert!(names.contains(&"read_tactic_state"));
         assert!(names.contains(&"read_prose"));
         assert!(names.contains(&"update_prose"));
+        assert!(names.contains(&"read_diagnostics"));
     }
 
     #[test]
