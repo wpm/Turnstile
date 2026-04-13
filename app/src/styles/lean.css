@@ -75,6 +75,7 @@
   background: var(--bg-secondary);
   border: 1px solid var(--border);
   color: var(--text-primary);
+  z-index: 1000;
 }
 
 .lean-diag-popup-error {
