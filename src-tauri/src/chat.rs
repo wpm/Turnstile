@@ -459,7 +459,19 @@ impl AnthropicBackend {
                     .unwrap_or("")
                     .to_string();
                 *state.current_prose.lock().await = text.clone();
-                app.emit("prose-updated", &text).ok();
+                #[derive(serde::Serialize)]
+                struct ProsePayload {
+                    text: String,
+                    hash: Option<String>,
+                }
+                app.emit(
+                    "prose-updated",
+                    &ProsePayload {
+                        text: text.clone(),
+                        hash: None,
+                    },
+                )
+                .ok();
                 "Prose updated successfully.".to_string()
             }
             "read_diagnostics" => {
