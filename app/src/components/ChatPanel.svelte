@@ -22,10 +22,11 @@
 
   interface Props {
     theme: ResolvedTheme
+    sessionDirty: boolean
     onToggleTheme: () => void
   }
 
-  let { theme, onToggleTheme }: Props = $props()
+  let { theme, sessionDirty, onToggleTheme }: Props = $props()
 
   // ---------------------------------------------------------------------------
   // State
@@ -286,7 +287,11 @@
     class="flex items-center justify-between px-4 py-2 border-b border-border bg-bg-secondary shrink-0"
   >
     <div class="flex items-center gap-2">
-      <div class="w-2 h-2 rounded-full bg-accent opacity-80"></div>
+      <div
+        class="w-2 h-2 rounded-full bg-accent transition-opacity duration-200"
+        class:opacity-80={sessionDirty}
+        class:opacity-0={!sessionDirty}
+      ></div>
       <span class="text-[13px] font-semibold text-text-primary tracking-wide uppercase opacity-70">
         Proof Assistant
       </span>

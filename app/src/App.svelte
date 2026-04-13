@@ -26,6 +26,7 @@
   } from './lib/settings.svelte'
   import type { ModelInfo } from './lib/settings.svelte'
   import { handleMenuEvent } from './lib/menu'
+  import { syncSaveMenuState } from './lib/saveIndicator'
   import { errorNotification, showError, dismissError } from './lib/errorNotification.svelte'
 
   let setupVisible = $state(true)
@@ -45,6 +46,13 @@
   $effect(() => {
     document.documentElement.setAttribute('data-theme-resolved', '')
     document.documentElement.classList.toggle('light', resolved === 'light')
+  })
+
+  // Keep the Save menu item enabled/disabled in sync with the dirty flag.
+  $effect(() => {
+    syncSaveMenuState(sessionDirty).catch(() => {
+      /* menu not yet available during setup */
+    })
   })
 
   // Splitter state for resizable chat panel
@@ -504,7 +512,11 @@
         class="flex items-center justify-between px-4 py-2 border-b border-border bg-bg-secondary shrink-0"
       >
         <div class="flex items-center gap-2">
-          <div class="w-2 h-2 rounded-full bg-accent opacity-80"></div>
+          <div
+            class="w-2 h-2 rounded-full bg-accent transition-opacity duration-200"
+            class:opacity-80={sessionDirty}
+            class:opacity-0={!sessionDirty}
+          ></div>
           <span
             class="text-[13px] font-semibold text-text-primary tracking-wide uppercase opacity-70"
           >
@@ -579,6 +591,7 @@
     >
       <ChatPanel
         theme={resolved}
+        {sessionDirty}
         onToggleTheme={() => {
           const next = toggleTheme(resolved)
           theme.set(next)
