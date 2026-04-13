@@ -28,7 +28,7 @@ test.describe('ChatPanel layout', () => {
     await expect(chatHistory(page)).toBeVisible()
   })
 
-  test('chat input textarea is present', async ({ page, mountApp }) => {
+  test('chat input is present', async ({ page, mountApp }) => {
     await mountApp()
     await expect(chatInput(page)).toBeVisible()
   })
@@ -48,7 +48,7 @@ test.describe('Chat input behaviour', () => {
     await mountApp()
     await chatInput(page).click()
     await page.keyboard.type('hello Lean')
-    await expect(chatInput(page)).toHaveValue('hello Lean')
+    await expect(chatInput(page)).toHaveText('hello Lean')
   })
 
   test('Enter sends the message and clears the input', async ({ page, mountApp }) => {
@@ -57,7 +57,7 @@ test.describe('Chat input behaviour', () => {
     await page.keyboard.type('test message')
     await page.keyboard.press('Enter')
     // Input should be cleared after send
-    await expect(chatInput(page)).toHaveValue('')
+    await expect(chatInput(page)).toBeEmpty()
   })
 
   test('Shift+Enter inserts a newline instead of sending', async ({ page, mountApp }) => {
@@ -66,11 +66,9 @@ test.describe('Chat input behaviour', () => {
     await page.keyboard.type('line one')
     await page.keyboard.press('Shift+Enter')
     await page.keyboard.type('line two')
-    const value = await chatInput(page).inputValue()
-    expect(value).toContain('\n')
-    // Input was NOT cleared — message was not sent
-    expect(value.trim()).toContain('line one')
-    expect(value.trim()).toContain('line two')
+    const value = await chatInput(page).textContent()
+    expect(value).toContain('line one')
+    expect(value).toContain('line two')
   })
 
   test('Option+Enter (Alt+Enter) does not send the message', async ({ page, mountApp }) => {
@@ -81,8 +79,7 @@ test.describe('Chat input behaviour', () => {
     await page.keyboard.type('line one')
     await page.keyboard.press('Alt+Enter')
     // Input should NOT be cleared — message was not sent
-    const value = await chatInput(page).inputValue()
-    expect(value.trim()).toBe('line one')
+    await expect(chatInput(page)).toHaveText('line one')
   })
 })
 

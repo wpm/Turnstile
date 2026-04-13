@@ -20,8 +20,9 @@ test.describe('Button focus states', () => {
 
   test('send button shows focus ring when focused via keyboard', async ({ page, mountApp }) => {
     await mountApp()
-    const textarea = page.locator('textarea')
-    await textarea.fill('hello')
+    const textbox = page.locator('.chat-input')
+    await textbox.click()
+    await page.keyboard.type('hello')
     const btn = page.locator('button[aria-label="Send message"]')
     await btn.focus()
     expect(await focusRing(btn)).not.toBe('none')
@@ -431,15 +432,15 @@ test.describe('Resize handle keyboard operation', () => {
 // Textarea accessible label
 // ---------------------------------------------------------------------------
 
-test.describe('Textarea accessible label', () => {
-  test('chat textarea has an accessible label', async ({ page, mountApp }) => {
+test.describe('Chat input accessible label', () => {
+  test('chat input has an accessible label', async ({ page, mountApp }) => {
     await mountApp()
-    const textarea = page.locator('textarea')
-    const ariaLabel = await textarea.getAttribute('aria-label')
-    const ariaLabelledBy = await textarea.getAttribute('aria-labelledby')
+    const textbox = page.locator('.chat-input')
+    const ariaLabel = await textbox.getAttribute('aria-label')
+    const ariaLabelledBy = await textbox.getAttribute('aria-labelledby')
     expect(
       ariaLabel ?? ariaLabelledBy,
-      'textarea must have aria-label or aria-labelledby',
+      'chat input must have aria-label or aria-labelledby',
     ).not.toBeNull()
   })
 })
