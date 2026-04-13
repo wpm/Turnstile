@@ -12,8 +12,13 @@
   import SetupOverlay from './components/SetupOverlay.svelte'
   import ChatPanel from './components/ChatPanel.svelte'
   import SettingsModal from './components/SettingsModal.svelte'
-  import { theme, toggleTheme } from './lib/theme'
+  import ProofViewToggle from './components/ProofViewToggle.svelte'
+  import ProsePanel from './components/ProsePanel.svelte'
+  import { renderContent } from './lib/renderContent'
+  import { theme, systemTheme, toggleTheme, resolveTheme } from './lib/theme'
+  import type { ResolvedTheme } from './lib/theme'
   import {
+    settings,
     parseSettings,
     applySettings,
     setAvailableModels,
@@ -33,9 +38,14 @@
   let fileProgress = $state<FileProgressRange[] | null>(null)
   let showSettings = $state(false)
 
+  // Derive the concrete dark/light theme from the preference + OS setting.
+  let resolved: ResolvedTheme = $derived(resolveTheme($theme, $systemTheme))
+
   // .light on <html> so fixed-position elements (modals, overlays) inherit CSS variables.
+  // data-theme-resolved disables the CSS prefers-color-scheme fallback once JS is in control.
   $effect(() => {
-    document.documentElement.classList.toggle('light', $theme === 'light')
+    document.documentElement.setAttribute('data-theme-resolved', '')
+    document.documentElement.classList.toggle('light', resolved === 'light')
   })
 
   // Keep the Save menu item enabled/disabled in sync with the dirty flag.
@@ -87,6 +97,9 @@
   let proseText = $state('')
   let proseHash = $state<string | null>(null)
   let sessionDirty = $state(false)
+  let proofView = $state<'formal' | 'prose'>('formal')
+  let proseGenerating = $state(false)
+  let renderedProseHtml = $derived(renderContent(proseText))
   let showRecoveryPrompt = $state(false)
   let autoSavePath = $state<string | null>(null)
   let recoveryPromptEl = $state<HTMLElement | null>(null)
@@ -117,6 +130,7 @@
     cursor_col: number
     editor_scroll_top: number
     chat_width_pct: number
+    proof_view: string
   } {
     return {
       format_version: 1,
@@ -126,6 +140,7 @@
       cursor_col: 0,
       editor_scroll_top: 0,
       chat_width_pct: chatWidthPct,
+      proof_view: proofView,
     }
   }
 
@@ -239,6 +254,14 @@
   onMount(() => {
     window.addEventListener('keydown', handleKeydown)
 
+    // Track the OS color-scheme preference so "auto" mode can react in real time.
+    const mql = window.matchMedia('(prefers-color-scheme: dark)')
+    systemTheme.set(mql.matches ? 'dark' : 'light')
+    const onSystemChange = (e: MediaQueryListEvent): void => {
+      systemTheme.set(e.matches ? 'dark' : 'light')
+    }
+    mql.addEventListener('change', onSystemChange)
+
     // Load persisted settings and available models from Rust backend.
     invoke<Record<string, unknown>>('get_settings')
       .then((raw) => {
@@ -285,6 +308,7 @@
       proseText = session.prose.text
       proseHash = session.prose.tactic_state_hash
       chatWidthPct = session.meta.chat_width_pct || 25
+      proofView = session.meta.proof_view === 'prose' ? 'prose' : 'formal'
       sessionDirty = false
     })
 
@@ -337,6 +361,7 @@
     return () => {
       clearInterval(autoSaveTimer)
       window.removeEventListener('keydown', handleKeydown)
+      mql.removeEventListener('change', onSystemChange)
     }
   })
 
@@ -495,22 +520,45 @@
           <span
             class="text-[13px] font-semibold text-text-primary tracking-wide uppercase opacity-70"
           >
-            Proof
+            {proofView === 'formal' ? 'Formal Proof' : 'Prose Proof'}
           </span>
         </div>
-        <!-- Spacer matching the theme toggle button width in ChatPanel to keep headers aligned -->
-        <div class="w-7 h-7"></div>
+        <ProofViewToggle
+          view={proofView}
+          onToggle={() => {
+            proofView = proofView === 'formal' ? 'prose' : 'formal'
+            if (proofView === 'prose' && !proseText && editorContent) {
+              proseGenerating = true
+              invoke('generate_prose')
+                .catch((err: unknown) => {
+                  const msg = err instanceof Error ? err.message : String(err)
+                  showError(`Prose generation failed: ${msg}`)
+                })
+                .finally(() => {
+                  proseGenerating = false
+                })
+            }
+          }}
+        />
       </div>
       <div class="flex-1 min-h-0">
-        <Editor
-          bind:this={editorRef}
-          initialTheme={$theme}
-          theme={$theme}
-          {diagnostics}
-          {semanticTokens}
-          {fileProgress}
-          onchange={handleChange}
-        />
+        {#if proofView === 'formal'}
+          <Editor
+            bind:this={editorRef}
+            initialTheme={resolved}
+            theme={resolved}
+            {diagnostics}
+            {semanticTokens}
+            {fileProgress}
+            onchange={handleChange}
+          />
+        {:else}
+          <ProsePanel
+            proseHtml={renderedProseHtml}
+            generating={proseGenerating}
+            fontSize={settings.proseFontSize}
+          />
+        {/if}
       </div>
     </div>
 
@@ -542,16 +590,14 @@
       style="width: {chatWidthPct}%"
     >
       <ChatPanel
-        theme={$theme}
+        theme={resolved}
         {sessionDirty}
         onToggleTheme={() => {
-          theme.update((current) => {
-            const next = toggleTheme(current)
-            void updateSetting('theme', next).catch((err: unknown) => {
-              const msg = err instanceof Error ? err.message : String(err)
-              showError(`Failed to save theme: ${msg}`)
-            })
-            return next
+          const next = toggleTheme(resolved)
+          theme.set(next)
+          void updateSetting('theme', next).catch((err: unknown) => {
+            const msg = err instanceof Error ? err.message : String(err)
+            showError(`Failed to save theme: ${msg}`)
           })
         }}
       />

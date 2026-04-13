@@ -2,11 +2,11 @@
   import { onMount, onDestroy } from 'svelte'
   import { mountEditor } from '../lib/editor'
   import type { DiagnosticInfo, FileProgressRange, SemanticToken } from '../lib/tauri'
-  import type { Theme } from '../lib/theme'
+  import type { ResolvedTheme } from '../lib/theme'
 
   interface Props {
-    initialTheme: Theme
-    theme: Theme
+    initialTheme: ResolvedTheme
+    theme: ResolvedTheme
     diagnostics?: DiagnosticInfo[] | null
     semanticTokens?: SemanticToken[] | null
     fileProgress?: FileProgressRange[] | null

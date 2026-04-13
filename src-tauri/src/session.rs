@@ -40,6 +40,9 @@ pub struct Meta {
     pub editor_scroll_top: f64,
     /// Chat/code split: chat panel width as a percentage (0–100).
     pub chat_width_pct: f64,
+    /// Which proof view was active: `"formal"` or `"prose"`. Absent in older files.
+    #[serde(default)]
+    pub proof_view: Option<String>,
 }
 
 /// Prose content with a tactic state hash for staleness detection.
@@ -267,6 +270,7 @@ mod tests {
                 cursor_col: 7,
                 editor_scroll_top: 120.5,
                 chat_width_pct: 40.0,
+                proof_view: None,
             },
             proof_lean: "theorem foo : True := by\n  trivial\n".to_string(),
             prose: ProseData {
@@ -429,6 +433,33 @@ mod tests {
         assert!(state.prose.tactic_state_hash.is_none());
         assert!(state.transcript.is_empty());
         assert!(state.summary.is_none());
+    }
+
+    #[test]
+    fn proof_view_round_trip() {
+        let mut state = sample_state();
+        state.meta.proof_view = Some("prose".to_string());
+
+        let bytes = build_zip(&state).unwrap();
+        let loaded = parse_zip(&bytes).unwrap();
+
+        assert_eq!(loaded.meta.proof_view, Some("prose".to_string()));
+    }
+
+    #[test]
+    fn proof_view_defaults_to_none() {
+        // Old meta without proof_view should deserialize to None
+        let json = r#"{
+            "format_version": 1,
+            "created_at": "",
+            "saved_at": "",
+            "cursor_line": 0,
+            "cursor_col": 0,
+            "editor_scroll_top": 0.0,
+            "chat_width_pct": 25.0
+        }"#;
+        let meta: Meta = serde_json::from_str(json).unwrap();
+        assert!(meta.proof_view.is_none());
     }
 
     #[test]

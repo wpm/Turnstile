@@ -1,14 +1,17 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import {
-    FONT_SIZE_OPTIONS,
-    settings,
-    updateSetting,
-    resetToDefaults,
-  } from '../lib/settings.svelte'
+  import { FONT_SIZE_OPTIONS, settings, createDraft, updateSetting } from '../lib/settings.svelte'
   import { invoke } from '../lib/tauri'
   import { showError } from '../lib/errorNotification.svelte'
+  import { theme } from '../lib/theme'
+  import type { ThemePreference } from '../lib/theme'
   import SelectField from './SelectField.svelte'
+
+  const THEME_OPTIONS: { value: ThemePreference; label: string }[] = [
+    { value: 'auto', label: 'Auto (follow system)' },
+    { value: 'light', label: 'Light' },
+    { value: 'dark', label: 'Dark' },
+  ]
 
   const { onClose }: { onClose: () => void } = $props()
 
@@ -22,6 +25,13 @@
     { id: 'prose', label: 'Prose', key: 'proseFontSize' as const },
     { id: 'chat', label: 'Chat', key: 'chatFontSize' as const },
   ]
+
+  const appearanceDraft = createDraft(['editorFontSize', 'proseFontSize', 'chatFontSize'])
+  const modelDraft = createDraft(['model'], {
+    afterApply: async (values) => {
+      if (values.model) await invoke('set_model', { modelId: values.model })
+    },
+  })
 
   let activeTab = $state('appearance')
 
@@ -88,7 +98,7 @@
   })
 
   const selectedModelId = $derived(
-    settings.model ??
+    modelDraft.model ??
       (settings.availableModels.length > 0 ? (settings.availableModels[0]?.id ?? '') : ''),
   )
 
@@ -278,6 +288,28 @@
         >
           {#if tab.id === 'appearance'}
             <h3 class="text-[11px] font-semibold uppercase tracking-widest text-text-secondary">
+              Theme
+            </h3>
+
+            <div class="flex items-center justify-between">
+              <span id="theme-select-label" class="text-[13px] text-text-primary">Appearance</span>
+              <SelectField
+                id="theme-select"
+                value={settings.theme}
+                options={THEME_OPTIONS}
+                onchange={(v) => {
+                  const pref = v as ThemePreference
+                  theme.set(pref)
+                  void updateSetting('theme', pref).catch((err: unknown) => {
+                    const msg = err instanceof Error ? err.message : String(err)
+                    showError(`Failed to save setting: ${msg}`)
+                  })
+                }}
+                data-testid="theme-select"
+              />
+            </div>
+
+            <h3 class="text-[11px] font-semibold uppercase tracking-widest text-text-secondary">
               Font Sizes
             </h3>
 
@@ -288,13 +320,10 @@
                 </span>
                 <SelectField
                   id="{field.id}-font-size"
-                  value={settings[field.key]}
+                  value={appearanceDraft[field.key]}
                   options={FONT_SIZE_OPTIONS.map((s) => ({ value: s, label: `${String(s)}px` }))}
                   onchange={(v) => {
-                    void updateSetting(field.key, Number(v)).catch((err: unknown) => {
-                      const msg = err instanceof Error ? err.message : String(err)
-                      showError(`Failed to save setting: ${msg}`)
-                    })
+                    appearanceDraft.set(field.key, Number(v))
                   }}
                   data-testid="{field.id}-font-size-select"
                 />
@@ -303,20 +332,34 @@
 
             <div class="flex-1"></div>
 
-            <div class="border-t border-border pt-4">
+            <div class="flex items-center justify-between border-t border-border pt-4">
               <button
                 class="rounded border border-border bg-bg-secondary px-3 py-1.5
                   text-[12px] text-text-secondary hover:bg-bg-tertiary hover:text-text-primary
                   focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
                 onclick={() => {
-                  void resetToDefaults().catch((err: unknown) => {
-                    const msg = err instanceof Error ? err.message : String(err)
-                    showError(`Failed to reset settings: ${msg}`)
-                  })
+                  appearanceDraft.fillDefaults()
                 }}
                 data-testid="restore-defaults-button"
               >
                 Restore Defaults
+              </button>
+              <button
+                disabled={!appearanceDraft.dirty}
+                class="rounded px-3 py-1.5 text-[12px]
+                  focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent
+                  {appearanceDraft.dirty
+                  ? 'bg-accent text-white hover:bg-accent/90'
+                  : 'bg-bg-secondary text-text-secondary/50 cursor-default'}"
+                onclick={() => {
+                  void appearanceDraft.apply().catch((err: unknown) => {
+                    const msg = err instanceof Error ? err.message : String(err)
+                    showError(`Failed to save settings: ${msg}`)
+                  })
+                }}
+                data-testid="apply-appearance-button"
+              >
+                Apply
               </button>
             </div>
           {:else if tab.id === 'model'}
@@ -334,15 +377,7 @@
                   label: m.display_name,
                 }))}
                 onchange={(v) => {
-                  void (async (): Promise<void> => {
-                    try {
-                      await updateSetting('model', String(v))
-                      await invoke('set_model', { modelId: String(v) })
-                    } catch (err) {
-                      const msg = err instanceof Error ? err.message : String(err)
-                      showError(`Failed to set model: ${msg}`)
-                    }
-                  })()
+                  modelDraft.set('model', String(v))
                 }}
                 data-testid="model-select"
               />
@@ -354,6 +389,26 @@
             </p>
 
             <div class="flex-1"></div>
+
+            <div class="flex items-center justify-end border-t border-border pt-4">
+              <button
+                disabled={!modelDraft.dirty}
+                class="rounded px-3 py-1.5 text-[12px]
+                  focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent
+                  {modelDraft.dirty
+                  ? 'bg-accent text-white hover:bg-accent/90'
+                  : 'bg-bg-secondary text-text-secondary/50 cursor-default'}"
+                onclick={() => {
+                  void modelDraft.apply().catch((err: unknown) => {
+                    const msg = err instanceof Error ? err.message : String(err)
+                    showError(`Failed to save settings: ${msg}`)
+                  })
+                }}
+                data-testid="apply-model-button"
+              >
+                Apply
+              </button>
+            </div>
           {/if}
         </div>
       {/each}

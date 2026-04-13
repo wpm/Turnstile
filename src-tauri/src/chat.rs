@@ -201,6 +201,16 @@ pub trait ChatBackend: Send + Sync {
         app: &AppHandle,
         user_content: &str,
     ) -> Result<Turn, ChatError>;
+
+    /// One-shot LLM call with an explicit system prompt, no tools, no multi-turn.
+    /// Used by the translator (prose generation) which needs a different prompt
+    /// than the PA conversation.
+    async fn send_raw_message(
+        &self,
+        system_prompt: &str,
+        user_content: &str,
+        app: &AppHandle,
+    ) -> Result<Turn, ChatError>;
 }
 
 // ---------------------------------------------------------------------------
@@ -360,6 +370,22 @@ impl ChatBackend for MockBackend {
         app.emit("chat-message-complete", &turn).ok();
         Ok(turn)
     }
+
+    async fn send_raw_message(
+        &self,
+        _system_prompt: &str,
+        user_content: &str,
+        app: &AppHandle,
+    ) -> Result<Turn, ChatError> {
+        let response = format!("[echo] {user_content}");
+        let turn = Turn {
+            role: Role::Assistant,
+            content: response,
+            timestamp: Utc::now().timestamp_millis(),
+        };
+        app.emit("chat-stream-done", ()).ok();
+        Ok(turn)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -369,6 +395,17 @@ impl ChatBackend for MockBackend {
 /// System prompt loaded at compile time from prompts/system.md.
 #[cfg(not(feature = "mock-llm"))]
 const SYSTEM_PROMPT: &str = include_str!("prompts/system.md");
+
+/// Translator prompt for prose proof generation, loaded at compile time.
+pub const TRANSLATOR_PROMPT: &str = include_str!("prompts/translator.md");
+
+/// Compute a fast hash of a string for change detection (not cryptographic).
+pub fn compute_source_hash(source: &str) -> String {
+    use std::hash::{DefaultHasher, Hash, Hasher};
+    let mut hasher = DefaultHasher::new();
+    source.hash(&mut hasher);
+    format!("{:016x}", hasher.finish())
+}
 
 #[cfg(not(feature = "mock-llm"))]
 pub struct AnthropicBackend {
@@ -506,6 +543,7 @@ impl AnthropicBackend {
     /// is a list of `(id, name, input_json)` for any tool calls in the response.
     async fn stream_request(
         &self,
+        system_prompt: &str,
         messages: &[serde_json::Value],
         tools: &[ToolDefinition],
         app: &AppHandle,
@@ -527,7 +565,7 @@ impl AnthropicBackend {
             "model": self.model,
             "max_tokens": 8192,
             "stream": true,
-            "system": SYSTEM_PROMPT,
+            "system": system_prompt,
             "messages": messages,
         });
 
@@ -710,8 +748,9 @@ impl ChatBackend for AnthropicBackend {
         let mut full_assistant_text = String::new();
 
         loop {
-            let (stop_reason, text_chunk, tool_calls) =
-                self.stream_request(&messages, tools, app).await?;
+            let (stop_reason, text_chunk, tool_calls) = self
+                .stream_request(SYSTEM_PROMPT, &messages, tools, app)
+                .await?;
 
             full_assistant_text.push_str(&text_chunk);
 
@@ -766,6 +805,30 @@ impl ChatBackend for AnthropicBackend {
         app.emit("chat-stream-done", ()).ok();
         app.emit("chat-message-complete", &turn).ok();
         Ok(turn)
+    }
+
+    async fn send_raw_message(
+        &self,
+        system_prompt: &str,
+        user_content: &str,
+        app: &AppHandle,
+    ) -> Result<Turn, ChatError> {
+        if self.api_key.is_empty() {
+            return Err(ChatError(
+                "ANTHROPIC_API_KEY is not set. Please set it and restart.".to_string(),
+            ));
+        }
+
+        let messages = vec![serde_json::json!({ "role": "user", "content": user_content })];
+        let (_stop_reason, text, _tool_calls) = self
+            .stream_request(system_prompt, &messages, &[], app)
+            .await?;
+
+        Ok(Turn {
+            role: Role::Assistant,
+            content: text,
+            timestamp: Utc::now().timestamp_millis(),
+        })
     }
 }
 
@@ -830,6 +893,53 @@ pub async fn load_chat_state(
 ) -> Result<(), String> {
     *state.chat_state.lock().await = new_state;
     Ok(())
+}
+
+/// Generate a prose proof from the current Lean source using the translator prompt.
+///
+/// This is a standalone LLM call — separate from the PA conversation. It reads the
+/// current source, calls the LLM with the translator system prompt, and stores the
+/// result in `current_prose`. Emits `prose-updated` on success.
+#[tauri::command]
+pub async fn generate_prose(
+    app: AppHandle,
+    state: tauri::State<'_, crate::AppState>,
+) -> Result<String, String> {
+    let source = state.current_source.lock().await.clone();
+    if source.trim().is_empty() {
+        return Ok(String::new());
+    }
+
+    let backend = state.chat_backend.clone();
+    let turn = backend
+        .send_raw_message(TRANSLATOR_PROMPT, &source, &app)
+        .await
+        .map_err(|e| e.0)?;
+
+    let prose_text = turn.content.clone();
+    let source_hash = compute_source_hash(&source);
+
+    *state.current_prose.lock().await = prose_text.clone();
+
+    #[derive(serde::Serialize)]
+    struct ProsePayload {
+        text: String,
+        hash: Option<String>,
+    }
+    app.emit(
+        "prose-updated",
+        &ProsePayload {
+            text: prose_text.clone(),
+            hash: Some(source_hash),
+        },
+    )
+    .ok();
+
+    state
+        .session_dirty
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+
+    Ok(prose_text)
 }
 
 // ---------------------------------------------------------------------------
@@ -1006,6 +1116,37 @@ mod tests {
             .transcript
             .push(make_turn(Role::User, &"a".repeat(300)));
         assert!(token_estimate(&state) >= state.max_tokens * 3 / 4);
+    }
+
+    // -- Source hash -----------------------------------------------------------
+
+    #[test]
+    fn source_hash_is_deterministic() {
+        let h1 = compute_source_hash("theorem foo : True := by trivial");
+        let h2 = compute_source_hash("theorem foo : True := by trivial");
+        assert_eq!(h1, h2);
+    }
+
+    #[test]
+    fn source_hash_differs_for_different_input() {
+        let h1 = compute_source_hash("theorem foo : True := by trivial");
+        let h2 = compute_source_hash("theorem bar : True := by trivial");
+        assert_ne!(h1, h2);
+    }
+
+    #[test]
+    fn source_hash_is_16_hex_chars() {
+        let h = compute_source_hash("hello");
+        assert_eq!(h.len(), 16);
+        assert!(h.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    // -- Translator prompt ----------------------------------------------------
+
+    #[test]
+    fn translator_prompt_is_non_empty() {
+        assert!(!TRANSLATOR_PROMPT.is_empty());
+        assert!(TRANSLATOR_PROMPT.contains("mathematical writing assistant"));
     }
 
     // -- ChatError -----------------------------------------------------------

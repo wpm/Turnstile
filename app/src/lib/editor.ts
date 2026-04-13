@@ -54,7 +54,7 @@ import {
   diagnosticSeverityClass,
   semanticTokenRange,
 } from './editorHelpers'
-import type { Theme } from './theme'
+import type { ResolvedTheme } from './theme'
 import { findAbbrevReplacement } from './leanAbbrev'
 
 // ---------------------------------------------------------------------------
@@ -346,7 +346,7 @@ const lightTheme = EditorView.theme(
   { dark: false },
 )
 
-function themeExtension(t: Theme): Extension {
+function themeExtension(t: ResolvedTheme): Extension {
   return t === 'dark' ? darkTheme : lightTheme
 }
 
@@ -355,13 +355,13 @@ interface EditorHandle {
   applyDiagnostics(diagnostics: DiagnosticInfo[]): void
   applyFileProgress(ranges: FileProgressRange[]): void
   setContent(text: string): void
-  setTheme(theme: Theme): void
+  setTheme(theme: ResolvedTheme): void
   destroy(): void
 }
 
 export function mountEditor(
   container: HTMLElement,
-  initialTheme: Theme,
+  initialTheme: ResolvedTheme,
   onChange: (content: string) => void,
 ): EditorHandle {
   const themeCompartment = new Compartment()
@@ -435,7 +435,7 @@ export function mountEditor(
         changes: { from: 0, to: view.state.doc.length, insert: text },
       })
     },
-    setTheme(t: Theme) {
+    setTheme(t: ResolvedTheme) {
       view.dispatch({ effects: themeCompartment.reconfigure(themeExtension(t)) })
     },
     destroy() {

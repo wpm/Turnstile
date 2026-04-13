@@ -7,7 +7,7 @@
  */
 
 import { invoke } from './tauri'
-import type { Theme } from './theme'
+import type { ThemePreference } from './theme'
 
 /** Selectable font sizes offered in the Settings UI. */
 export const FONT_SIZE_OPTIONS = [10, 11, 12, 13, 14, 15, 16, 18, 20]
@@ -16,12 +16,12 @@ export const FONT_SIZE_OPTIONS = [10, 11, 12, 13, 14, 15, 16, 18, 20]
  * Factory defaults — also used by `resetToDefaults`.
  * `model: null` means "use the backend default" (first entry from `get_available_models`).
  */
-const DEFAULT_SETTINGS = {
+export const DEFAULT_SETTINGS = {
   editorFontSize: 13,
   proseFontSize: 13,
   chatFontSize: 13,
   model: null as string | null,
-  theme: 'dark' as Theme,
+  theme: 'auto' as ThemePreference,
 }
 
 interface SettingsData {
@@ -29,7 +29,7 @@ interface SettingsData {
   proseFontSize: number
   chatFontSize: number
   model: string | null
-  theme: Theme
+  theme: ThemePreference
 }
 
 export interface ModelInfo {
@@ -60,8 +60,8 @@ export function parseSettings(raw: Record<string, unknown> | null | undefined): 
         : DEFAULT_SETTINGS.chatFontSize,
     model: typeof raw['model'] === 'string' ? raw['model'] : DEFAULT_SETTINGS.model,
     theme:
-      raw['theme'] === 'dark' || raw['theme'] === 'light'
-        ? (raw['theme'] as Theme)
+      raw['theme'] === 'dark' || raw['theme'] === 'light' || raw['theme'] === 'auto'
+        ? (raw['theme'] as ThemePreference)
         : DEFAULT_SETTINGS.theme,
   }
 }
@@ -85,7 +85,7 @@ let editorFontSize = $state(DEFAULT_SETTINGS.editorFontSize)
 let proseFontSize = $state(DEFAULT_SETTINGS.proseFontSize)
 let chatFontSize = $state(DEFAULT_SETTINGS.chatFontSize)
 let model = $state<string | null>(DEFAULT_SETTINGS.model)
-let themeValue = $state<Theme>(DEFAULT_SETTINGS.theme)
+let themeValue = $state<ThemePreference>(DEFAULT_SETTINGS.theme)
 let availableModels = $state<ModelInfo[]>([])
 
 export const settings = {
@@ -143,7 +143,7 @@ export async function updateSetting(
   } else if (key === 'model') {
     model = typeof value === 'string' ? value : null
   } else if (key === 'theme') {
-    themeValue = value === 'light' ? 'light' : 'dark'
+    themeValue = value === 'light' ? 'light' : value === 'auto' ? 'auto' : 'dark'
   }
   try {
     const s = serializeSettings(currentValues())
@@ -164,4 +164,82 @@ export async function resetToDefaults(): Promise<void> {
     applySettings(previous)
     throw err
   }
+}
+
+// ── Draft state for deferred Apply ───────────────────────────────────
+
+type SettingsKey = keyof SettingsData
+
+interface DraftOptions {
+  afterApply?: (values: SettingsData) => Promise<void>
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- generic key access on $state fields
+type AnyRecord = Record<string, any>
+
+class SettingsDraft {
+  #keys: SettingsKey[]
+  #committed: SettingsData
+  #afterApply: ((values: SettingsData) => Promise<void>) | null
+
+  editorFontSize = $state(DEFAULT_SETTINGS.editorFontSize)
+  proseFontSize = $state(DEFAULT_SETTINGS.proseFontSize)
+  chatFontSize = $state(DEFAULT_SETTINGS.chatFontSize)
+  model = $state<string | null>(DEFAULT_SETTINGS.model)
+  theme = $state<ThemePreference>(DEFAULT_SETTINGS.theme)
+
+  constructor(keys: SettingsKey[], options?: DraftOptions) {
+    this.#keys = keys
+    this.#afterApply = options?.afterApply ?? null
+    const snapshot = currentValues()
+    this.#committed = { ...snapshot }
+    for (const key of keys) {
+      ;(this as AnyRecord)[key] = snapshot[key]
+    }
+  }
+
+  get dirty(): boolean {
+    return this.#keys.some((key) => (this as AnyRecord)[key] !== this.#committed[key])
+  }
+
+  set(key: SettingsKey, value: number | string | null): void {
+    ;(this as AnyRecord)[key] = value
+  }
+
+  fillDefaults(): void {
+    for (const key of this.#keys) {
+      ;(this as AnyRecord)[key] = DEFAULT_SETTINGS[key]
+    }
+  }
+
+  discard(): void {
+    for (const key of this.#keys) {
+      ;(this as AnyRecord)[key] = this.#committed[key]
+    }
+  }
+
+  async apply(): Promise<void> {
+    const previous = currentValues()
+    const merged: SettingsData = { ...previous }
+    for (const key of this.#keys) {
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- dynamic key copy between same-shaped objects
+      ;(merged as AnyRecord)[key] = (this as AnyRecord)[key]
+    }
+    applySettings(merged)
+    try {
+      const s = serializeSettings(merged)
+      await invoke('save_settings', { settings: s })
+      if (this.#afterApply) {
+        await this.#afterApply(merged)
+      }
+      this.#committed = { ...merged }
+    } catch (err) {
+      applySettings(previous)
+      throw err
+    }
+  }
+}
+
+export function createDraft(keys: SettingsKey[], options?: DraftOptions): SettingsDraft {
+  return new SettingsDraft(keys, options)
 }

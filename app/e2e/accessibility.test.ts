@@ -182,17 +182,21 @@ test.describe('Settings modal keyboard navigation', () => {
     // Start from the Appearance tab button and Tab into the panel.
     await page.locator('[data-testid="settings-tab-appearance"]').focus()
     await page.keyboard.press('Tab')
-    // First focusable in Appearance panel is the Editor select.
+    // First focusable in Appearance panel is the Theme select.
     const first = await page.evaluate(() => document.activeElement?.getAttribute('data-testid'))
-    expect(first).toBe('editor-font-size-select')
+    expect(first).toBe('theme-select')
 
     await page.keyboard.press('Tab')
     const second = await page.evaluate(() => document.activeElement?.getAttribute('data-testid'))
-    expect(second).toBe('prose-font-size-select')
+    expect(second).toBe('editor-font-size-select')
 
     await page.keyboard.press('Tab')
     const third = await page.evaluate(() => document.activeElement?.getAttribute('data-testid'))
-    expect(third).toBe('chat-font-size-select')
+    expect(third).toBe('prose-font-size-select')
+
+    await page.keyboard.press('Tab')
+    const fourth = await page.evaluate(() => document.activeElement?.getAttribute('data-testid'))
+    expect(fourth).toBe('chat-font-size-select')
   })
 
   test('Tab from tab button enters active Model panel when Model tab is selected', async ({
