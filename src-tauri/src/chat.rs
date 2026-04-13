@@ -1007,4 +1007,58 @@ mod tests {
             .push(make_turn(Role::User, &"a".repeat(300)));
         assert!(token_estimate(&state) >= state.max_tokens * 3 / 4);
     }
+
+    // -- ChatError -----------------------------------------------------------
+
+    #[test]
+    fn chat_error_display() {
+        let err = ChatError("boom".into());
+        assert_eq!(format!("{err}"), "boom");
+    }
+
+    #[test]
+    fn chat_error_from_string() {
+        let err = ChatError::from("msg".to_string());
+        assert_eq!(err.0, "msg");
+    }
+
+    // -- MockBackend::from_env -----------------------------------------------
+
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn mock_backend_from_env_defaults_to_echo() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::remove_var("TURNSTILE_MOCK_LLM");
+        let backend = MockBackend::from_env();
+        assert_eq!(backend.mode, MockMode::Echo);
+    }
+
+    #[test]
+    fn mock_backend_from_env_delay() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::set_var("TURNSTILE_MOCK_LLM", "delay");
+        let backend = MockBackend::from_env();
+        std::env::remove_var("TURNSTILE_MOCK_LLM");
+        assert_eq!(backend.mode, MockMode::Delay);
+    }
+
+    #[test]
+    fn mock_backend_from_env_scripted() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::set_var("TURNSTILE_MOCK_LLM", "scripted");
+        std::env::set_var("TURNSTILE_MOCK_SCRIPT", "line1\nline2");
+        let backend = MockBackend::from_env();
+        std::env::remove_var("TURNSTILE_MOCK_LLM");
+        std::env::remove_var("TURNSTILE_MOCK_SCRIPT");
+        assert_eq!(backend.mode, MockMode::Scripted);
+        assert_eq!(backend.script, vec!["line1", "line2"]);
+    }
+
+    #[test]
+    fn mock_backend_scripted_empty_vec() {
+        let backend = MockBackend::scripted(vec![]);
+        assert_eq!(backend.mode, MockMode::Scripted);
+        assert!(backend.script.is_empty());
+    }
 }
