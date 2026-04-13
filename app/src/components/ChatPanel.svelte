@@ -5,6 +5,16 @@
   import type { Theme } from '../lib/theme'
   import { renderContent } from '../lib/renderContent'
   import { showError } from '../lib/errorNotification.svelte'
+  import { findAbbrevReplacement, applyAbbrevReplacement } from '../lib/leanAbbrev'
+  import { detectCompletedDelimiter } from '../lib/delimiterDetect'
+  import {
+    extractPlainText,
+    getCursorOffset,
+    setCursorOffset,
+    replaceRangeWithText,
+    replaceRangeWithNode,
+  } from '../lib/richInput'
+  import { createMathElement, createCodeElement } from '../lib/renderInlineContent'
 
   // ---------------------------------------------------------------------------
   // Props
@@ -25,13 +35,14 @@
 
   let messages = $state<MessageItem[]>([])
   let nextId = 0
-  let inputText = $state('')
+  let inputEl: HTMLDivElement | null = $state(null)
   let inputHeight = $state(120)
   let scrollAnchor: HTMLDivElement | null = $state(null)
   let streaming = $state(false)
   let streamingContent = $state('')
+  let inputNonEmpty = $state(false)
 
-  const canSend = $derived(inputText.trim().length > 0 && !streaming)
+  const canSend = $derived(inputNonEmpty && !streaming)
   const sendBtnClass = $derived(
     canSend
       ? 'bg-accent text-white hover:bg-accent-hover'
@@ -133,12 +144,19 @@
   // Send message
   // ---------------------------------------------------------------------------
 
+  function clearInput(): void {
+    // eslint-disable-next-line svelte/no-dom-manipulating -- contenteditable is not Svelte-managed
+    if (inputEl) inputEl.innerHTML = ''
+    inputNonEmpty = false
+  }
+
   async function sendMessage(): Promise<void> {
-    if (!canSend) return
-    const content = inputText.trim()
+    if (!canSend || !inputEl) return
+    const content = extractPlainText(inputEl).trim()
+    if (!content) return
 
     messages = [...messages, { role: 'user', content, timestamp: Date.now(), id: nextId++ }]
-    inputText = ''
+    clearInput()
     streaming = true
     streamingContent = ''
 
@@ -156,6 +174,61 @@
       e.preventDefault()
       void sendMessage()
     }
+  }
+
+  function onInput(): void {
+    const el = inputEl
+    if (!el) return
+    const plainText = extractPlainText(el)
+    inputNonEmpty = plainText.trim().length > 0
+    const cursorPos = getCursorOffset(el)
+
+    // 1. Lean abbreviation replacement
+    const abbrev = findAbbrevReplacement(plainText, cursorPos)
+    if (abbrev) {
+      const { newText, newCursorPos } = applyAbbrevReplacement(plainText, abbrev)
+      // Replace the abbreviation text in-place
+      replaceRangeWithText(el, abbrev.from, abbrev.to, abbrev.replacement)
+      inputNonEmpty = newText.trim().length > 0
+      void tick().then(() => {
+        setCursorOffset(el, newCursorPos)
+      })
+      return
+    }
+
+    // 2. Delimiter formatting
+    const delimited = detectCompletedDelimiter(plainText, cursorPos)
+    if (delimited) {
+      let node: HTMLElement
+      const sourceText = plainText.slice(delimited.from, delimited.to)
+      if (delimited.kind === 'inline-math') {
+        node = createMathElement(delimited.content, false, sourceText)
+      } else if (delimited.kind === 'display-math') {
+        node = createMathElement(delimited.content, true, sourceText)
+      } else {
+        node = createCodeElement(delimited.content, sourceText)
+      }
+      replaceRangeWithNode(el, delimited.from, delimited.to, node)
+      // Place cursor after the rendered node
+      void tick().then(() => {
+        setCursorOffset(el, delimited.from + sourceText.length)
+      })
+    }
+  }
+
+  function onPaste(e: ClipboardEvent): void {
+    e.preventDefault()
+    const text = e.clipboardData?.getData('text/plain') ?? ''
+    if (!text) return
+    const sel = window.getSelection()
+    if (!sel || sel.rangeCount === 0) return
+    const range = sel.getRangeAt(0)
+    range.deleteContents()
+    range.insertNode(document.createTextNode(text))
+    // Move cursor to end of inserted text
+    range.collapse(false)
+    sel.removeAllRanges()
+    sel.addRange(range)
   }
 
   // ---------------------------------------------------------------------------
@@ -357,15 +430,20 @@
     class="chat-input-area flex flex-col gap-2 p-3 bg-bg-secondary shrink-0"
     style="height: {inputHeight}px; min-height: 60px"
   >
-    <textarea
-      class="chat-input flex-1 min-h-0 w-full resize-none rounded border border-border p-2 text-[13px]
-        font-mono outline-none bg-bg-primary text-text-primary placeholder:text-text-secondary
-        focus:border-accent transition-colors"
+    <div
+      bind:this={inputEl}
+      contenteditable="true"
+      role="textbox"
+      tabindex="0"
       aria-label="Message to proof assistant"
-      placeholder="Ask about your Lean proof…"
-      bind:value={inputText}
+      aria-multiline="true"
+      class="chat-input flex-1 min-h-0 w-full overflow-y-auto rounded border border-border p-2 text-[13px]
+        font-mono outline-none bg-bg-primary text-text-primary
+        focus:border-accent transition-colors"
+      oninput={onInput}
       onkeydown={onKeydown}
-    ></textarea>
+      onpaste={onPaste}
+    ></div>
     <div class="flex items-center justify-between shrink-0">
       <span class="text-[11px] text-text-secondary"> Enter to send · Shift+Enter for newline </span>
       <button
@@ -413,5 +491,34 @@
     40% {
       opacity: 1;
     }
+  }
+
+  /* Contenteditable placeholder */
+  .chat-input[contenteditable]:empty::before {
+    content: 'Ask about your Lean proof\2026';
+    color: var(--text-secondary, #6c7086);
+    pointer-events: none;
+  }
+
+  /* Rendered inline elements (math, code) inside the input */
+  :global(.chat-rendered-inline) {
+    display: inline;
+    border-radius: 3px;
+    padding: 0 2px;
+    user-select: all;
+    cursor: default;
+  }
+  :global(.chat-rendered-math) {
+    background: var(--bg-tertiary, rgba(127, 127, 127, 0.1));
+  }
+  :global(.chat-rendered-code) {
+    background: var(--bg-tertiary, rgba(127, 127, 127, 0.1));
+    font-family: inherit;
+  }
+
+  /* Prevent contenteditable whitespace-pre issues */
+  .chat-input[contenteditable] {
+    white-space: pre-wrap;
+    word-wrap: break-word;
   }
 </style>

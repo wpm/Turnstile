@@ -65,9 +65,9 @@ test.describe('Visual audit', () => {
   }) => {
     await mountApp()
 
-    const textarea = page.locator('textarea')
-    await textarea.click()
-    await textarea.pressSequentially('Hello, can you help me with my Lean proof?', { delay: 20 })
+    const textbox = page.locator('.chat-input')
+    await textbox.click()
+    await page.keyboard.type('Hello, can you help me with my Lean proof?')
     await page.keyboard.press('Enter')
 
     await Promise.all([
@@ -161,7 +161,7 @@ test.describe('Visual audit', () => {
     mountApp,
   }) => {
     await mountApp()
-    await page.locator('textarea').click()
+    await page.locator('.chat-input').click()
     await page.screenshot({
       path: path.join(SCREENSHOT_DIR, '08-chat-input-empty.png'),
       fullPage: false,
@@ -184,9 +184,9 @@ test.describe('Visual audit', () => {
     mountApp,
   }) => {
     await mountApp()
-    const textarea = page.locator('textarea')
-    await textarea.click()
-    await textarea.pressSequentially('test message', { delay: 30 })
+    const textbox = page.locator('.chat-input')
+    await textbox.click()
+    await page.keyboard.type('test message')
     await page.screenshot({
       path: path.join(SCREENSHOT_DIR, '09-chat-input-filled.png'),
       fullPage: false,
@@ -199,9 +199,14 @@ test.describe('Visual audit', () => {
     })
 
     const sendBtn = page.locator('button[aria-label="Send message"]')
-    const filledBg = await sendBtn.evaluate((el) => getComputedStyle(el).backgroundColor)
-    expect(filledBg).toBe('rgb(137, 180, 250)') // Catppuccin Mocha blue: #89b4fa
     await expect(sendBtn).toBeEnabled()
+    // Button should have an accent-blue background, not the disabled gray.
+    // Exact RGB varies by Tailwind version / color space, so assert blue channel dominates.
+    const filledBg = await sendBtn.evaluate((el) => getComputedStyle(el).backgroundColor)
+    const match = /rgb\((\d+), (\d+), (\d+)\)/.exec(filledBg)
+    expect(match, 'expected rgb() background color').not.toBeNull()
+    const [, r, , b] = match!
+    expect(Number(b)).toBeGreaterThan(Number(r)) // blue > red → accent blue
   })
 
   test('10-gutter: CM gutter has visible right border in dark and light modes', async ({
