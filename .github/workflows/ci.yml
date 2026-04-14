@@ -205,11 +205,14 @@ jobs:
           find . -not -path '*/target/*' \( -name '*.rs' -o -name 'Cargo.toml' -o -name 'Cargo.lock' -o -name 'build.rs' \) -exec touch -t "$ts" {} +
           touch -t "$ts" .cargo/config.toml
 
-      # Compile once with coverage instrumentation. --no-report skips the
-      # report step; downstream jobs run the tests and emit lcov via
-      # --no-clean, which reuses these artifacts.
+      # Compile once with coverage instrumentation. `show-env --sh` exports
+      # the env vars (RUSTFLAGS=-Cinstrument-coverage, LLVM_PROFILE_FILE,
+      # etc.) that cargo-llvm-cov normally injects, so `cargo test --no-run`
+      # produces artifacts that the downstream llvm-cov jobs can reuse.
       - name: Compile all test binaries with coverage instrumentation
-        run: cargo llvm-cov --no-report --no-run
+        run: |
+          source <(cargo llvm-cov show-env --sh)
+          cargo test --no-run
 
       - name: Save compiled test artifacts for downstream jobs
         uses: actions/cache/save@v4
