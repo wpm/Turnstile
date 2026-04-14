@@ -13,6 +13,8 @@
     setCursorOffset,
     replaceRangeWithText,
     replaceRangeWithNode,
+    getRenderedNodeAtCursor,
+    removeRenderedNode,
   } from '../lib/richInput'
   import { createMathElement, createCodeElement } from '../lib/renderInlineContent'
 
@@ -177,6 +179,26 @@
     }
   }
 
+  function onBeforeInput(e: InputEvent): void {
+    const el = inputEl
+    if (!el) return
+
+    const adjacent = getRenderedNodeAtCursor(el)
+    if (!adjacent) return
+
+    if (e.inputType === 'deleteContentBackward' && adjacent.side === 'after') {
+      e.preventDefault()
+      const offset = removeRenderedNode(el, adjacent.node)
+      setCursorOffset(el, offset)
+      inputNonEmpty = extractPlainText(el).trim().length > 0
+    } else if (e.inputType === 'deleteContentForward' && adjacent.side === 'before') {
+      e.preventDefault()
+      const offset = removeRenderedNode(el, adjacent.node)
+      setCursorOffset(el, offset)
+      inputNonEmpty = extractPlainText(el).trim().length > 0
+    }
+  }
+
   function onInput(): void {
     const el = inputEl
     if (!el) return
@@ -191,9 +213,8 @@
       // Replace the abbreviation text in-place
       replaceRangeWithText(el, abbrev.from, abbrev.to, abbrev.replacement)
       inputNonEmpty = newText.trim().length > 0
-      void tick().then(() => {
-        setCursorOffset(el, newCursorPos)
-      })
+      // replaceRangeWithText is a pure DOM mutation — no Svelte flush needed.
+      setCursorOffset(el, newCursorPos)
       return
     }
 
@@ -209,11 +230,9 @@
       } else {
         node = createCodeElement(delimited.content, sourceText)
       }
+      // replaceRangeWithNode now places the cursor synchronously after the
+      // rendered node inside a concrete Text node (via placeCursorAfterNode).
       replaceRangeWithNode(el, delimited.from, delimited.to, node)
-      // Place cursor after the rendered node
-      void tick().then(() => {
-        setCursorOffset(el, delimited.from + sourceText.length)
-      })
     }
   }
 
@@ -446,6 +465,7 @@
         font-mono outline-none bg-bg-primary text-text-primary
         focus:border-accent transition-colors"
       oninput={onInput}
+      onbeforeinput={onBeforeInput}
       onkeydown={onKeydown}
       onpaste={onPaste}
     ></div>
