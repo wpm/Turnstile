@@ -186,17 +186,17 @@
     const adjacent = getRenderedNodeAtCursor(el)
     if (!adjacent) return
 
-    if (e.inputType === 'deleteContentBackward' && adjacent.side === 'after') {
-      e.preventDefault()
-      const offset = removeRenderedNode(el, adjacent.node)
-      setCursorOffset(el, offset)
-      inputNonEmpty = extractPlainText(el).trim().length > 0
-    } else if (e.inputType === 'deleteContentForward' && adjacent.side === 'before') {
-      e.preventDefault()
-      const offset = removeRenderedNode(el, adjacent.node)
-      setCursorOffset(el, offset)
-      inputNonEmpty = extractPlainText(el).trim().length > 0
-    }
+    const deletingBackward = e.inputType === 'deleteContentBackward' && adjacent.side === 'after'
+    const deletingForward = e.inputType === 'deleteContentForward' && adjacent.side === 'before'
+    if (!deletingBackward && !deletingForward) return
+
+    // Prevent the browser from partially corrupting the contenteditable=false
+    // span; remove it atomically instead.
+    e.preventDefault()
+    const offset = removeRenderedNode(el, adjacent.node)
+    setCursorOffset(el, offset)
+    // onInput doesn't fire when beforeinput is prevented, so update here.
+    inputNonEmpty = extractPlainText(el).trim().length > 0
   }
 
   function onInput(): void {
@@ -210,10 +210,8 @@
     const abbrev = findAbbrevReplacement(plainText, cursorPos)
     if (abbrev) {
       const { newText, newCursorPos } = applyAbbrevReplacement(plainText, abbrev)
-      // Replace the abbreviation text in-place
       replaceRangeWithText(el, abbrev.from, abbrev.to, abbrev.replacement)
       inputNonEmpty = newText.trim().length > 0
-      // replaceRangeWithText is a pure DOM mutation — no Svelte flush needed.
       setCursorOffset(el, newCursorPos)
       return
     }
@@ -230,8 +228,6 @@
       } else {
         node = createCodeElement(delimited.content, sourceText)
       }
-      // replaceRangeWithNode now places the cursor synchronously after the
-      // rendered node inside a concrete Text node (via placeCursorAfterNode).
       replaceRangeWithNode(el, delimited.from, delimited.to, node)
     }
   }

@@ -109,11 +109,6 @@ export function replaceRangeWithText(
 /**
  * Replace a range of plain text in the contenteditable element with an
  * HTML node.  Used for inline rendering of math and code.
- *
- * After insertion the cursor is placed immediately after the rendered node
- * inside a concrete ``Text`` node (see ``placeCursorAfterNode``).  This
- * guarantees that the next typed character lands in the right place rather
- * than being swallowed by the ``contenteditable="false"`` span.
  */
 export function replaceRangeWithNode(
   el: HTMLElement,
@@ -133,9 +128,6 @@ export function replaceRangeWithNode(
 
   // Normalize to merge adjacent text nodes
   el.normalize()
-
-  // Place cursor in a concrete Text node after the rendered node so
-  // subsequent keystrokes are inserted at the correct position.
   placeCursorAfterNode(el, node)
 }
 
@@ -208,16 +200,13 @@ export function getRenderedNodeAtCursor(
   const container = range.startContainer
   const offset = range.startOffset
 
-  // Case 1: cursor is at a child-index position directly on el
   if (container === el) {
-    // Check child at offset-1 (just before cursor) — cursor is AFTER it
     if (offset > 0) {
       const prev = el.childNodes[offset - 1]
       if (prev && isRenderedNode(prev)) {
         return { node: prev as HTMLElement, side: 'after' }
       }
     }
-    // Check child at offset (just after cursor) — cursor is BEFORE it
     const next = el.childNodes[offset]
     if (next && isRenderedNode(next)) {
       return { node: next as HTMLElement, side: 'before' }
@@ -225,16 +214,13 @@ export function getRenderedNodeAtCursor(
     return null
   }
 
-  // Case 2: cursor is inside a Text node
   if (container.nodeType === Node.TEXT_NODE) {
-    // Cursor at start of text node → check previous sibling
     if (offset === 0) {
       const prev = container.previousSibling
       if (prev && isRenderedNode(prev)) {
         return { node: prev as HTMLElement, side: 'after' }
       }
     }
-    // Cursor at end of text node → check next sibling
     if (offset === (container.textContent ?? '').length) {
       const next = container.nextSibling
       if (next && isRenderedNode(next)) {

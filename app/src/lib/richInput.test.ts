@@ -235,6 +235,24 @@ describe('richInput', () => {
     })
   })
 
+  // ── Test helpers for new functions ─────────────────────────────────
+
+  /** Get the rendered span from el, failing fast if absent. */
+  function getSpan(): HTMLElement {
+    const span = el.querySelector<HTMLElement>('[data-source]')
+    if (!span) throw new Error('Expected rendered span not found')
+    return span
+  }
+
+  function setSelectionAt(container: Node, offset: number): void {
+    const range = document.createRange()
+    range.setStart(container, offset)
+    range.collapse(true)
+    const sel = document.getSelection()
+    sel?.removeAllRanges()
+    sel?.addRange(range)
+  }
+
   // ── isRenderedNode ──────────────────────────────────────────────────
 
   describe('isRenderedNode', () => {
@@ -262,13 +280,6 @@ describe('richInput', () => {
   })
 
   // ── placeCursorAfterNode ────────────────────────────────────────────
-
-  /** Get the rendered span from el, failing fast if absent. */
-  function getSpan(): HTMLElement {
-    const span = el.querySelector<HTMLElement>('[data-source]')
-    if (!span) throw new Error('Expected rendered span not found')
-    return span
-  }
 
   describe('placeCursorAfterNode', () => {
     it('places cursor in existing next text node at offset 0', () => {
@@ -344,15 +355,6 @@ describe('richInput', () => {
   })
 
   // ── getRenderedNodeAtCursor ─────────────────────────────────────────
-
-  function setSelectionAt(container: Node, offset: number): void {
-    const range = document.createRange()
-    range.setStart(container, offset)
-    range.collapse(true)
-    const sel = document.getSelection()
-    sel?.removeAllRanges()
-    sel?.addRange(range)
-  }
 
   describe('getRenderedNodeAtCursor', () => {
     it('returns null when no selection exists', () => {
