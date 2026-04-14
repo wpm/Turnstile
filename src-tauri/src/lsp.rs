@@ -63,6 +63,70 @@ pub struct FileProgressRange {
     pub end_line: u32,   // 1-indexed
 }
 
+/// Type information from `textDocument/hover` — types only, no docstrings.
+#[derive(Clone, Debug, Serialize)]
+pub struct HoverInfo {
+    pub contents: String,
+}
+
+/// Result of `textDocument/definition` filtered to a single target location.
+///
+/// All positions are 0-indexed (raw LSP convention); the frontend converts
+/// to CM6 offsets directly.
+#[derive(Clone, Debug, Serialize)]
+pub struct DefinitionLocation {
+    pub uri: String,
+    pub line: u32,
+    pub character: u32,
+    pub end_line: u32,
+    pub end_character: u32,
+}
+
+/// A single text edit produced by a code action. Positions are 0-indexed.
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+pub struct TextEditDto {
+    pub start_line: u32,
+    pub start_character: u32,
+    pub end_line: u32,
+    pub end_character: u32,
+    pub new_text: String,
+}
+
+/// A workspace edit, restricted to per-URI text edits.
+///
+/// Represented as a flat list of `(uri, edits)` pairs so the wire shape stays
+/// stable across serde. Lean's `textDocument/codeAction` only targets document
+/// edits in practice.
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+pub struct WorkspaceEditDto {
+    pub changes: Vec<(String, Vec<TextEditDto>)>,
+}
+
+/// A single code action from `textDocument/codeAction`.
+#[derive(Clone, Debug, Serialize)]
+pub struct CodeActionInfo {
+    pub title: String,
+    pub kind: Option<String>,
+    /// Resolved workspace edit, if the server returned it inline.
+    pub edit: Option<WorkspaceEditDto>,
+    /// Raw opaque `data` field used by `codeAction/resolve` when `edit` is absent.
+    pub resolve_data: Option<Value>,
+}
+
+/// A single document symbol from `textDocument/documentSymbol`. Positions are
+/// 0-indexed. Children form a nested tree of symbols.
+#[derive(Clone, Debug, Serialize)]
+pub struct DocumentSymbolInfo {
+    pub name: String,
+    /// LSP `SymbolKind` numeric code (e.g. 12 = function, 5 = class).
+    pub kind: u8,
+    pub start_line: u32,
+    pub start_character: u32,
+    pub end_line: u32,
+    pub end_character: u32,
+    pub children: Vec<DocumentSymbolInfo>,
+}
+
 // ── LSP Client ────────────────────────────────────────────────────────
 
 pub struct LspClient {
@@ -484,6 +548,23 @@ pub fn initialize_params(root_uri: &str) -> Value {
                         "documentationFormat": ["plaintext"]
                     },
                     "contextSupport": false
+                },
+                "hover": {
+                    "dynamicRegistration": false,
+                    "contentFormat": ["markdown", "plaintext"]
+                },
+                "definition": {
+                    "dynamicRegistration": false,
+                    "linkSupport": false
+                },
+                "codeAction": {
+                    "dynamicRegistration": false,
+                    "resolveSupport": { "properties": ["edit"] },
+                    "dataSupport": true
+                },
+                "documentSymbol": {
+                    "dynamicRegistration": false,
+                    "hierarchicalDocumentSymbolSupport": true
                 }
             },
             "experimental": {
@@ -630,6 +711,223 @@ pub fn parse_file_progress(params: &Value) -> Vec<FileProgressRange> {
             })
         })
         .collect()
+}
+
+/// Parse a `textDocument/hover` response, keeping only the type signature
+/// (the first fenced Lean code block) and dropping any trailing documentation.
+///
+/// The Lean server returns markdown of the form:
+/// ```
+/// ```lean
+/// <type signature>
+/// ```
+/// <docstring, if any>
+/// ```
+/// We keep the first block and discard the rest. Returns `None` if the
+/// response is null or has no readable contents.
+pub fn parse_hover(result: &Value) -> Option<HoverInfo> {
+    if result.is_null() {
+        return None;
+    }
+    let raw = hover_contents_string(result.get("contents")?)?;
+    let contents = hover_strip_docstrings(&raw);
+    if contents.trim().is_empty() {
+        None
+    } else {
+        Some(HoverInfo { contents })
+    }
+}
+
+/// Flatten a hover `contents` value into one markdown string.
+///
+/// LSP permits three shapes here: a bare string, a `MarkupContent`
+/// (`{ kind, value }`), or an array of strings / `{ language, value }` /
+/// `MarkupContent`. This helper normalizes all three to a single string.
+fn hover_contents_string(contents: &Value) -> Option<String> {
+    if let Some(s) = contents.as_str() {
+        return Some(s.to_string());
+    }
+    if let Some(v) = contents.get("value").and_then(Value::as_str) {
+        return Some(v.to_string());
+    }
+    if let Some(arr) = contents.as_array() {
+        let mut parts = Vec::new();
+        for item in arr {
+            if let Some(s) = item.as_str() {
+                parts.push(s.to_string());
+            } else if let Some(v) = item.get("value").and_then(Value::as_str) {
+                parts.push(v.to_string());
+            }
+        }
+        if parts.is_empty() {
+            return None;
+        }
+        return Some(parts.join("\n\n"));
+    }
+    None
+}
+
+/// Keep only the first fenced `lean` code block from hover markdown; drop the
+/// rest (which is typically a docstring). If no fenced block is present, fall
+/// back to the untouched input.
+fn hover_strip_docstrings(markdown: &str) -> String {
+    let mut in_block = false;
+    let mut collected: Vec<&str> = Vec::new();
+    let mut saw_block = false;
+
+    for line in markdown.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("```") {
+            if in_block {
+                // End of the first code block — stop.
+                saw_block = true;
+                break;
+            }
+            in_block = true;
+            continue;
+        }
+        if in_block {
+            collected.push(line);
+        }
+    }
+
+    if saw_block {
+        collected.join("\n").trim().to_string()
+    } else {
+        markdown.trim().to_string()
+    }
+}
+
+/// Parse a `textDocument/definition` response, keeping only the first target.
+///
+/// The Lean server may return any of:
+///   - `Location` — `{ uri, range }`
+///   - `Location[]`
+///   - `LocationLink[]` — `{ targetUri, targetRange, targetSelectionRange, originSelectionRange }`
+///   - `null`
+///
+/// We set `linkSupport: false` in the initialize params, but Lean sometimes
+/// returns `LocationLink` anyway, so handle both shapes.
+pub fn parse_definition(result: &Value) -> Option<DefinitionLocation> {
+    if result.is_null() {
+        return None;
+    }
+    // Either a single Location or an array — pick the first.
+    let entry = if let Some(arr) = result.as_array() {
+        arr.first()?
+    } else {
+        result
+    };
+
+    // LocationLink uses `targetUri`/`targetRange`; Location uses `uri`/`range`.
+    let (uri, range) = if let Some(target_uri) = entry.get("targetUri").and_then(|v| v.as_str()) {
+        let range = entry
+            .get("targetSelectionRange")
+            .or_else(|| entry.get("targetRange"))?;
+        (target_uri.to_string(), range)
+    } else {
+        let uri = entry.get("uri")?.as_str()?.to_string();
+        let range = entry.get("range")?;
+        (uri, range)
+    };
+
+    let (sl, sc, el, ec) = parse_lsp_range(range)?;
+    Some(DefinitionLocation {
+        uri,
+        line: sl,
+        character: sc,
+        end_line: el,
+        end_character: ec,
+    })
+}
+
+/// Parse a `textDocument/codeAction` response into our `CodeActionInfo` DTOs.
+///
+/// Each entry is either a `Command` (ignored — we only surface workspace
+/// edits) or a `CodeAction` object. Inline edits are captured in
+/// `CodeActionInfo.edit`; actions with only a `data` field (to be resolved
+/// later via `codeAction/resolve`) carry `resolve_data`.
+pub fn parse_code_actions(result: &Value) -> Vec<CodeActionInfo> {
+    let Some(arr) = result.as_array() else {
+        return Vec::new();
+    };
+    arr.iter()
+        .filter_map(|item| {
+            // Filter out plain Command items (no title + command string pair with edits).
+            let title = item.get("title")?.as_str()?.to_string();
+            let kind = item.get("kind").and_then(Value::as_str).map(String::from);
+            let edit = item.get("edit").and_then(parse_workspace_edit);
+            let resolve_data = item.get("data").cloned();
+            Some(CodeActionInfo {
+                title,
+                kind,
+                edit,
+                resolve_data,
+            })
+        })
+        .collect()
+}
+
+/// Parse a `WorkspaceEdit` object with only `changes` (the shape Lean emits).
+///
+/// Returns `None` if the value doesn't look like a `WorkspaceEdit` we can use.
+pub fn parse_workspace_edit(edit: &Value) -> Option<WorkspaceEditDto> {
+    let changes = edit.get("changes").and_then(Value::as_object)?;
+    let mut out = Vec::new();
+    for (uri, edits) in changes {
+        let edits_arr = edits.as_array()?;
+        let mut parsed = Vec::new();
+        for text_edit in edits_arr {
+            if let Some(te) = parse_text_edit(text_edit) {
+                parsed.push(te);
+            }
+        }
+        out.push((uri.clone(), parsed));
+    }
+    Some(WorkspaceEditDto { changes: out })
+}
+
+fn parse_text_edit(edit: &Value) -> Option<TextEditDto> {
+    let (sl, sc, el, ec) = parse_lsp_range(edit.get("range")?)?;
+    let new_text = edit.get("newText")?.as_str()?.to_string();
+    Some(TextEditDto {
+        start_line: sl,
+        start_character: sc,
+        end_line: el,
+        end_character: ec,
+        new_text,
+    })
+}
+
+/// Parse a `textDocument/documentSymbol` response into a hierarchical tree.
+///
+/// Only the modern `DocumentSymbol[]` shape is handled — we set
+/// `hierarchicalDocumentSymbolSupport: true` in the initialize handshake.
+pub fn parse_document_symbols(result: &Value) -> Vec<DocumentSymbolInfo> {
+    let Some(arr) = result.as_array() else {
+        return Vec::new();
+    };
+    arr.iter().filter_map(parse_document_symbol).collect()
+}
+
+fn parse_document_symbol(item: &Value) -> Option<DocumentSymbolInfo> {
+    let name = item.get("name")?.as_str()?.to_string();
+    let kind = u8::try_from(item.get("kind")?.as_u64()?).ok()?;
+    let (sl, sc, el, ec) = parse_lsp_range(item.get("range")?)?;
+    let children = item
+        .get("children")
+        .and_then(Value::as_array)
+        .map(|a| a.iter().filter_map(parse_document_symbol).collect())
+        .unwrap_or_default();
+    Some(DocumentSymbolInfo {
+        name,
+        kind,
+        start_line: sl,
+        start_character: sc,
+        end_line: el,
+        end_character: ec,
+        children,
+    })
 }
 
 /// Parse `{ "start": { "line": u32, "character": u32 }, "end": { ... } }`.
@@ -1071,5 +1369,365 @@ mod tests {
     fn initialize_params_process_id_matches() {
         let params = initialize_params("file:///tmp");
         assert_eq!(params["processId"], std::process::id());
+    }
+
+    #[test]
+    fn initialize_params_declares_hover_capability() {
+        let params = initialize_params("file:///tmp");
+        assert_eq!(
+            params["capabilities"]["textDocument"]["hover"]["dynamicRegistration"],
+            false
+        );
+    }
+
+    #[test]
+    fn initialize_params_declares_definition_capability() {
+        let params = initialize_params("file:///tmp");
+        assert_eq!(
+            params["capabilities"]["textDocument"]["definition"]["dynamicRegistration"],
+            false
+        );
+    }
+
+    #[test]
+    fn initialize_params_declares_code_action_capability() {
+        let params = initialize_params("file:///tmp");
+        assert!(params["capabilities"]["textDocument"]["codeAction"].is_object());
+    }
+
+    #[test]
+    fn initialize_params_declares_document_symbol_capability() {
+        let params = initialize_params("file:///tmp");
+        assert_eq!(
+            params["capabilities"]["textDocument"]["documentSymbol"]
+                ["hierarchicalDocumentSymbolSupport"],
+            true
+        );
+    }
+
+    // ── Hover parsing ─────────────────────────────────────────────────
+
+    #[test]
+    fn parse_hover_markup_content_keeps_type_only() {
+        let result = json!({
+            "contents": {
+                "kind": "markdown",
+                "value": "```lean\ntheorem foo : True\n```\nDocumentation paragraph."
+            }
+        });
+        let hover = parse_hover(&result).expect("hover should parse");
+        assert_eq!(hover.contents, "theorem foo : True");
+    }
+
+    #[test]
+    fn parse_hover_null_returns_none() {
+        assert!(parse_hover(&Value::Null).is_none());
+    }
+
+    #[test]
+    fn parse_hover_missing_contents_returns_none() {
+        assert!(parse_hover(&json!({})).is_none());
+    }
+
+    #[test]
+    fn parse_hover_bare_string() {
+        let result = json!({ "contents": "inline type" });
+        let hover = parse_hover(&result).expect("hover should parse");
+        assert_eq!(hover.contents, "inline type");
+    }
+
+    #[test]
+    fn parse_hover_array_contents() {
+        let result = json!({
+            "contents": [
+                { "language": "lean", "value": "theorem foo : True" },
+                "Some docs"
+            ]
+        });
+        let hover = parse_hover(&result).expect("hover should parse");
+        // Array is joined then the first fenced block extracted. Here, no fence
+        // so the whole thing is preserved as the best-effort fallback.
+        assert!(hover.contents.contains("theorem foo : True"));
+    }
+
+    #[test]
+    fn parse_hover_empty_returns_none() {
+        let result = json!({ "contents": { "kind": "markdown", "value": "" } });
+        assert!(parse_hover(&result).is_none());
+    }
+
+    // ── Definition parsing ────────────────────────────────────────────
+
+    #[test]
+    fn parse_definition_single_location() {
+        let result = json!({
+            "uri": "file:///home/user/proof.lean",
+            "range": {
+                "start": { "line": 3, "character": 8 },
+                "end": { "line": 3, "character": 11 }
+            }
+        });
+        let def = parse_definition(&result).expect("definition should parse");
+        assert_eq!(def.uri, "file:///home/user/proof.lean");
+        assert_eq!(def.line, 3);
+        assert_eq!(def.character, 8);
+        assert_eq!(def.end_line, 3);
+        assert_eq!(def.end_character, 11);
+    }
+
+    #[test]
+    fn parse_definition_array_picks_first() {
+        let result = json!([
+            {
+                "uri": "file:///a.lean",
+                "range": { "start": { "line": 1, "character": 0 }, "end": { "line": 1, "character": 3 } }
+            },
+            {
+                "uri": "file:///b.lean",
+                "range": { "start": { "line": 5, "character": 0 }, "end": { "line": 5, "character": 3 } }
+            }
+        ]);
+        let def = parse_definition(&result).expect("definition should parse");
+        assert_eq!(def.uri, "file:///a.lean");
+    }
+
+    #[test]
+    fn parse_definition_null_returns_none() {
+        assert!(parse_definition(&Value::Null).is_none());
+    }
+
+    #[test]
+    fn parse_definition_empty_array_returns_none() {
+        assert!(parse_definition(&json!([])).is_none());
+    }
+
+    #[test]
+    fn parse_definition_location_link() {
+        // Lean sometimes returns LocationLink even when linkSupport is false.
+        let result = json!([{
+            "originSelectionRange": {
+                "start": { "line": 3, "character": 27 },
+                "end": { "line": 3, "character": 37 }
+            },
+            "targetUri": "file:///proof.lean",
+            "targetRange": {
+                "start": { "line": 1, "character": 0 },
+                "end": { "line": 1, "character": 20 }
+            },
+            "targetSelectionRange": {
+                "start": { "line": 1, "character": 8 },
+                "end": { "line": 1, "character": 18 }
+            }
+        }]);
+        let def = parse_definition(&result).expect("should parse LocationLink");
+        assert_eq!(def.uri, "file:///proof.lean");
+        // Prefers targetSelectionRange over targetRange.
+        assert_eq!(def.line, 1);
+        assert_eq!(def.character, 8);
+        assert_eq!(def.end_line, 1);
+        assert_eq!(def.end_character, 18);
+    }
+
+    #[test]
+    fn parse_definition_location_link_without_selection_range() {
+        // Falls back to targetRange when targetSelectionRange is absent.
+        let result = json!([{
+            "targetUri": "file:///a.lean",
+            "targetRange": {
+                "start": { "line": 5, "character": 2 },
+                "end": { "line": 5, "character": 10 }
+            }
+        }]);
+        let def = parse_definition(&result).expect("should parse LocationLink");
+        assert_eq!(def.uri, "file:///a.lean");
+        assert_eq!(def.line, 5);
+        assert_eq!(def.character, 2);
+    }
+
+    // ── Code action parsing ───────────────────────────────────────────
+
+    #[test]
+    fn parse_code_actions_with_inline_edit() {
+        let result = json!([
+            {
+                "title": "Try this: exact rfl",
+                "kind": "quickfix",
+                "edit": {
+                    "changes": {
+                        "file:///proof.lean": [
+                            {
+                                "range": {
+                                    "start": { "line": 2, "character": 2 },
+                                    "end": { "line": 2, "character": 7 }
+                                },
+                                "newText": "exact rfl"
+                            }
+                        ]
+                    }
+                }
+            }
+        ]);
+        let actions = parse_code_actions(&result);
+        assert_eq!(actions.len(), 1);
+        assert_eq!(actions[0].title, "Try this: exact rfl");
+        assert_eq!(actions[0].kind.as_deref(), Some("quickfix"));
+        let edit = actions[0].edit.as_ref().expect("should have edit");
+        assert_eq!(edit.changes.len(), 1);
+        let (uri, edits) = &edit.changes[0];
+        assert_eq!(uri, "file:///proof.lean");
+        assert_eq!(edits.len(), 1);
+        assert_eq!(edits[0].new_text, "exact rfl");
+        assert_eq!(edits[0].start_line, 2);
+        assert_eq!(edits[0].start_character, 2);
+    }
+
+    #[test]
+    fn parse_code_actions_with_resolve_data() {
+        let result = json!([
+            {
+                "title": "Lazy action",
+                "data": { "token": 42 }
+            }
+        ]);
+        let actions = parse_code_actions(&result);
+        assert_eq!(actions.len(), 1);
+        assert!(actions[0].edit.is_none());
+        assert_eq!(actions[0].resolve_data, Some(json!({ "token": 42 })));
+    }
+
+    #[test]
+    fn parse_code_actions_empty_array() {
+        assert!(parse_code_actions(&json!([])).is_empty());
+    }
+
+    #[test]
+    fn parse_code_actions_null() {
+        assert!(parse_code_actions(&Value::Null).is_empty());
+    }
+
+    #[test]
+    fn parse_code_actions_skips_commands_without_title() {
+        // LSP `Command` items have `command`/`title`; our filter relies on title.
+        let result = json!([
+            { "command": "foo" },
+            { "title": "Real action" }
+        ]);
+        let actions = parse_code_actions(&result);
+        assert_eq!(actions.len(), 1);
+        assert_eq!(actions[0].title, "Real action");
+    }
+
+    // ── Document symbol parsing ───────────────────────────────────────
+
+    #[test]
+    fn parse_document_symbols_flat_list() {
+        let result = json!([
+            {
+                "name": "foo",
+                "kind": 12,
+                "range": {
+                    "start": { "line": 0, "character": 0 },
+                    "end": { "line": 2, "character": 0 }
+                },
+                "selectionRange": {
+                    "start": { "line": 0, "character": 8 },
+                    "end": { "line": 0, "character": 11 }
+                }
+            },
+            {
+                "name": "bar",
+                "kind": 13,
+                "range": {
+                    "start": { "line": 3, "character": 0 },
+                    "end": { "line": 4, "character": 0 }
+                },
+                "selectionRange": {
+                    "start": { "line": 3, "character": 4 },
+                    "end": { "line": 3, "character": 7 }
+                }
+            }
+        ]);
+        let symbols = parse_document_symbols(&result);
+        assert_eq!(symbols.len(), 2);
+        assert_eq!(symbols[0].name, "foo");
+        assert_eq!(symbols[0].kind, 12);
+        assert_eq!(symbols[0].start_line, 0);
+        assert!(symbols[0].children.is_empty());
+        assert_eq!(symbols[1].name, "bar");
+    }
+
+    #[test]
+    fn parse_document_symbols_hierarchical() {
+        let result = json!([
+            {
+                "name": "Ns",
+                "kind": 3,
+                "range": {
+                    "start": { "line": 0, "character": 0 },
+                    "end": { "line": 10, "character": 0 }
+                },
+                "selectionRange": {
+                    "start": { "line": 0, "character": 10 },
+                    "end": { "line": 0, "character": 12 }
+                },
+                "children": [
+                    {
+                        "name": "inner",
+                        "kind": 12,
+                        "range": {
+                            "start": { "line": 2, "character": 2 },
+                            "end": { "line": 4, "character": 0 }
+                        },
+                        "selectionRange": {
+                            "start": { "line": 2, "character": 10 },
+                            "end": { "line": 2, "character": 15 }
+                        }
+                    }
+                ]
+            }
+        ]);
+        let symbols = parse_document_symbols(&result);
+        assert_eq!(symbols.len(), 1);
+        assert_eq!(symbols[0].children.len(), 1);
+        assert_eq!(symbols[0].children[0].name, "inner");
+        assert_eq!(symbols[0].children[0].start_line, 2);
+    }
+
+    #[test]
+    fn parse_document_symbols_null_returns_empty() {
+        assert!(parse_document_symbols(&Value::Null).is_empty());
+    }
+
+    #[test]
+    fn parse_workspace_edit_multiple_uris() {
+        let edit = json!({
+            "changes": {
+                "file:///a.lean": [
+                    {
+                        "range": {
+                            "start": { "line": 0, "character": 0 },
+                            "end": { "line": 0, "character": 1 }
+                        },
+                        "newText": "a"
+                    }
+                ],
+                "file:///b.lean": [
+                    {
+                        "range": {
+                            "start": { "line": 1, "character": 1 },
+                            "end": { "line": 1, "character": 2 }
+                        },
+                        "newText": "b"
+                    }
+                ]
+            }
+        });
+        let ws = parse_workspace_edit(&edit).expect("parse");
+        assert_eq!(ws.changes.len(), 2);
+    }
+
+    #[test]
+    fn parse_workspace_edit_missing_changes_returns_none() {
+        assert!(parse_workspace_edit(&json!({})).is_none());
     }
 }

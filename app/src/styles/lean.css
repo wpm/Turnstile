@@ -149,3 +149,75 @@
 .cm-editor .cm-line::selection {
   background-color: var(--selection-bg) !important;
 }
+
+/* Hover-type popup — mirrors .lean-diag-popup but without severity borders. */
+.lean-hover-popup {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.4;
+  padding: 4px 8px;
+  border-radius: 4px;
+  max-width: 480px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  z-index: 1000;
+}
+.lean-hover-popup-content {
+  margin: 0;
+  font-family: inherit;
+  font-size: inherit;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Indent guides — themed via CSS variables so they track light/dark. */
+.cm-indent-markers {
+  --indent-marker-bg-color: var(--border);
+  --indent-marker-active-bg-color: var(--border);
+}
+
+/* Code action lightbulb in the gutter. */
+.lean-code-action-gutter {
+  width: 16px;
+}
+.lean-code-action-lightbulb {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  color: var(--accent);
+  cursor: pointer;
+}
+.lean-code-action-lightbulb:hover {
+  opacity: 0.8;
+}
+
+/* Code action popup menu (shown at the cursor when Cmd+. is pressed). */
+.lean-code-action-popup {
+  z-index: 1100;
+  min-width: 240px;
+  max-width: 480px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+  outline: none;
+}
+.lean-code-action-item {
+  padding: 4px 8px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-primary);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.lean-code-action-item-selected {
+  background: var(--accent);
+  color: white;
+}

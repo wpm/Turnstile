@@ -46,6 +46,9 @@ pub struct Meta {
     /// Goal panel height as a percentage of the editor column. Absent in older files.
     #[serde(default)]
     pub goal_panel_pct: Option<f64>,
+    /// Per-file word-wrap state for the editor. Absent means the editor default (off).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub word_wrap: Option<bool>,
 }
 
 /// Prose content with a tactic state hash for staleness detection.
@@ -275,6 +278,7 @@ mod tests {
                 chat_width_pct: 40.0,
                 proof_view: None,
                 goal_panel_pct: None,
+                word_wrap: None,
             },
             proof_lean: "theorem foo : True := by\n  trivial\n".to_string(),
             prose: ProseData {
@@ -464,6 +468,53 @@ mod tests {
         }"#;
         let meta: Meta = serde_json::from_str(json).unwrap();
         assert!(meta.proof_view.is_none());
+    }
+
+    #[test]
+    fn word_wrap_round_trip_some_true() {
+        let mut state = sample_state();
+        state.meta.word_wrap = Some(true);
+
+        let bytes = build_zip(&state).unwrap();
+        let loaded = parse_zip(&bytes).unwrap();
+
+        assert_eq!(loaded.meta.word_wrap, Some(true));
+    }
+
+    #[test]
+    fn word_wrap_round_trip_some_false() {
+        let mut state = sample_state();
+        state.meta.word_wrap = Some(false);
+
+        let bytes = build_zip(&state).unwrap();
+        let loaded = parse_zip(&bytes).unwrap();
+
+        assert_eq!(loaded.meta.word_wrap, Some(false));
+    }
+
+    #[test]
+    fn word_wrap_defaults_to_none() {
+        // Old meta without word_wrap should deserialize to None
+        let json = r#"{
+            "format_version": 1,
+            "created_at": "",
+            "saved_at": "",
+            "cursor_line": 0,
+            "cursor_col": 0,
+            "editor_scroll_top": 0.0,
+            "chat_width_pct": 25.0
+        }"#;
+        let meta: Meta = serde_json::from_str(json).unwrap();
+        assert!(meta.word_wrap.is_none());
+    }
+
+    #[test]
+    fn word_wrap_none_is_not_serialized() {
+        // With skip_serializing_if, None should be omitted from output
+        let mut state = sample_state();
+        state.meta.word_wrap = None;
+        let json = serde_json::to_string(&state.meta).unwrap();
+        assert!(!json.contains("word_wrap"), "got: {json}");
     }
 
     #[test]

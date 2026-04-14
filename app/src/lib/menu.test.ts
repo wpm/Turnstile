@@ -8,6 +8,7 @@ function makeActions(): MenuActions & Record<string, ReturnType<typeof vi.fn>> {
     saveSession: vi.fn(),
     saveSessionAs: vi.fn(),
     openSettings: vi.fn(),
+    toggleWordWrap: vi.fn(),
   }
 }
 
@@ -18,6 +19,7 @@ describe('handleMenuEvent', () => {
     ['save_session', 'saveSession'],
     ['save_session_as', 'saveSessionAs'],
     ['settings', 'openSettings'],
+    ['toggle_word_wrap', 'toggleWordWrap'],
   ] as const)('dispatches "%s" to %s', (id, actionName) => {
     const actions = makeActions()
     const handled = handleMenuEvent(id, actions)
@@ -44,9 +46,10 @@ describe('MENU_IDS', () => {
     expect(MENU_IDS.SAVE_SESSION).toBe('save_session')
     expect(MENU_IDS.SAVE_SESSION_AS).toBe('save_session_as')
     expect(MENU_IDS.SETTINGS).toBe('settings')
+    expect(MENU_IDS.TOGGLE_WORD_WRAP).toBe('toggle_word_wrap')
   })
 
-  it('has exactly 5 entries', () => {
-    expect(Object.keys(MENU_IDS)).toHaveLength(5)
+  it('has exactly 6 entries', () => {
+    expect(Object.keys(MENU_IDS)).toHaveLength(6)
   })
 })

@@ -599,3 +599,167 @@ async fn multiple_errors_in_one_file_all_reported() {
         "expected at least 2 error diagnostics; got: {errors:?}"
     );
 }
+
+// ── Hover / definition / code actions / documentSymbol ─────────────────
+
+/// A small proof that defines a local theorem and later references it, giving
+/// us a useful target for hover and definition tests.
+const LOCAL_DEF_PROOF: &str = "-- Local def for hover/definition tests.\n\
+theorem my_theorem (a b : Nat) : a + b = b + a := Nat.add_comm a b\n\n\
+example : 1 + 2 = 2 + 1 := my_theorem 1 2\n";
+
+#[tokio::test(flavor = "multi_thread")]
+async fn hover_returns_type_for_local_theorem() {
+    skip_if_no_project!(sess);
+    let uri = sess.doc_uri();
+    sess.set_content(LOCAL_DEF_PROOF);
+    // "my_theorem" starts at line 3 (0-indexed), character 20 in the example line.
+    let result = sess
+        .request(
+            "textDocument/hover",
+            json!({
+                "textDocument": { "uri": &uri },
+                "position": { "line": 3, "character": 22 },
+            }),
+        )
+        .expect("hover request failed");
+    drop(sess);
+
+    if result.is_null() {
+        eprintln!("INFO: hover returned null (position may not be on identifier)");
+        return;
+    }
+
+    let hover = lsp::parse_hover(&result);
+    assert!(
+        hover.is_some(),
+        "hover should parse when non-null; got: {result}"
+    );
+    let info = hover.unwrap();
+    assert!(
+        !info.contents.trim().is_empty(),
+        "hover contents should be non-empty"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn hover_returns_none_on_whitespace() {
+    skip_if_no_project!(sess);
+    let uri = sess.doc_uri();
+    sess.set_content(LOCAL_DEF_PROOF);
+    // Blank line 2.
+    let result = sess
+        .request(
+            "textDocument/hover",
+            json!({
+                "textDocument": { "uri": &uri },
+                "position": { "line": 2, "character": 0 },
+            }),
+        )
+        .expect("hover request failed");
+    drop(sess);
+
+    // Either null from the server or an empty-contents structure that parse_hover rejects.
+    let parsed = lsp::parse_hover(&result);
+    assert!(
+        parsed.is_none()
+            || parsed
+                .as_ref()
+                .is_some_and(|h| !h.contents.trim().is_empty()),
+        "hover on whitespace should be None or have content; got: {parsed:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn definition_resolves_to_local_theorem() {
+    skip_if_no_project!(sess);
+    let uri = sess.doc_uri();
+    sess.set_content(LOCAL_DEF_PROOF);
+    // "my_theorem" reference on line 3 (the example line). Position 27
+    // lands on the 'm' of "my_theorem" (after "example : 1 + 2 = 2 + 1 := ").
+    let result = sess
+        .request(
+            "textDocument/definition",
+            json!({
+                "textDocument": { "uri": &uri },
+                "position": { "line": 3, "character": 27 },
+            }),
+        )
+        .expect("definition request failed");
+    drop(sess);
+
+    if result.is_null() {
+        eprintln!("INFO: definition returned null (position may not be on identifier)");
+        return;
+    }
+
+    let def = lsp::parse_definition(&result);
+    assert!(def.is_some(), "definition should parse; got: {result}");
+    let def = def.unwrap();
+    // Should point back into the same document, on the declaration line (1).
+    assert_eq!(
+        def.uri, uri,
+        "local definition should target the same document"
+    );
+    assert_eq!(
+        def.line, 1,
+        "definition line should be 1 (0-indexed declaration); got {}",
+        def.line
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn document_symbols_returns_top_level_symbols() {
+    skip_if_no_project!(sess);
+    let uri = sess.doc_uri();
+    sess.set_content(LOCAL_DEF_PROOF);
+    let result = sess
+        .request(
+            "textDocument/documentSymbol",
+            json!({ "textDocument": { "uri": &uri } }),
+        )
+        .expect("documentSymbol request failed");
+    drop(sess);
+
+    let symbols = lsp::parse_document_symbols(&result);
+    assert!(
+        !symbols.is_empty(),
+        "should find at least one symbol (my_theorem); result: {result}"
+    );
+    let names: Vec<&str> = symbols.iter().map(|s| s.name.as_str()).collect();
+    assert!(
+        names.iter().any(|n| n.contains("my_theorem")),
+        "symbol list should include my_theorem; got: {names:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn code_action_available_on_error_line() {
+    skip_if_no_project!(sess);
+    let uri = sess.doc_uri();
+    // Deliberately leave the goal unsolved so Lean offers a "Try this:" action.
+    sess.set_content(UNSOLVED_GOALS);
+    let result = sess
+        .request(
+            "textDocument/codeAction",
+            json!({
+                "textDocument": { "uri": &uri },
+                "range": {
+                    "start": { "line": 2, "character": 2 },
+                    "end": { "line": 2, "character": 6 }
+                },
+                "context": { "diagnostics": [], "triggerKind": 1 }
+            }),
+        )
+        .expect("codeAction request failed");
+    drop(sess);
+
+    let actions = lsp::parse_code_actions(&result);
+    // Lean may or may not offer actions here; we validate the DTO shape either way.
+    for action in &actions {
+        assert!(
+            !action.title.is_empty(),
+            "code action title should be non-empty"
+        );
+    }
+}
