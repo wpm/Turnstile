@@ -744,12 +744,26 @@ impl ChatBackend for AnthropicBackend {
 
         messages.push(serde_json::json!({ "role": "user", "content": user_content }));
 
+        // Compose the effective system prompt: the built-in prompt, plus the
+        // user's optional custom prompt (from settings) separated by a blank line.
+        let custom = {
+            use tauri::Manager;
+            let app_state = app.state::<crate::AppState>();
+            let settings = app_state.settings.lock().await;
+            settings.custom_prompt.trim().to_string()
+        };
+        let system_prompt: std::borrow::Cow<'static, str> = if custom.is_empty() {
+            std::borrow::Cow::Borrowed(SYSTEM_PROMPT)
+        } else {
+            std::borrow::Cow::Owned(format!("{SYSTEM_PROMPT}\n\n{custom}"))
+        };
+
         // Multi-turn tool use loop until stop_reason == "end_turn".
         let mut full_assistant_text = String::new();
 
         loop {
             let (stop_reason, text_chunk, tool_calls) = self
-                .stream_request(SYSTEM_PROMPT, &messages, tools, app)
+                .stream_request(system_prompt.as_ref(), &messages, tools, app)
                 .await?;
 
             full_assistant_text.push_str(&text_chunk);

@@ -30,6 +30,10 @@ pub struct Settings {
     /// UI theme: `"dark"` or `"light"`.
     #[serde(default = "default_theme")]
     pub theme: String,
+    /// Optional user-supplied Markdown appended to the system prompt.
+    /// Empty string means "no custom prompt".
+    #[serde(default)]
+    pub custom_prompt: String,
 }
 
 impl Default for Settings {
@@ -40,6 +44,7 @@ impl Default for Settings {
             chat_font_size: 13,
             model: None,
             theme: default_theme(),
+            custom_prompt: String::new(),
         }
     }
 }
@@ -169,11 +174,25 @@ mod tests {
             chat_font_size: 12,
             model: Some("claude-sonnet-4-6".to_string()),
             theme: "light".to_string(),
+            custom_prompt: "Prefer tactic-mode proofs.".to_string(),
         };
 
         save_settings_to_disk(&original, dir.path()).expect("save should succeed");
         let loaded = load_settings(dir.path());
         assert_eq!(loaded, original);
+    }
+
+    #[test]
+    fn custom_prompt_defaults_empty() {
+        assert_eq!(Settings::default().custom_prompt, "");
+    }
+
+    #[test]
+    fn custom_prompt_absent_in_json() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("settings.json"), b"{}").unwrap();
+        let s = load_settings(dir.path());
+        assert_eq!(s.custom_prompt, "");
     }
 
     #[test]

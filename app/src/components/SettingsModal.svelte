@@ -18,6 +18,7 @@
   const TABS = [
     { id: 'appearance', label: 'Appearance' },
     { id: 'model', label: 'Model' },
+    { id: 'customPrompt', label: 'Custom Prompt' },
   ]
 
   const FONT_FIELDS = [
@@ -32,6 +33,7 @@
       if (values.model) await invoke('set_model', { modelId: values.model })
     },
   })
+  const customPromptDraft = createDraft(['customPrompt'])
 
   let activeTab = $state('appearance')
 
@@ -54,7 +56,7 @@
     if (!windowEl) return []
     return Array.from(
       windowEl.querySelectorAll<HTMLElement>(
-        'button:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        'button:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
       ),
     ).filter((el) => el.offsetParent !== null)
   }
@@ -69,7 +71,7 @@
     return (
       Array.from(
         panel.querySelectorAll<HTMLElement>(
-          'button:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+          'button:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
         ),
       ).find((el) => el.offsetParent !== null) ?? null
     )
@@ -405,6 +407,54 @@
                   })
                 }}
                 data-testid="apply-model-button"
+              >
+                Apply
+              </button>
+            </div>
+          {:else if tab.id === 'customPrompt'}
+            <h3 class="text-[11px] font-semibold uppercase tracking-widest text-text-secondary">
+              Custom Prompt
+            </h3>
+
+            <p class="text-[12px] text-text-secondary leading-relaxed">
+              Markdown appended to the built-in system prompt on every chat turn. Leave empty to use
+              only the built-in prompt.
+            </p>
+
+            <textarea
+              bind:value={customPromptDraft.customPrompt}
+              class="flex-1 min-h-[10rem] w-full rounded border border-border bg-bg-secondary
+                px-3 py-2 text-[13px] text-text-primary font-mono resize-none
+                focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+              data-testid="custom-prompt-textarea"
+            ></textarea>
+
+            <div class="flex items-center justify-between border-t border-border pt-4">
+              <button
+                class="rounded border border-border bg-bg-secondary px-3 py-1.5
+                  text-[12px] text-text-secondary hover:bg-bg-tertiary hover:text-text-primary
+                  focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                onclick={() => {
+                  customPromptDraft.fillDefaults()
+                }}
+                data-testid="restore-defaults-custom-prompt-button"
+              >
+                Restore Defaults
+              </button>
+              <button
+                disabled={!customPromptDraft.dirty}
+                class="rounded px-3 py-1.5 text-[12px]
+                  focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent
+                  {customPromptDraft.dirty
+                  ? 'bg-accent text-white hover:bg-accent/90'
+                  : 'bg-bg-secondary text-text-secondary/50 cursor-default'}"
+                onclick={() => {
+                  void customPromptDraft.apply().catch((err: unknown) => {
+                    const msg = err instanceof Error ? err.message : String(err)
+                    showError(`Failed to save settings: ${msg}`)
+                  })
+                }}
+                data-testid="apply-custom-prompt-button"
               >
                 Apply
               </button>

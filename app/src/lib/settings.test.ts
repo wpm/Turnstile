@@ -46,6 +46,28 @@ describe('parseSettings theme field', () => {
   })
 })
 
+describe('parseSettings customPrompt field', () => {
+  it('parses custom_prompt string from raw settings', () => {
+    const s = parseSettings({ custom_prompt: 'Prefer tactic mode.' })
+    expect(s.customPrompt).toBe('Prefer tactic mode.')
+  })
+
+  it('defaults customPrompt to empty string when missing', () => {
+    const s = parseSettings({})
+    expect(s.customPrompt).toBe('')
+  })
+
+  it('defaults customPrompt to empty string when non-string', () => {
+    const s = parseSettings({ custom_prompt: 42 })
+    expect(s.customPrompt).toBe('')
+  })
+
+  it('round-trips customPrompt through applySettings', () => {
+    applySettings(parseSettings({ custom_prompt: 'Be terse.' }))
+    expect(settings.customPrompt).toBe('Be terse.')
+  })
+})
+
 describe('updateSetting', () => {
   beforeEach(async () => {
     // Reset to known state
@@ -83,6 +105,7 @@ describe('resetToDefaults', () => {
       chatFontSize: 20,
       model: 'gpt-4',
       theme: 'light',
+      customPrompt: 'noise',
     })
     const { invoke } = await import('./tauri')
     vi.mocked(invoke).mockReset()
@@ -96,6 +119,7 @@ describe('resetToDefaults', () => {
     expect(settings.editorFontSize).toBe(13)
     expect(settings.model).toBeNull()
     expect(settings.theme).toBe('auto')
+    expect(settings.customPrompt).toBe('')
   })
 
   it('rolls back when backend save fails', async () => {
@@ -107,6 +131,7 @@ describe('resetToDefaults', () => {
     expect(settings.editorFontSize).toBe(20)
     expect(settings.model).toBe('gpt-4')
     expect(settings.theme).toBe('light')
+    expect(settings.customPrompt).toBe('noise')
   })
 })
 

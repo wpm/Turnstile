@@ -55,7 +55,7 @@ test.describe('Button focus states', () => {
     await page.keyboard.press('Meta+,')
     await page.locator('[data-testid="settings-modal"]').waitFor({ state: 'visible' })
 
-    for (const tabId of ['appearance', 'model']) {
+    for (const tabId of ['appearance', 'model', 'customPrompt']) {
       const btn = page.locator(`[data-testid="settings-tab-${tabId}"]`)
       await btn.focus()
       expect(await focusRing(btn), `settings-tab-${tabId} should have a focus ring`).not.toBe(
@@ -315,7 +315,7 @@ test.describe('Settings tablist ARIA', () => {
     await page.keyboard.press('Meta+,')
     await page.locator('[data-testid="settings-modal"]').waitFor({ state: 'visible' })
     const tabs = page.locator('[role="tab"]')
-    await expect(tabs).toHaveCount(2)
+    await expect(tabs).toHaveCount(3)
   })
 
   test('active tab has aria-selected=true, inactive has aria-selected=false', async ({

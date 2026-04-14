@@ -22,6 +22,7 @@ export const DEFAULT_SETTINGS = {
   chatFontSize: 13,
   model: null as string | null,
   theme: 'auto' as ThemePreference,
+  customPrompt: '',
 }
 
 interface SettingsData {
@@ -30,6 +31,7 @@ interface SettingsData {
   chatFontSize: number
   model: string | null
   theme: ThemePreference
+  customPrompt: string
 }
 
 export interface ModelInfo {
@@ -63,6 +65,10 @@ export function parseSettings(raw: Record<string, unknown> | null | undefined): 
       raw['theme'] === 'dark' || raw['theme'] === 'light' || raw['theme'] === 'auto'
         ? (raw['theme'] as ThemePreference)
         : DEFAULT_SETTINGS.theme,
+    customPrompt:
+      typeof raw['custom_prompt'] === 'string'
+        ? raw['custom_prompt']
+        : DEFAULT_SETTINGS.customPrompt,
   }
 }
 
@@ -76,6 +82,7 @@ function serializeSettings(s: SettingsData): Record<string, unknown> {
     chat_font_size: s.chatFontSize,
     model: s.model,
     theme: s.theme,
+    custom_prompt: s.customPrompt,
   }
 }
 
@@ -86,6 +93,7 @@ let proseFontSize = $state(DEFAULT_SETTINGS.proseFontSize)
 let chatFontSize = $state(DEFAULT_SETTINGS.chatFontSize)
 let model = $state<string | null>(DEFAULT_SETTINGS.model)
 let themeValue = $state<ThemePreference>(DEFAULT_SETTINGS.theme)
+let customPrompt = $state(DEFAULT_SETTINGS.customPrompt)
 let availableModels = $state<ModelInfo[]>([])
 
 export const settings = {
@@ -103,6 +111,9 @@ export const settings = {
   },
   get theme() {
     return themeValue
+  },
+  get customPrompt() {
+    return customPrompt
   },
   get availableModels() {
     return availableModels
@@ -123,10 +134,18 @@ export function applySettings(s: SettingsData): void {
   chatFontSize = s.chatFontSize
   model = s.model
   themeValue = s.theme
+  customPrompt = s.customPrompt
 }
 
 function currentValues(): SettingsData {
-  return { editorFontSize, proseFontSize, chatFontSize, model, theme: themeValue }
+  return {
+    editorFontSize,
+    proseFontSize,
+    chatFontSize,
+    model,
+    theme: themeValue,
+    customPrompt,
+  }
 }
 
 export async function updateSetting(
@@ -144,6 +163,8 @@ export async function updateSetting(
     model = typeof value === 'string' ? value : null
   } else if (key === 'theme') {
     themeValue = value === 'light' ? 'light' : value === 'auto' ? 'auto' : 'dark'
+  } else if (key === 'customPrompt') {
+    customPrompt = typeof value === 'string' ? value : ''
   }
   try {
     const s = serializeSettings(currentValues())
@@ -187,6 +208,7 @@ class SettingsDraft {
   chatFontSize = $state(DEFAULT_SETTINGS.chatFontSize)
   model = $state<string | null>(DEFAULT_SETTINGS.model)
   theme = $state<ThemePreference>(DEFAULT_SETTINGS.theme)
+  customPrompt = $state(DEFAULT_SETTINGS.customPrompt)
 
   constructor(keys: SettingsKey[], options?: DraftOptions) {
     this.#keys = keys
