@@ -233,6 +233,41 @@ describe('richInput', () => {
       setCursorOffset(el, 7)
       expect(getCursorOffset(el)).toBe(7)
     })
+
+    it('getCursorOffset accumulates past a nested div to reach trailing text', () => {
+      // Exercises computePlainTextLength summing past a non-BR non-rendered element
+      // and the final return len path.
+      el.innerHTML = '<div>abc</div>xyz'
+      el.focus()
+      // Place cursor manually at offset 1 in the trailing 'xyz' text node.
+      const trailingText = el.childNodes[1] // 'xyz' text node
+      if (trailingText) {
+        const range = document.createRange()
+        range.setStart(trailingText, 1) // after 'x'
+        range.collapse(true)
+        document.getSelection()?.removeAllRanges()
+        document.getSelection()?.addRange(range)
+      }
+      // 'abc' (3 from the div) + 'x' (1) = 4
+      expect(getCursorOffset(el)).toBe(4)
+    })
+
+    it('getCursorOffset when cursor is at child-index position inside a nested element', () => {
+      // Exercises the computePlainTextLength branch where container is an
+      // element node and offset is a child-index within it.
+      el.innerHTML = '<div><span data-source="`a`" contenteditable="false">a</span>text</div>'
+      el.focus()
+      const innerDiv = el.querySelector('div')
+      if (!innerDiv) throw new Error('div not found')
+      // Place cursor at child-index 1 inside the div (after the rendered span)
+      const range = document.createRange()
+      range.setStart(innerDiv, 1)
+      range.collapse(true)
+      document.getSelection()?.removeAllRanges()
+      document.getSelection()?.addRange(range)
+      // '`a`' is 3 chars — cursor is after it at offset 3
+      expect(getCursorOffset(el)).toBe(3)
+    })
   })
 
   // ── Test helpers for new functions ─────────────────────────────────
