@@ -56,6 +56,10 @@ import {
 } from './editorHelpers'
 import type { ResolvedTheme } from './theme'
 import { findAbbrevReplacement } from './leanAbbrev'
+import { indentationMarkers } from '@replit/codemirror-indentation-markers'
+import { hoverTypeExtension } from './hoverTooltip'
+import { gotoDefinitionExtension } from './gotoDefinition'
+import { codeActionsExtension } from './codeActions'
 
 // ---------------------------------------------------------------------------
 // Lean abbreviation expansion — updateListener
@@ -400,31 +404,75 @@ interface EditorHandle {
   setGoalLines(lines: number[]): void
   setContent(text: string): void
   setTheme(theme: ResolvedTheme): void
+  setWordWrap(enabled: boolean): void
+  /**
+   * Move the cursor to a 0-indexed LSP position and scroll into view.
+   * Used by the symbol-outline palette.
+   */
+  jumpTo(line: number, character: number): void
   destroy(): void
+}
+
+interface MountEditorOptions {
+  onChange: (content: string) => void
+  onCursorChange?: ((line: number, col: number) => void) | undefined
+  /** Called when the user presses Option/Alt+Z or clicks the footer wrap indicator. */
+  onToggleWrap?: (() => void) | undefined
+  /** Called when go-to-definition resolves a target in another file. */
+  onExternalDef?: ((uri: string) => void) | undefined
+  /** Returns the URI of the currently-open document. */
+  currentUri?: (() => string) | undefined
 }
 
 export function mountEditor(
   container: HTMLElement,
   initialTheme: ResolvedTheme,
-  onChange: (content: string) => void,
+  optionsOrOnChange: MountEditorOptions | ((content: string) => void),
   onCursorChange?: (line: number, col: number) => void,
 ): EditorHandle {
+  // Back-compat: also accept the old (onChange, onCursorChange?) signature
+  // so existing tests and callers keep working while we migrate.
+  const options: MountEditorOptions =
+    typeof optionsOrOnChange === 'function'
+      ? { onChange: optionsOrOnChange, onCursorChange }
+      : optionsOrOnChange
+
+  const onChange = options.onChange
+  const onCursorChangeCb = options.onCursorChange
+  const onToggleWrap = options.onToggleWrap
+  const onExternalDef = options.onExternalDef ?? ((_uri: string) => undefined)
+  const currentUri = options.currentUri ?? (() => 'file:///proof.lean')
   const themeCompartment = new Compartment()
+  const wrapCompartment = new Compartment()
   const updateListener = EditorView.updateListener.of((update: ViewUpdate) => {
     if (update.docChanged) {
       onChange(update.state.doc.toString())
     }
   })
 
-  const cursorListener = onCursorChange
+  const cursorListener = onCursorChangeCb
     ? EditorView.updateListener.of((update: ViewUpdate) => {
         if (update.selectionSet || update.docChanged) {
           const head = update.state.selection.main.head
           const line = update.state.doc.lineAt(head)
           // LSP uses 0-indexed line and column
-          onCursorChange(line.number - 1, head - line.from)
+          onCursorChangeCb(line.number - 1, head - line.from)
         }
       })
+    : []
+
+  // Word-wrap keymap (Alt+Z / Option+Z). The handler calls back into the
+  // host (App.svelte) which owns the authoritative state and persistence.
+  const wrapKeymap = onToggleWrap
+    ? keymap.of([
+        {
+          key: 'Alt-z',
+          run() {
+            onToggleWrap()
+            return true
+          },
+        },
+      ])
     : []
 
   const view = new EditorView({
@@ -465,10 +513,16 @@ export function mountEditor(
         diagnosticListField,
         diagnosticUnderlineField,
         diagnosticHoverTooltip,
+        hoverTypeExtension(),
         tooltips({ parent: document.body }),
         diagnosticGutter,
         fileProgressExtension(),
         goalLineField,
+        indentationMarkers(),
+        gotoDefinitionExtension({ onExternalDef, currentUri }),
+        codeActionsExtension({ currentUri }),
+        wrapKeymap,
+        wrapCompartment.of([]),
         updateListener,
         cursorListener,
         baseTheme,
@@ -498,6 +552,23 @@ export function mountEditor(
     },
     setTheme(t: ResolvedTheme) {
       view.dispatch({ effects: themeCompartment.reconfigure(themeExtension(t)) })
+    },
+    setWordWrap(enabled: boolean) {
+      view.dispatch({
+        effects: wrapCompartment.reconfigure(enabled ? EditorView.lineWrapping : []),
+      })
+    },
+    jumpTo(line: number, character: number) {
+      const doc = view.state.doc
+      const targetLineNum = line + 1
+      if (targetLineNum < 1 || targetLineNum > doc.lines) return
+      const targetLine = doc.line(targetLineNum)
+      const anchor = Math.min(targetLine.from + character, targetLine.to)
+      view.dispatch({
+        selection: { anchor },
+        effects: EditorView.scrollIntoView(anchor, { y: 'center' }),
+      })
+      view.focus()
     },
     destroy() {
       view.destroy()

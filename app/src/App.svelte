@@ -15,7 +15,9 @@
   import ProofViewToggle from './components/ProofViewToggle.svelte'
   import ProsePanel from './components/ProsePanel.svelte'
   import GoalPanel from './components/GoalPanel.svelte'
+  import SymbolOutline from './components/SymbolOutline.svelte'
   import { renderContent } from './lib/renderContent'
+  import { lspDocumentSymbols, type DocumentSymbolInfo } from './lib/lspRequests'
   import { buildGoalLineMap } from './lib/goalLineMap'
   import { theme, systemTheme, toggleTheme, resolveTheme } from './lib/theme'
   import type { ResolvedTheme } from './lib/theme'
@@ -40,6 +42,44 @@
   let semanticTokens = $state<SemanticToken[] | null>(null)
   let fileProgress = $state<FileProgressRange[] | null>(null)
   let showSettings = $state(false)
+
+  // Word wrap — authoritative state lives here so it round-trips through .turn.
+  let wordWrap = $state(false)
+
+  // Cursor position displayed in the footer row (0-indexed to 1-indexed).
+  let cursorLineDisplay = $state(1)
+  let cursorColDisplay = $state(1)
+
+  // Symbol outline (Cmd+Shift+O) command palette.
+  let outlineOpen = $state(false)
+  let outlineSymbols = $state<DocumentSymbolInfo[]>([])
+
+  const PROOF_URI = 'file:///proof.lean'
+
+  function toggleWordWrap(): void {
+    wordWrap = !wordWrap
+    sessionDirty = true
+  }
+
+  function handleExternalDef(uri: string): void {
+    showError(`Definition is in another file — out of scope for now (${uri})`)
+  }
+
+  async function openSymbolOutline(): Promise<void> {
+    try {
+      const symbols = await lspDocumentSymbols()
+      outlineSymbols = symbols
+      outlineOpen = true
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      showError(`Could not load symbols: ${msg}`)
+    }
+  }
+
+  function jumpToSymbol(line: number, character: number): void {
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Svelte 5 bind:this doesn't expose exported functions in the component type
+    editorRef?.jumpTo(line, character)
+  }
 
   // Derive the concrete dark/light theme from the preference + OS setting.
   let resolved: ResolvedTheme = $derived(resolveTheme($theme, $systemTheme))
@@ -184,6 +224,7 @@
     chat_width_pct: number
     proof_view: string
     goal_panel_pct: number
+    word_wrap: boolean
   } {
     return {
       format_version: 1,
@@ -195,6 +236,7 @@
       chat_width_pct: chatWidthPct,
       proof_view: proofView,
       goal_panel_pct: goalPanelPct,
+      word_wrap: wordWrap,
     }
   }
 
@@ -204,6 +246,11 @@
     invoke('update_document', { content }).catch(() => {
       /* LSP not yet connected */
     })
+  }
+
+  function handleCursorChange(line: number, col: number): void {
+    cursorLineDisplay = line + 1
+    cursorColDisplay = col + 1
   }
 
   function handleHighlightLine(line: number | null): void {
@@ -351,6 +398,13 @@
     const meta = e.metaKey || e.ctrlKey
     if (!meta) return
 
+    // Cmd/Ctrl+Shift+O — symbol outline command palette
+    if ((e.key === 'o' || e.key === 'O') && e.shiftKey) {
+      e.preventDefault()
+      void openSymbolOutline()
+      return
+    }
+
     if (e.key === ',') {
       e.preventDefault()
       showSettings = true
@@ -435,6 +489,7 @@
       chatWidthPct = session.meta.chat_width_pct || 25
       goalPanelPct = session.meta.goal_panel_pct ?? 30
       proofView = session.meta.proof_view === 'prose' ? 'prose' : 'formal'
+      wordWrap = session.meta.word_wrap ?? false
       sessionDirty = false
     })
 
@@ -448,6 +503,7 @@
         openSettings: () => {
           showSettings = true
         },
+        toggleWordWrap,
       })
     })
 
@@ -681,7 +737,12 @@
                 {diagnostics}
                 {semanticTokens}
                 {fileProgress}
+                {wordWrap}
+                currentUri={() => PROOF_URI}
                 onchange={handleChange}
+                oncursorchange={handleCursorChange}
+                ontogglewrap={toggleWordWrap}
+                onexternaldef={handleExternalDef}
               />
             </div>
 
@@ -723,6 +784,22 @@
             fontSize={settings.proseFontSize}
           />
         {/if}
+      </div>
+      <!-- Footer status strip: cursor position + word-wrap toggle. -->
+      <div
+        class="flex items-center justify-between px-3 py-1 border-t border-border bg-bg-secondary text-[11px] text-text-secondary shrink-0"
+        data-testid="editor-footer"
+      >
+        <span data-testid="cursor-position">Ln {cursorLineDisplay}, Col {cursorColDisplay}</span>
+        <button
+          type="button"
+          class="px-2 py-0.5 rounded hover:bg-bg-tertiary hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+          aria-pressed={wordWrap}
+          onclick={toggleWordWrap}
+          data-testid="word-wrap-toggle"
+        >
+          Wrap: {wordWrap ? 'On' : 'Off'}
+        </button>
       </div>
     </div>
 
@@ -771,5 +848,15 @@
 
   {#if showSettings}
     <SettingsModal onClose={() => (showSettings = false)} />
+  {/if}
+
+  {#if outlineOpen}
+    <SymbolOutline
+      symbols={outlineSymbols}
+      onJump={jumpToSymbol}
+      onClose={() => {
+        outlineOpen = false
+      }}
+    />
   {/if}
 </div>

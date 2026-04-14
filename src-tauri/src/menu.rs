@@ -19,6 +19,7 @@ pub const OPEN_SESSION: &str = "open_session";
 pub const SAVE_SESSION: &str = "save_session";
 pub const SAVE_SESSION_AS: &str = "save_session_as";
 pub const SETTINGS: &str = "settings";
+pub const TOGGLE_WORD_WRAP: &str = "toggle_word_wrap";
 
 /// Every custom (non-predefined) menu-item ID that the frontend must handle.
 pub const ALL_CUSTOM_IDS: &[&str] = &[
@@ -27,6 +28,7 @@ pub const ALL_CUSTOM_IDS: &[&str] = &[
     SAVE_SESSION,
     SAVE_SESSION_AS,
     SETTINGS,
+    TOGGLE_WORD_WRAP,
 ];
 
 // ── Menu construction ───────────────────────────────────────────────────────
@@ -128,6 +130,20 @@ pub fn build_menu<R: Runtime>(handle: &AppHandle<R>) -> tauri::Result<tauri::men
 
     menu = menu.item(&edit_submenu);
 
+    // ── View submenu (all platforms) ───────────────────────────────────────
+
+    let toggle_wrap_item = MenuItem::with_id(
+        handle,
+        TOGGLE_WORD_WRAP,
+        "Toggle Word Wrap",
+        true,
+        Some("Alt+Z"),
+    )?;
+    let view_submenu = SubmenuBuilder::new(handle, "View")
+        .item(&toggle_wrap_item)
+        .build()?;
+    menu = menu.item(&view_submenu);
+
     menu.build()
 }
 
@@ -172,6 +188,7 @@ mod tests {
             SAVE_SESSION,
             SAVE_SESSION_AS,
             SETTINGS,
+            TOGGLE_WORD_WRAP,
         ];
         for id in &required {
             assert!(
@@ -188,5 +205,6 @@ mod tests {
         assert_eq!(SAVE_SESSION, "save_session");
         assert_eq!(SAVE_SESSION_AS, "save_session_as");
         assert_eq!(SETTINGS, "settings");
+        assert_eq!(TOGGLE_WORD_WRAP, "toggle_word_wrap");
     }
 }

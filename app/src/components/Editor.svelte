@@ -10,8 +10,12 @@
     diagnostics?: DiagnosticInfo[] | null
     semanticTokens?: SemanticToken[] | null
     fileProgress?: FileProgressRange[] | null
+    wordWrap?: boolean
     onchange: (content: string) => void
     oncursorchange?: (line: number, col: number) => void
+    ontogglewrap?: () => void
+    onexternaldef?: (uri: string) => void
+    currentUri?: () => string
   }
 
   let {
@@ -20,8 +24,12 @@
     diagnostics = null,
     semanticTokens = null,
     fileProgress = null,
+    wordWrap = false,
     onchange,
     oncursorchange,
+    ontogglewrap,
+    onexternaldef,
+    currentUri,
   }: Props = $props()
 
   let container: HTMLDivElement
@@ -35,8 +43,16 @@
     handle?.setGoalLines(lines)
   }
 
+  export function jumpTo(line: number, character: number): void {
+    handle?.jumpTo(line, character)
+  }
+
   $effect(() => {
     handle?.setTheme(theme)
+  })
+
+  $effect(() => {
+    handle?.setWordWrap(wordWrap)
   })
 
   $effect(() => {
@@ -52,7 +68,15 @@
   })
 
   onMount(() => {
-    handle = mountEditor(container, initialTheme, onchange, oncursorchange)
+    handle = mountEditor(container, initialTheme, {
+      onChange: onchange,
+      onCursorChange: oncursorchange,
+      onToggleWrap: ontogglewrap,
+      onExternalDef: onexternaldef,
+      currentUri,
+    })
+    // Initial wrap state, applied after mount.
+    handle.setWordWrap(wordWrap)
   })
 
   onDestroy(() => {

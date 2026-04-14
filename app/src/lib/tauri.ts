@@ -49,6 +49,7 @@ export interface SessionMeta {
   chat_width_pct: number
   proof_view?: string
   goal_panel_pct?: number
+  word_wrap?: boolean
 }
 
 export interface SessionState {
