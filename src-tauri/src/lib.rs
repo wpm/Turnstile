@@ -584,6 +584,7 @@ pub fn run() {
             session_commands::delete_auto_save,
             session_commands::get_last_session,
             session_commands::set_last_session,
+            session_commands::set_window_title,
             menu::set_menu_item_enabled,
         ])
         .run(tauri::generate_context!())

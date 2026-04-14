@@ -144,6 +144,7 @@ pub async fn save_session(
     prose_text: String,
     prose_hash: Option<String>,
     meta: session::Meta,
+    suggested_name: Option<String>,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
     let path = state.current_session_path.lock().await.clone();
@@ -155,7 +156,16 @@ pub async fn save_session(
             }
         }
         None => {
-            save_session_as(app, proof_lean, prose_text, prose_hash, meta, state).await?;
+            save_session_as(
+                app,
+                proof_lean,
+                prose_text,
+                prose_hash,
+                meta,
+                suggested_name,
+                state,
+            )
+            .await?;
         }
     }
     Ok(())
@@ -169,13 +179,19 @@ pub async fn save_session_as(
     prose_text: String,
     prose_hash: Option<String>,
     meta: session::Meta,
+    suggested_name: Option<String>,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
+    let filename = suggested_name
+        .filter(|s| !s.is_empty())
+        .map(|s| format!("{s}.turn"))
+        .unwrap_or_else(|| "session.turn".to_string());
+
     let (tx, rx) = tokio::sync::oneshot::channel::<Option<PathBuf>>();
     app.dialog()
         .file()
         .add_filter("Turnstile session", &["turn"])
-        .set_file_name("session.turn")
+        .set_file_name(&filename)
         .save_file(move |result| {
             let resolved = result.and_then(|fp| match fp {
                 FilePath::Path(p) => Some(p),
@@ -302,6 +318,17 @@ pub fn get_last_session(app: AppHandle) -> Result<Option<String>, String> {
 pub fn set_last_session(app: AppHandle, path: String) -> Result<(), String> {
     let dir = app_data_dir(&app)?;
     write_last_session(&dir, Path::new(&path))
+}
+
+/// Set the main window title (called from the frontend when the theorem name changes).
+#[tauri::command]
+pub fn set_window_title(app: AppHandle, title: String) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("main") {
+        window
+            .set_title(&title)
+            .map_err(|e| format!("Failed to set window title: {e}"))?;
+    }
+    Ok(())
 }
 
 // ── Tests ────────────────────────────────────────────────────────────

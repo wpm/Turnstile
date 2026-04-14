@@ -28,6 +28,7 @@
   import { handleMenuEvent } from './lib/menu'
   import { syncSaveMenuState } from './lib/saveIndicator'
   import { errorNotification, showError, dismissError } from './lib/errorNotification.svelte'
+  import { getTheoremTitle, titleToFilename } from './lib/theoremName'
 
   let setupVisible = $state(true)
   let setupMessage = $state('Checking Lean installation...')
@@ -105,6 +106,21 @@
   let recoveryPromptEl = $state<HTMLElement | null>(null)
   let recoveryTriggerEl: Element | null = null
 
+  // Derive the theorem title from prose (preferred) or Lean source (fallback).
+  let theoremTitle: string = $derived(getTheoremTitle(proseText, editorContent))
+
+  // Keep the native window title in sync with the theorem title.
+  let lastSetTitle = ''
+  $effect(() => {
+    const title = theoremTitle
+    if (title !== lastSetTitle) {
+      lastSetTitle = title
+      invoke('set_window_title', { title }).catch(() => {
+        /* window not yet available during setup */
+      })
+    }
+  })
+
   // When the Editor remounts (e.g. after toggling prose → formal), restore the
   // current content into the fresh CodeMirror instance.  We read editorContent
   // inside untrack() so this effect only re-runs when editorRef changes — not
@@ -166,6 +182,20 @@
     })
   }
 
+  // Generate prose if it doesn't exist yet (called before saving).
+  async function ensureProse(): Promise<void> {
+    if (proseText || !editorContent.trim()) return
+    proseGenerating = true
+    try {
+      await invoke('generate_prose')
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      showError(`Prose generation failed: ${msg}`)
+    } finally {
+      proseGenerating = false
+    }
+  }
+
   // Session command wrappers
   async function newSession(): Promise<void> {
     await invoke('new_session')
@@ -179,11 +209,14 @@
 
   async function saveSession(): Promise<void> {
     try {
+      await ensureProse()
+      const suggestedName = theoremTitle !== 'New Theorem' ? titleToFilename(theoremTitle) : null
       await invoke('save_session', {
         proofLean: editorContent,
         proseText: proseText,
         proseHash: proseHash,
         meta: buildMeta(),
+        suggestedName,
       })
       sessionDirty = false
     } catch (err) {
@@ -194,11 +227,14 @@
 
   async function saveSessionAs(): Promise<void> {
     try {
+      await ensureProse()
+      const suggestedName = theoremTitle !== 'New Theorem' ? titleToFilename(theoremTitle) : null
       await invoke('save_session_as', {
         proofLean: editorContent,
         proseText: proseText,
         proseHash: proseHash,
         meta: buildMeta(),
+        suggestedName,
       })
       sessionDirty = false
     } catch (err) {

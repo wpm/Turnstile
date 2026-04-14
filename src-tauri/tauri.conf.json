@@ -13,7 +13,7 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "turnstile",
+        "title": "New Theorem",
         "width": 800,
         "height": 600
       }
