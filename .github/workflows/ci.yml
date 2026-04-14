@@ -254,10 +254,15 @@ jobs:
           find . -not -path '*/target/*' \( -name '*.rs' -o -name 'Cargo.toml' -o -name 'Cargo.lock' -o -name 'build.rs' \) -exec touch -t "$ts" {} +
           touch -t "$ts" .cargo/config.toml
 
-      # --no-clean reuses the coverage-instrumented artifacts built in
-      # compile-rust-tests; without it llvm-cov wipes target/ and rebuilds.
-      - name: cargo llvm-cov --lib (Rust unit tests with coverage)
-        run: cargo llvm-cov --no-clean --lib --lcov --output-path lcov-rust.info
+      # Run under `show-env` so the same target dir + env vars are used
+      # as in compile-rust-tests. `cargo llvm-cov --no-clean --lib` would
+      # use target/llvm-cov-target/ instead of target/, miss the cached
+      # artifacts, and rebuild everything.
+      - name: cargo test --lib + llvm-cov report (Rust unit tests)
+        run: |
+          source <(cargo llvm-cov show-env --sh)
+          cargo test --lib
+          cargo llvm-cov report --lcov --output-path lcov-rust.info
 
       - name: Normalize Rust LCOV paths to repo-relative
         run: sed -i '' "s|SF:${GITHUB_WORKSPACE}/||g" lcov-rust.info
@@ -402,10 +407,15 @@ jobs:
           test -d "$LEAN_PROJECT/.lake/packages/mathlib"
 
       # ── Run integration tests with coverage ───────────────────────────
-      # --no-clean reuses the coverage-instrumented artifacts built in
-      # compile-rust-tests; without it llvm-cov wipes target/ and rebuilds.
-      - name: cargo llvm-cov (Lean LSP integration tests)
-        run: cargo llvm-cov --no-clean --test lean_lsp_integration --lcov --output-path lcov-integration.info
+      # Run under `show-env` so the same target dir + env vars are used
+      # as in compile-rust-tests. `cargo llvm-cov --no-clean --test` would
+      # use target/llvm-cov-target/ instead of target/, miss the cached
+      # artifacts, and rebuild everything.
+      - name: cargo test --test + llvm-cov report (Lean LSP integration)
+        run: |
+          source <(cargo llvm-cov show-env --sh)
+          cargo test --test lean_lsp_integration
+          cargo llvm-cov report --lcov --output-path lcov-integration.info
         env:
           TURNSTILE_PROJECT_PATH: ${{ env.LEAN_PROJECT }}
 
