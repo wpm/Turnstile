@@ -404,6 +404,8 @@ pub fn set_window_title(app: AppHandle, title: String) -> Result<(), String> {
 mod tests {
     use super::*;
 
+    type TestResult = Result<(), Box<dyn std::error::Error>>;
+
     #[test]
     fn last_session_round_trip() {
         let dir = tempfile::tempdir().unwrap();
@@ -500,5 +502,96 @@ mod tests {
         remove_autosave_file(&autosave).unwrap();
         assert!(!autosave.exists());
         assert!(last_session.exists());
+    }
+
+    // ── Filesystem error paths (unreachable from e2e) ────────────────
+    //
+    // The Svelte e2e layer only sees `String` errors from successful
+    // command registration. The tests below pin the underlying
+    // filesystem behavior so a regression in the helpers surfaces here
+    // rather than as a mysterious command failure at runtime.
+
+    #[test]
+    fn write_last_session_errors_when_dir_missing() -> TestResult {
+        let dir = tempfile::tempdir()?;
+        // Point at a subdirectory that does not exist — std::fs::write
+        // must not silently create parent directories.
+        let missing = dir.path().join("does").join("not").join("exist");
+        let result = write_last_session(&missing, Path::new("/home/user/proof.turn"));
+        assert!(
+            result.is_err(),
+            "expected Err when parent directory is missing, got: {result:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn write_last_session_errors_when_target_is_directory() -> TestResult {
+        let dir = tempfile::tempdir()?;
+        // Pre-create `last_session.txt` as a directory — write_last_session
+        // should refuse rather than silently overwriting.
+        std::fs::create_dir(dir.path().join("last_session.txt"))?;
+        let result = write_last_session(dir.path(), Path::new("/home/user/proof.turn"));
+        assert!(
+            result.is_err(),
+            "expected Err when last_session.txt is a directory, got: {result:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn remove_autosave_file_errors_when_path_is_directory() -> TestResult {
+        // std::fs::remove_file refuses directories (EISDIR on unix,
+        // ERROR_ACCESS_DENIED on windows). Pinning this ensures the
+        // helper surfaces the error instead of silently succeeding.
+        let dir = tempfile::tempdir()?;
+        let autosave_as_dir = dir.path().join("autosave.turn");
+        std::fs::create_dir(&autosave_as_dir)?;
+
+        let result = remove_autosave_file(&autosave_as_dir);
+        assert!(
+            result.is_err(),
+            "expected Err when autosave path is a directory, got: {result:?}"
+        );
+        // The directory must still exist — we should not have partially
+        // removed it.
+        assert!(autosave_as_dir.exists());
+        Ok(())
+    }
+
+    #[test]
+    fn read_last_session_returns_none_on_non_utf8_bytes() -> TestResult {
+        // read_last_session uses `.ok()` to swallow read errors — including
+        // non-UTF8 decoding failures — and returns None. This pins that
+        // contract so a launch with a corrupted last_session.txt falls back
+        // gracefully to "no last session" instead of erroring.
+        let dir = tempfile::tempdir()?;
+        std::fs::write(dir.path().join("last_session.txt"), [0xFF, 0xFE, 0xFD])?;
+        assert_eq!(read_last_session(dir.path()), None);
+        Ok(())
+    }
+
+    #[test]
+    fn remove_autosave_file_idempotent_after_successful_remove() -> TestResult {
+        // Simulates the realistic callsite pattern: save completes
+        // (removes autosave), then the app quits via a handler that
+        // also removes autosave. Back-to-back sequential removals
+        // must both succeed and leave the filesystem clean.
+        //
+        // Note: concurrent removals across threads are NOT guaranteed
+        // idempotent because `remove_autosave_file` uses a check-then-act
+        // (path.exists() → fs::remove_file) which is TOCTOU-racy. The
+        // real callsites are sequential (save handler → quit handler
+        // on the same task), so this sequential guarantee is sufficient.
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("autosave.turn");
+        std::fs::write(&path, b"autosave contents")?;
+        assert!(path.exists());
+
+        remove_autosave_file(&path)?; // first call: removes
+        remove_autosave_file(&path)?; // second call: no-op
+        remove_autosave_file(&path)?; // third call: still no-op
+        assert!(!path.exists());
+        Ok(())
     }
 }
