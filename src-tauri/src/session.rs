@@ -301,93 +301,102 @@ mod tests {
         }
     }
 
-    #[test]
-    fn round_trip_full_state() {
-        let original = sample_state();
-        let tmp = NamedTempFile::new().unwrap();
+    type TestResult = Result<(), Box<dyn std::error::Error>>;
 
-        save(&original, tmp.path()).unwrap();
-        let loaded = load(tmp.path()).unwrap();
+    #[test]
+    fn round_trip_full_state() -> TestResult {
+        let original = sample_state();
+        let tmp = NamedTempFile::new()?;
+
+        save(&original, tmp.path())?;
+        let loaded = load(tmp.path())?;
 
         assert_eq!(loaded, original);
+        Ok(())
     }
 
     #[test]
-    fn round_trip_without_summary() {
+    fn round_trip_without_summary() -> TestResult {
         let mut state = sample_state();
         state.summary = None;
 
-        let tmp = NamedTempFile::new().unwrap();
-        save(&state, tmp.path()).unwrap();
-        let loaded = load(tmp.path()).unwrap();
+        let tmp = NamedTempFile::new()?;
+        save(&state, tmp.path())?;
+        let loaded = load(tmp.path())?;
 
         assert_eq!(loaded, state);
         assert!(loaded.summary.is_none());
+        Ok(())
     }
 
     #[test]
-    fn round_trip_empty_transcript() {
+    fn round_trip_empty_transcript() -> TestResult {
         let mut state = sample_state();
         state.transcript = Vec::new();
 
-        let tmp = NamedTempFile::new().unwrap();
-        save(&state, tmp.path()).unwrap();
-        let loaded = load(tmp.path()).unwrap();
+        let tmp = NamedTempFile::new()?;
+        save(&state, tmp.path())?;
+        let loaded = load(tmp.path())?;
 
         assert_eq!(loaded, state);
         assert!(loaded.transcript.is_empty());
+        Ok(())
     }
 
     #[test]
-    fn round_trip_empty_proof() {
+    fn round_trip_empty_proof() -> TestResult {
         let mut state = sample_state();
         state.proof_lean = String::new();
 
-        let tmp = NamedTempFile::new().unwrap();
-        save(&state, tmp.path()).unwrap();
-        let loaded = load(tmp.path()).unwrap();
+        let tmp = NamedTempFile::new()?;
+        save(&state, tmp.path())?;
+        let loaded = load(tmp.path())?;
 
         assert_eq!(loaded.proof_lean, "");
+        Ok(())
     }
 
     #[test]
-    fn round_trip_prose_without_hash() {
+    fn round_trip_prose_without_hash() -> TestResult {
         let mut state = sample_state();
         state.prose = ProseData {
             text: "Some text".to_string(),
             tactic_state_hash: None,
         };
 
-        let tmp = NamedTempFile::new().unwrap();
-        save(&state, tmp.path()).unwrap();
-        let loaded = load(tmp.path()).unwrap();
+        let tmp = NamedTempFile::new()?;
+        save(&state, tmp.path())?;
+        let loaded = load(tmp.path())?;
 
         assert_eq!(loaded.prose.text, "Some text");
         assert!(loaded.prose.tactic_state_hash.is_none());
+        Ok(())
     }
 
     #[test]
-    fn round_trip_transcript_timestamps() {
+    fn round_trip_transcript_timestamps() -> TestResult {
         let state = sample_state();
-        let tmp = NamedTempFile::new().unwrap();
+        let tmp = NamedTempFile::new()?;
 
-        save(&state, tmp.path()).unwrap();
-        let loaded = load(tmp.path()).unwrap();
+        save(&state, tmp.path())?;
+        let loaded = load(tmp.path())?;
 
         assert_eq!(loaded.transcript[0].timestamp, 1_000_000);
         assert_eq!(loaded.transcript[1].timestamp, 1_000_001);
+        Ok(())
     }
 
     #[test]
-    fn format_version_rejection() {
+    fn format_version_rejection() -> TestResult {
         let mut state = sample_state();
         // Build a ZIP with an unknown format version
         state.meta.format_version = 999;
 
-        let bytes = build_zip(&state).unwrap();
+        let bytes = build_zip(&state)?;
         let err = parse_zip(&bytes).unwrap_err();
 
         assert!(err.contains("Unknown format version 999"), "got: {err}");
+        Ok(())
     }
 
     #[test]
@@ -398,22 +407,23 @@ mod tests {
     }
 
     #[test]
-    fn rejects_zip_missing_meta() {
+    fn rejects_zip_missing_meta() -> TestResult {
         // Build a ZIP that has no meta.json
         let buf = Vec::new();
         let cursor = Cursor::new(buf);
         let mut zip = zip::ZipWriter::new(cursor);
         let opts = zip::write::SimpleFileOptions::default();
-        zip.start_file("proof.lean", opts).unwrap();
-        zip.write_all(b"").unwrap();
-        let cursor = zip.finish().unwrap();
+        zip.start_file("proof.lean", opts)?;
+        zip.write_all(b"")?;
+        let cursor = zip.finish()?;
 
         let err = parse_zip(&cursor.into_inner()).unwrap_err();
         assert!(err.contains("Missing meta.json"), "got: {err}");
+        Ok(())
     }
 
     #[test]
-    fn rejects_zip_missing_proof_lean() {
+    fn rejects_zip_missing_proof_lean() -> TestResult {
         // Build a ZIP that has meta.json but no proof.lean
         let buf = Vec::new();
         let cursor = Cursor::new(buf);
@@ -423,13 +433,14 @@ mod tests {
             format_version: FORMAT_VERSION,
             ..Default::default()
         };
-        let meta_json = serde_json::to_string(&meta).unwrap();
-        zip.start_file("meta.json", opts).unwrap();
-        zip.write_all(meta_json.as_bytes()).unwrap();
-        let cursor = zip.finish().unwrap();
+        let meta_json = serde_json::to_string(&meta)?;
+        zip.start_file("meta.json", opts)?;
+        zip.write_all(meta_json.as_bytes())?;
+        let cursor = zip.finish()?;
 
         let err = parse_zip(&cursor.into_inner()).unwrap_err();
         assert!(err.contains("Missing proof.lean"), "got: {err}");
+        Ok(())
     }
 
     #[test]
@@ -444,18 +455,19 @@ mod tests {
     }
 
     #[test]
-    fn proof_view_round_trip() {
+    fn proof_view_round_trip() -> TestResult {
         let mut state = sample_state();
         state.meta.proof_view = Some("prose".to_string());
 
-        let bytes = build_zip(&state).unwrap();
-        let loaded = parse_zip(&bytes).unwrap();
+        let bytes = build_zip(&state)?;
+        let loaded = parse_zip(&bytes)?;
 
         assert_eq!(loaded.meta.proof_view, Some("prose".to_string()));
+        Ok(())
     }
 
     #[test]
-    fn proof_view_defaults_to_none() {
+    fn proof_view_defaults_to_none() -> TestResult {
         // Old meta without proof_view should deserialize to None
         let json = r#"{
             "format_version": 1,
@@ -466,34 +478,37 @@ mod tests {
             "editor_scroll_top": 0.0,
             "chat_width_pct": 25.0
         }"#;
-        let meta: Meta = serde_json::from_str(json).unwrap();
+        let meta: Meta = serde_json::from_str(json)?;
         assert!(meta.proof_view.is_none());
+        Ok(())
     }
 
     #[test]
-    fn word_wrap_round_trip_some_true() {
+    fn word_wrap_round_trip_some_true() -> TestResult {
         let mut state = sample_state();
         state.meta.word_wrap = Some(true);
 
-        let bytes = build_zip(&state).unwrap();
-        let loaded = parse_zip(&bytes).unwrap();
+        let bytes = build_zip(&state)?;
+        let loaded = parse_zip(&bytes)?;
 
         assert_eq!(loaded.meta.word_wrap, Some(true));
+        Ok(())
     }
 
     #[test]
-    fn word_wrap_round_trip_some_false() {
+    fn word_wrap_round_trip_some_false() -> TestResult {
         let mut state = sample_state();
         state.meta.word_wrap = Some(false);
 
-        let bytes = build_zip(&state).unwrap();
-        let loaded = parse_zip(&bytes).unwrap();
+        let bytes = build_zip(&state)?;
+        let loaded = parse_zip(&bytes)?;
 
         assert_eq!(loaded.meta.word_wrap, Some(false));
+        Ok(())
     }
 
     #[test]
-    fn word_wrap_defaults_to_none() {
+    fn word_wrap_defaults_to_none() -> TestResult {
         // Old meta without word_wrap should deserialize to None
         let json = r#"{
             "format_version": 1,
@@ -504,28 +519,31 @@ mod tests {
             "editor_scroll_top": 0.0,
             "chat_width_pct": 25.0
         }"#;
-        let meta: Meta = serde_json::from_str(json).unwrap();
+        let meta: Meta = serde_json::from_str(json)?;
         assert!(meta.word_wrap.is_none());
+        Ok(())
     }
 
     #[test]
-    fn word_wrap_none_is_not_serialized() {
+    fn word_wrap_none_is_not_serialized() -> TestResult {
         // With skip_serializing_if, None should be omitted from output
         let mut state = sample_state();
         state.meta.word_wrap = None;
-        let json = serde_json::to_string(&state.meta).unwrap();
+        let json = serde_json::to_string(&state.meta)?;
         assert!(!json.contains("word_wrap"), "got: {json}");
+        Ok(())
     }
 
     #[test]
-    fn meta_fields_preserved() {
+    fn meta_fields_preserved() -> TestResult {
         let original = sample_state();
-        let bytes = build_zip(&original).unwrap();
-        let loaded = parse_zip(&bytes).unwrap();
+        let bytes = build_zip(&original)?;
+        let loaded = parse_zip(&bytes)?;
 
         assert_eq!(loaded.meta.cursor_line, 3);
         assert_eq!(loaded.meta.cursor_col, 7);
         assert!((loaded.meta.editor_scroll_top - 120.5).abs() < f64::EPSILON);
         assert!((loaded.meta.chat_width_pct - 40.0).abs() < f64::EPSILON);
+        Ok(())
     }
 }
