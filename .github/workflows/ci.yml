@@ -252,6 +252,27 @@ jobs:
           flags: rust
           token: ${{ secrets.CODECOV_TOKEN }}
 
+  # ── Rust Doc Tests ──────────────────────────────────────────────────
+  test-rust-doc:
+    name: Doc Tests (Rust)
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies (cross-run)
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+          cache-on-failure: true
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          key: doc
+
+      - name: cargo test --doc
+        run: cargo test --doc
+
   # ── Integration Tests ────────────────────────────────────────────────
   test-rust-integration:
     name: Integration Tests (Lean LSP)
@@ -531,6 +552,7 @@ jobs:
       - compile-rust-tests
       - test-vitest
       - test-rust-unit
+      - test-rust-doc
       - test-rust-integration
       - build
       - test-e2e
