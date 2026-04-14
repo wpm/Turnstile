@@ -1,7 +1,7 @@
 # Turnstile
 
 [![CI](https://github.com/Ontical-Research/Turnstile/actions/workflows/ci.yml/badge.svg)](https://github.com/Ontical-Research/Turnstile/actions/workflows/ci.yml)
-[![codecov](https://codecov.io/gh/Ontical-Research/Turnstile/graph/badge.svg)](https://codecov.io/gh/Ontical-Research/Turnstile)
+[![codecov](https://img.shields.io/codecov/c/github/Ontical-Research/Turnstile)](https://app.codecov.io/gh/Ontical-Research/Turnstile)
 
 Turnstile is a desktop application for interactively proving [Lean](https://lean-lang.org/) theorems with AI assistance.
 
