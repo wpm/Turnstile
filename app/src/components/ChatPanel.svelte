@@ -13,6 +13,8 @@
     setCursorOffset,
     replaceRangeWithText,
     replaceRangeWithNode,
+    getRenderedNodeAtCursor,
+    removeRenderedNode,
   } from '../lib/richInput'
   import { createMathElement, createCodeElement } from '../lib/renderInlineContent'
 
@@ -177,6 +179,26 @@
     }
   }
 
+  function onBeforeInput(e: InputEvent): void {
+    const el = inputEl
+    if (!el) return
+
+    const adjacent = getRenderedNodeAtCursor(el)
+    if (!adjacent) return
+
+    const deletingBackward = e.inputType === 'deleteContentBackward' && adjacent.side === 'after'
+    const deletingForward = e.inputType === 'deleteContentForward' && adjacent.side === 'before'
+    if (!deletingBackward && !deletingForward) return
+
+    // Prevent the browser from partially corrupting the contenteditable=false
+    // span; remove it atomically instead.
+    e.preventDefault()
+    const offset = removeRenderedNode(el, adjacent.node)
+    setCursorOffset(el, offset)
+    // onInput doesn't fire when beforeinput is prevented, so update here.
+    inputNonEmpty = extractPlainText(el).trim().length > 0
+  }
+
   function onInput(): void {
     const el = inputEl
     if (!el) return
@@ -188,12 +210,9 @@
     const abbrev = findAbbrevReplacement(plainText, cursorPos)
     if (abbrev) {
       const { newText, newCursorPos } = applyAbbrevReplacement(plainText, abbrev)
-      // Replace the abbreviation text in-place
       replaceRangeWithText(el, abbrev.from, abbrev.to, abbrev.replacement)
       inputNonEmpty = newText.trim().length > 0
-      void tick().then(() => {
-        setCursorOffset(el, newCursorPos)
-      })
+      setCursorOffset(el, newCursorPos)
       return
     }
 
@@ -210,10 +229,6 @@
         node = createCodeElement(delimited.content, sourceText)
       }
       replaceRangeWithNode(el, delimited.from, delimited.to, node)
-      // Place cursor after the rendered node
-      void tick().then(() => {
-        setCursorOffset(el, delimited.from + sourceText.length)
-      })
     }
   }
 
@@ -446,6 +461,7 @@
         font-mono outline-none bg-bg-primary text-text-primary
         focus:border-accent transition-colors"
       oninput={onInput}
+      onbeforeinput={onBeforeInput}
       onkeydown={onKeydown}
       onpaste={onPaste}
     ></div>

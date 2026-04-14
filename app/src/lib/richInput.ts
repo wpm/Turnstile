@@ -128,9 +128,135 @@ export function replaceRangeWithNode(
 
   // Normalize to merge adjacent text nodes
   el.normalize()
+  placeCursorAfterNode(el, node)
+}
+
+// ── Rendered-node helpers ──────────────────────────────────────────────
+
+/**
+ * Returns ``true`` if ``node`` is an element carrying a ``data-source``
+ * attribute — i.e. a rendered inline math or code node.
+ */
+export function isRenderedNode(node: Node): boolean {
+  return node.nodeType === Node.ELEMENT_NODE && (node as HTMLElement).hasAttribute('data-source')
+}
+
+/**
+ * Place the cursor immediately after ``node`` inside a concrete ``Text``
+ * node.  If no text node follows ``node`` in ``el``, an empty ``Text``
+ * node is inserted so the cursor has somewhere to land.
+ *
+ * Using a child-index position on ``el`` (the alternative) is ambiguous
+ * for the browser's insertion logic when the adjacent sibling is
+ * ``contenteditable="false"``; this function avoids that ambiguity.
+ */
+export function placeCursorAfterNode(el: HTMLElement, node: HTMLElement): void {
+  const sel = el.ownerDocument.defaultView?.getSelection()
+  if (!sel) return
+
+  let textNode: Text
+
+  if (node.nextSibling?.nodeType === Node.TEXT_NODE) {
+    textNode = node.nextSibling as Text
+  } else {
+    textNode = el.ownerDocument.createTextNode('')
+    node.after(textNode)
+  }
+
+  const range = el.ownerDocument.createRange()
+  range.setStart(textNode, 0)
+  range.collapse(true)
+  sel.removeAllRanges()
+  sel.addRange(range)
+}
+
+/**
+ * Remove a rendered node from ``el``, merge adjacent text nodes, and
+ * return the plain-text offset at which the node started.
+ */
+export function removeRenderedNode(el: HTMLElement, node: HTMLElement): number {
+  const startOffset = computeNodeStartOffset(el, node)
+  node.remove()
+  el.normalize()
+  return startOffset
+}
+
+/**
+ * Inspect the current ``Selection`` to determine whether the cursor is
+ * immediately adjacent to a rendered node inside ``el``.
+ *
+ * Returns the adjacent rendered node and which side the cursor is on
+ * (``'before'`` = cursor is just before the node; ``'after'`` = cursor is
+ * just after the node), or ``null`` if the cursor is not adjacent to any
+ * rendered node.
+ */
+export function getRenderedNodeAtCursor(
+  el: HTMLElement,
+): { node: HTMLElement; side: 'before' | 'after' } | null {
+  const sel = el.ownerDocument.defaultView?.getSelection()
+  if (!sel || sel.rangeCount === 0) return null
+
+  const range = sel.getRangeAt(0)
+  const container = range.startContainer
+  const offset = range.startOffset
+
+  if (container === el) {
+    if (offset > 0) {
+      const prev = el.childNodes[offset - 1]
+      if (prev && isRenderedNode(prev)) {
+        return { node: prev as HTMLElement, side: 'after' }
+      }
+    }
+    const next = el.childNodes[offset]
+    if (next && isRenderedNode(next)) {
+      return { node: next as HTMLElement, side: 'before' }
+    }
+    return null
+  }
+
+  if (container.nodeType === Node.TEXT_NODE) {
+    if (offset === 0) {
+      const prev = container.previousSibling
+      if (prev && isRenderedNode(prev)) {
+        return { node: prev as HTMLElement, side: 'after' }
+      }
+    }
+    if (offset === (container.textContent ?? '').length) {
+      const next = container.nextSibling
+      if (next && isRenderedNode(next)) {
+        return { node: next as HTMLElement, side: 'before' }
+      }
+    }
+  }
+
+  return null
 }
 
 // ── Internal helpers ───────────────────────────────────────────────────
+
+/**
+ * Compute the plain-text offset of the start of ``node`` within ``el``.
+ */
+function computeNodeStartOffset(el: HTMLElement, node: HTMLElement): number {
+  let offset = 0
+  for (const child of el.childNodes) {
+    if (child === node) return offset
+    if (child.nodeType === Node.TEXT_NODE) {
+      offset += (child.textContent ?? '').length
+    } else if (child.nodeType === Node.ELEMENT_NODE) {
+      const elem = child as HTMLElement
+      const source = elem.getAttribute('data-source')
+      if (source !== null) {
+        offset += source.length
+      } else if (elem.tagName === 'BR') {
+        offset += 1
+      } else {
+        offset += plainTextLength(elem)
+      }
+    }
+  }
+  return offset
+}
 
 interface DomPosition {
   node: Node

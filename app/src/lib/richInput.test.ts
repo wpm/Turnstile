@@ -5,6 +5,10 @@ import {
   setCursorOffset,
   replaceRangeWithText,
   replaceRangeWithNode,
+  isRenderedNode,
+  placeCursorAfterNode,
+  removeRenderedNode,
+  getRenderedNodeAtCursor,
 } from './richInput'
 
 describe('richInput', () => {
@@ -14,6 +18,7 @@ describe('richInput', () => {
     el = document.createElement('div')
     el.setAttribute('contenteditable', 'true')
     document.body.appendChild(el)
+    document.getSelection()?.removeAllRanges()
   })
 
   afterEach(() => {
@@ -227,6 +232,240 @@ describe('richInput', () => {
       // 'a' (1) + '$x$' (3) + 'b' (1) + '\n' (1) + 'c' (1) = 7 total
       setCursorOffset(el, 7)
       expect(getCursorOffset(el)).toBe(7)
+    })
+
+    it('getCursorOffset accumulates past a nested div to reach trailing text', () => {
+      // Exercises computePlainTextLength summing past a non-BR non-rendered element
+      // and the final return len path.
+      el.innerHTML = '<div>abc</div>xyz'
+      el.focus()
+      // Place cursor manually at offset 1 in the trailing 'xyz' text node.
+      const trailingText = el.childNodes[1] // 'xyz' text node
+      if (trailingText) {
+        const range = document.createRange()
+        range.setStart(trailingText, 1) // after 'x'
+        range.collapse(true)
+        document.getSelection()?.removeAllRanges()
+        document.getSelection()?.addRange(range)
+      }
+      // 'abc' (3 from the div) + 'x' (1) = 4
+      expect(getCursorOffset(el)).toBe(4)
+    })
+
+    it('getCursorOffset when cursor is at child-index position inside a nested element', () => {
+      // Exercises the computePlainTextLength branch where container is an
+      // element node and offset is a child-index within it.
+      el.innerHTML = '<div><span data-source="`a`" contenteditable="false">a</span>text</div>'
+      el.focus()
+      const innerDiv = el.querySelector('div')
+      if (!innerDiv) throw new Error('div not found')
+      // Place cursor at child-index 1 inside the div (after the rendered span)
+      const range = document.createRange()
+      range.setStart(innerDiv, 1)
+      range.collapse(true)
+      document.getSelection()?.removeAllRanges()
+      document.getSelection()?.addRange(range)
+      // '`a`' is 3 chars — cursor is after it at offset 3
+      expect(getCursorOffset(el)).toBe(3)
+    })
+  })
+
+  // ── Test helpers for new functions ─────────────────────────────────
+
+  /** Get the rendered span from el, failing fast if absent. */
+  function getSpan(): HTMLElement {
+    const span = el.querySelector<HTMLElement>('[data-source]')
+    if (!span) throw new Error('Expected rendered span not found')
+    return span
+  }
+
+  function setSelectionAt(container: Node, offset: number): void {
+    const range = document.createRange()
+    range.setStart(container, offset)
+    range.collapse(true)
+    const sel = document.getSelection()
+    sel?.removeAllRanges()
+    sel?.addRange(range)
+  }
+
+  // ── isRenderedNode ──────────────────────────────────────────────────
+
+  describe('isRenderedNode', () => {
+    it('returns true for element with data-source attribute', () => {
+      const span = document.createElement('span')
+      span.setAttribute('data-source', '$x$')
+      span.setAttribute('contenteditable', 'false')
+      expect(isRenderedNode(span)).toBe(true)
+    })
+
+    it('returns false for plain text node', () => {
+      const text = document.createTextNode('hello')
+      expect(isRenderedNode(text)).toBe(false)
+    })
+
+    it('returns false for element without data-source', () => {
+      const div = document.createElement('div')
+      expect(isRenderedNode(div)).toBe(false)
+    })
+
+    it('returns false for BR element', () => {
+      const br = document.createElement('br')
+      expect(isRenderedNode(br)).toBe(false)
+    })
+  })
+
+  // ── placeCursorAfterNode ────────────────────────────────────────────
+
+  describe('placeCursorAfterNode', () => {
+    it('places cursor in existing next text node at offset 0', () => {
+      el.innerHTML = '<span data-source="$x$" contenteditable="false">x</span>after'
+      el.focus()
+      placeCursorAfterNode(el, getSpan())
+      const range = document.getSelection()?.getRangeAt(0)
+      expect(range?.startContainer.nodeType).toBe(Node.TEXT_NODE)
+      expect(range?.startOffset).toBe(0)
+      expect(range?.startContainer.textContent).toBe('after')
+    })
+
+    it('creates empty text node when no sibling follows, cursor lands there', () => {
+      el.innerHTML = '<span data-source="$x$" contenteditable="false">x</span>'
+      el.focus()
+      placeCursorAfterNode(el, getSpan())
+      const range = document.getSelection()?.getRangeAt(0)
+      expect(range?.startContainer.nodeType).toBe(Node.TEXT_NODE)
+      expect(range?.startOffset).toBe(0)
+    })
+
+    it('getCursorOffset returns source length after placement at start', () => {
+      el.innerHTML = '<span data-source="$x$" contenteditable="false">x</span>'
+      el.focus()
+      placeCursorAfterNode(el, getSpan())
+      expect(getCursorOffset(el)).toBe(3) // '$x$' is 3 chars
+    })
+
+    it('getCursorOffset correct when rendered node is preceded by text', () => {
+      el.innerHTML = 'ab<span data-source="$x$" contenteditable="false">x</span>'
+      el.focus()
+      placeCursorAfterNode(el, getSpan())
+      expect(getCursorOffset(el)).toBe(5) // 'ab' (2) + '$x$' (3)
+    })
+  })
+
+  // ── removeRenderedNode ──────────────────────────────────────────────
+
+  describe('removeRenderedNode', () => {
+    it('removes the rendered node from the DOM', () => {
+      el.innerHTML = 'before <span data-source="$x$" contenteditable="false">x</span> after'
+      removeRenderedNode(el, getSpan())
+      expect(el.querySelector('[data-source]')).toBeNull()
+    })
+
+    it('merges adjacent text nodes after removal', () => {
+      el.innerHTML = 'before<span data-source="$x$" contenteditable="false">x</span>after'
+      removeRenderedNode(el, getSpan())
+      // After normalize, should be a single text node
+      const first = el.childNodes[0]
+      expect(el.childNodes.length).toBe(1)
+      expect(first?.nodeType).toBe(Node.TEXT_NODE)
+      expect(first?.textContent).toBe('beforeafter')
+    })
+
+    it('returns the plain-text offset where the node started (rendered node at start)', () => {
+      el.innerHTML = '<span data-source="$x$" contenteditable="false">x</span>after'
+      const offset = removeRenderedNode(el, getSpan())
+      expect(offset).toBe(0)
+    })
+
+    it('returns the plain-text offset where the node started (rendered node after text)', () => {
+      el.innerHTML = 'hello <span data-source="$x$" contenteditable="false">x</span> world'
+      const offset = removeRenderedNode(el, getSpan())
+      expect(offset).toBe(6) // 'hello ' is 6 chars
+    })
+
+    it('preserves surrounding plain text after removal', () => {
+      el.innerHTML = 'hello <span data-source="$x$" contenteditable="false">x</span> world'
+      removeRenderedNode(el, getSpan())
+      expect(extractPlainText(el)).toBe('hello  world')
+    })
+  })
+
+  // ── getRenderedNodeAtCursor ─────────────────────────────────────────
+
+  describe('getRenderedNodeAtCursor', () => {
+    it('returns null when no selection exists', () => {
+      el.textContent = 'hello'
+      // No focus, no selection
+      document.getSelection()?.removeAllRanges()
+      expect(getRenderedNodeAtCursor(el)).toBeNull()
+    })
+
+    it('returns null when cursor is in the middle of a text node', () => {
+      el.textContent = 'hello world'
+      el.focus()
+      setCursorOffset(el, 5)
+      expect(getRenderedNodeAtCursor(el)).toBeNull()
+    })
+
+    it('returns null when cursor is between two plain text nodes (no rendered node adjacent)', () => {
+      el.innerHTML = 'hello world'
+      el.focus()
+      setCursorOffset(el, 0)
+      expect(getRenderedNodeAtCursor(el)).toBeNull()
+    })
+
+    it('returns { node, side: "after" } when cursor is at child-index position after rendered node', () => {
+      el.innerHTML = '<span data-source="$x$" contenteditable="false">x</span>after'
+      el.focus()
+      // Place cursor at child-index 1 (right after the span, before "after")
+      setSelectionAt(el, 1)
+      const result = getRenderedNodeAtCursor(el)
+      expect(result?.side).toBe('after')
+      expect(result?.node.getAttribute('data-source')).toBe('$x$')
+    })
+
+    it('returns { node, side: "before" } when cursor is at child-index position before rendered node', () => {
+      el.innerHTML = 'before<span data-source="$x$" contenteditable="false">x</span>'
+      el.focus()
+      // Place cursor at child-index 1 (right before the span, after "before")
+      setSelectionAt(el, 1)
+      const result = getRenderedNodeAtCursor(el)
+      expect(result?.side).toBe('before')
+      expect(result?.node.getAttribute('data-source')).toBe('$x$')
+    })
+
+    it('returns { node, side: "after" } when cursor is at offset 0 of text node after rendered node', () => {
+      el.innerHTML = '<span data-source="$x$" contenteditable="false">x</span>after'
+      el.focus()
+      const textNode = el.childNodes[1] // "after" text node
+      if (textNode) setSelectionAt(textNode, 0)
+      const result = getRenderedNodeAtCursor(el)
+      expect(result?.side).toBe('after')
+    })
+
+    it('returns { node, side: "before" } when cursor is at end of text node before rendered node', () => {
+      el.innerHTML = 'before<span data-source="$x$" contenteditable="false">x</span>'
+      el.focus()
+      const textNode = el.childNodes[0] // "before" text node
+      if (textNode) setSelectionAt(textNode, 6) // "before".length === 6
+      const result = getRenderedNodeAtCursor(el)
+      expect(result?.side).toBe('before')
+    })
+  })
+
+  // ── replaceRangeWithNode regression: cursor in Text node ────────────
+
+  describe('replaceRangeWithNode cursor placement', () => {
+    it('places cursor in a Text node (not child-index on el) after replacement', () => {
+      el.textContent = 'see $x^2$ here'
+      el.focus()
+      const node = document.createElement('span')
+      node.setAttribute('data-source', '$x^2$')
+      node.setAttribute('contenteditable', 'false')
+      node.textContent = 'rendered'
+      replaceRangeWithNode(el, 4, 9, node)
+      const range = document.getSelection()?.getRangeAt(0)
+      expect(range?.startContainer.nodeType).toBe(Node.TEXT_NODE)
+      expect(range?.startContainer).not.toBe(el)
     })
   })
 })
