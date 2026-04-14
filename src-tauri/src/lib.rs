@@ -30,7 +30,7 @@ use tauri::{AppHandle, Emitter, Manager};
 
 use lsp::{
     CodeActionInfo, CompletionItem, DefinitionLocation, DocumentSymbolInfo, HoverInfo, LspClient,
-    LspStatus, TextEditDto, WorkspaceEditDto,
+    LspStatus, WorkspaceEditDto,
 };
 
 pub struct AppState {
@@ -386,8 +386,13 @@ async fn fetch_full_proof_goal_state(state: &AppState) -> Result<String, String>
 /// Returns a `Vec<String>` with one entry per line (same length as the number
 /// of lines in the source). Requests are issued sequentially to avoid
 /// hammering the LSP.
+///
+/// `seq` is the sequence number this fetch was spawned for; the loop checks
+/// `state.goal_state_seq` between every line and bails out with
+/// `Err("stale")` if a newer edit has arrived, so stale per-line data never
+/// reaches the UI on long proofs.
 #[allow(clippy::significant_drop_tightening)]
-async fn fetch_per_line_goal_states(state: &AppState) -> Result<Vec<String>, String> {
+async fn fetch_per_line_goal_states(state: &AppState, seq: u64) -> Result<Vec<String>, String> {
     let source = state.current_source.lock().await.clone();
 
     let lock = state.lsp_client.lock().await;
@@ -398,6 +403,9 @@ async fn fetch_per_line_goal_states(state: &AppState) -> Result<Vec<String>, Str
 
     let mut results: Vec<String> = Vec::new();
     for (idx, line_text) in source.split('\n').enumerate() {
+        if state.goal_state_seq.load(Ordering::SeqCst) != seq {
+            return Err("stale".to_string());
+        }
         let line = u32::try_from(idx).map_err(|e| e.to_string())?;
         let col = u32::try_from(line_text.chars().count()).map_err(|e| e.to_string())?;
         let result = client
@@ -458,17 +466,13 @@ fn spawn_goal_state_refresh(app: AppHandle, seq: u64) {
             return;
         }
 
-        let per_line = match fetch_per_line_goal_states(&state).await {
+        let per_line = match fetch_per_line_goal_states(&state, seq).await {
             Ok(v) => v,
             Err(e) => {
                 log::debug!("goal-state refresh: per-line fetch failed: {e}");
                 return;
             }
         };
-
-        if state.goal_state_seq.load(Ordering::SeqCst) != seq {
-            return;
-        }
 
         app.emit("goal-state-updated", &GoalStatePayload { full, per_line })
             .ok();
@@ -490,88 +494,74 @@ fn end_of_document_position(source: &str) -> (u32, u32) {
     )
 }
 
-#[tauri::command]
+/// Send an LSP request and return the raw JSON response.
+///
+/// Returns `Ok(None)` if the LSP client is not connected — callers should
+/// treat this as "no data" and return their type's empty/None default. This
+/// consolidates the lock-check-send pattern used by every LSP Tauri command.
 #[allow(clippy::significant_drop_tightening)] // lock must be held while awaiting on client
+async fn call_lsp_raw(
+    state: &AppState,
+    method: &str,
+    params: serde_json::Value,
+) -> Result<Option<serde_json::Value>, String> {
+    let lock = state.lsp_client.lock().await;
+    let Some(client) = lock.as_ref() else {
+        return Ok(None);
+    };
+    let result = client.send_request_await(method, params).await?;
+    Ok(Some(result))
+}
+
+/// Build the `{ "textDocument": { "uri": … }, "position": { … } }` params
+/// shared by most `textDocument/*` requests.
+fn text_document_position_params(doc_uri: &str, line: u32, character: u32) -> serde_json::Value {
+    json!({
+        "textDocument": { "uri": doc_uri },
+        "position": { "line": line, "character": character },
+    })
+}
+
+#[tauri::command]
 async fn get_completions(
     app: AppHandle,
     line: u32,
     col: u32,
 ) -> Result<Vec<CompletionItem>, String> {
     let state = app.state::<AppState>();
-    let lock = state.lsp_client.lock().await;
-
-    let Some(client) = lock.as_ref() else {
-        return Ok(Vec::new());
-    };
-
-    let doc_uri = state.doc_uri();
-    let result = client
-        .send_request_await(
-            "textDocument/completion",
-            json!({
-                "textDocument": { "uri": doc_uri },
-                "position": { "line": line, "character": col },
-            }),
-        )
-        .await?;
-
-    Ok(lsp::parse_completion_items(&result))
+    let params = text_document_position_params(&state.doc_uri(), line, col);
+    Ok(call_lsp_raw(&state, "textDocument/completion", params)
+        .await?
+        .as_ref()
+        .map(lsp::parse_completion_items)
+        .unwrap_or_default())
 }
 
 #[tauri::command]
-#[allow(clippy::significant_drop_tightening)] // lock must be held while awaiting on client
 async fn lsp_hover(app: AppHandle, line: u32, character: u32) -> Result<Option<HoverInfo>, String> {
     let state = app.state::<AppState>();
-    let lock = state.lsp_client.lock().await;
-
-    let Some(client) = lock.as_ref() else {
-        return Ok(None);
-    };
-
-    let doc_uri = state.doc_uri();
-    let result = client
-        .send_request_await(
-            "textDocument/hover",
-            json!({
-                "textDocument": { "uri": doc_uri },
-                "position": { "line": line, "character": character },
-            }),
-        )
-        .await?;
-
-    Ok(lsp::parse_hover(&result))
+    let params = text_document_position_params(&state.doc_uri(), line, character);
+    Ok(call_lsp_raw(&state, "textDocument/hover", params)
+        .await?
+        .as_ref()
+        .and_then(lsp::parse_hover))
 }
 
 #[tauri::command]
-#[allow(clippy::significant_drop_tightening)] // lock must be held while awaiting on client
 async fn lsp_definition(
     app: AppHandle,
     line: u32,
     character: u32,
 ) -> Result<Option<DefinitionLocation>, String> {
     let state = app.state::<AppState>();
-    let lock = state.lsp_client.lock().await;
-
-    let Some(client) = lock.as_ref() else {
-        return Ok(None);
-    };
-
-    let doc_uri = state.doc_uri();
-    let result = client
-        .send_request_await(
-            "textDocument/definition",
-            json!({
-                "textDocument": { "uri": doc_uri },
-                "position": { "line": line, "character": character },
-            }),
-        )
-        .await?;
-
-    Ok(lsp::parse_definition(&result))
+    let params = text_document_position_params(&state.doc_uri(), line, character);
+    Ok(call_lsp_raw(&state, "textDocument/definition", params)
+        .await?
+        .as_ref()
+        .and_then(lsp::parse_definition))
 }
 
 #[tauri::command]
-#[allow(clippy::significant_drop_tightening)] // lock must be held while awaiting on client
 async fn lsp_code_actions(
     app: AppHandle,
     start_line: u32,
@@ -580,13 +570,6 @@ async fn lsp_code_actions(
     end_character: u32,
 ) -> Result<Vec<CodeActionInfo>, String> {
     let state = app.state::<AppState>();
-    let lock = state.lsp_client.lock().await;
-
-    let Some(client) = lock.as_ref() else {
-        return Ok(Vec::new());
-    };
-
-    let doc_uri = state.doc_uri();
     let diagnostics_params = {
         let diags = state
             .current_diagnostics
@@ -594,91 +577,46 @@ async fn lsp_code_actions(
             .map_err(|e| format!("diagnostics lock poisoned: {e}"))?;
         serde_json::to_value(diags.clone()).unwrap_or_else(|_| json!([]))
     };
-
-    let result = client
-        .send_request_await(
-            "textDocument/codeAction",
-            json!({
-                "textDocument": { "uri": doc_uri },
-                "range": {
-                    "start": { "line": start_line, "character": start_character },
-                    "end": { "line": end_line, "character": end_character }
-                },
-                "context": {
-                    "diagnostics": diagnostics_params,
-                    "triggerKind": 1
-                }
-            }),
-        )
-        .await?;
-
-    Ok(lsp::parse_code_actions(&result))
+    let params = json!({
+        "textDocument": { "uri": state.doc_uri() },
+        "range": {
+            "start": { "line": start_line, "character": start_character },
+            "end": { "line": end_line, "character": end_character }
+        },
+        "context": {
+            "diagnostics": diagnostics_params,
+            "triggerKind": 1
+        }
+    });
+    Ok(call_lsp_raw(&state, "textDocument/codeAction", params)
+        .await?
+        .as_ref()
+        .map(lsp::parse_code_actions)
+        .unwrap_or_default())
 }
 
 #[tauri::command]
-#[allow(clippy::significant_drop_tightening)] // lock must be held while awaiting on client
 async fn lsp_resolve_code_action(
     app: AppHandle,
     action: serde_json::Value,
 ) -> Result<Option<WorkspaceEditDto>, String> {
     let state = app.state::<AppState>();
-    let lock = state.lsp_client.lock().await;
-
-    let Some(client) = lock.as_ref() else {
-        return Ok(None);
-    };
-
-    let result = client
-        .send_request_await("codeAction/resolve", action)
-        .await?;
-
-    Ok(result.get("edit").and_then(lsp::parse_workspace_edit))
+    Ok(call_lsp_raw(&state, "codeAction/resolve", action)
+        .await?
+        .as_ref()
+        .and_then(|v| v.get("edit"))
+        .and_then(lsp::parse_workspace_edit))
 }
 
 #[tauri::command]
-#[allow(clippy::significant_drop_tightening)] // lock must be held while awaiting on client
 async fn lsp_document_symbols(app: AppHandle) -> Result<Vec<DocumentSymbolInfo>, String> {
     let state = app.state::<AppState>();
-    let lock = state.lsp_client.lock().await;
-
-    let Some(client) = lock.as_ref() else {
-        return Ok(Vec::new());
-    };
-
-    let doc_uri = state.doc_uri();
-    let result = client
-        .send_request_await(
-            "textDocument/documentSymbol",
-            json!({ "textDocument": { "uri": doc_uri } }),
-        )
-        .await?;
-
-    Ok(lsp::parse_document_symbols(&result))
-}
-
-/// Apply a `WorkspaceEdit` returned by a code action to the current file.
-///
-/// Kept as a pure function (not a Tauri command) because the frontend owns
-/// the CodeMirror document state and applies edits there. Exported so tests
-/// and the frontend-agnostic path can use it.
-#[must_use]
-pub fn workspace_edit_targets_current_file(edit: &WorkspaceEditDto, doc_uri: &str) -> bool {
-    edit.changes
-        .iter()
-        .any(|(uri, edits)| uri.as_str() == doc_uri && !edits.is_empty())
-}
-
-/// Return only the text edits from a workspace edit that match `doc_uri`.
-#[must_use]
-pub fn workspace_edit_current_file_edits<'a>(
-    edit: &'a WorkspaceEditDto,
-    doc_uri: &str,
-) -> Vec<&'a TextEditDto> {
-    edit.changes
-        .iter()
-        .filter(|(uri, _)| uri.as_str() == doc_uri)
-        .flat_map(|(_, edits)| edits.iter())
-        .collect()
+    let params = json!({ "textDocument": { "uri": state.doc_uri() } });
+    Ok(call_lsp_raw(&state, "textDocument/documentSymbol", params)
+        .await?
+        .as_ref()
+        .map(lsp::parse_document_symbols)
+        .unwrap_or_default())
 }
 
 fn handle_lsp_message(
@@ -896,10 +834,7 @@ pub fn run() {
 mod tests {
     use std::sync::atomic::{AtomicI64, Ordering};
 
-    use super::{
-        end_of_document_position, workspace_edit_current_file_edits,
-        workspace_edit_targets_current_file, TextEditDto, WorkspaceEditDto,
-    };
+    use super::end_of_document_position;
 
     #[test]
     fn doc_version_strictly_increasing_after_did_open() {
@@ -923,64 +858,5 @@ mod tests {
         assert_eq!(end_of_document_position("abc\ndef"), (1, 3));
         assert_eq!(end_of_document_position("abc\ndef\n"), (2, 0));
         assert_eq!(end_of_document_position("abc\ndef\nghi"), (2, 3));
-    }
-
-    fn sample_edit(new_text: &str) -> TextEditDto {
-        TextEditDto {
-            start_line: 0,
-            start_character: 0,
-            end_line: 0,
-            end_character: 1,
-            new_text: new_text.to_string(),
-        }
-    }
-
-    #[test]
-    fn workspace_edit_targets_current_file_matches() {
-        let edit = WorkspaceEditDto {
-            changes: vec![("file:///proof.lean".to_string(), vec![sample_edit("x")])],
-        };
-        assert!(workspace_edit_targets_current_file(
-            &edit,
-            "file:///proof.lean"
-        ));
-    }
-
-    #[test]
-    fn workspace_edit_targets_current_file_mismatch() {
-        let edit = WorkspaceEditDto {
-            changes: vec![("file:///other.lean".to_string(), vec![sample_edit("x")])],
-        };
-        assert!(!workspace_edit_targets_current_file(
-            &edit,
-            "file:///proof.lean"
-        ));
-    }
-
-    #[test]
-    fn workspace_edit_targets_current_file_empty_edits_ignored() {
-        let edit = WorkspaceEditDto {
-            changes: vec![("file:///proof.lean".to_string(), vec![])],
-        };
-        assert!(!workspace_edit_targets_current_file(
-            &edit,
-            "file:///proof.lean"
-        ));
-    }
-
-    #[test]
-    fn workspace_edit_current_file_edits_filters_by_uri() {
-        let edit = WorkspaceEditDto {
-            changes: vec![
-                ("file:///proof.lean".to_string(), vec![sample_edit("a")]),
-                (
-                    "file:///other.lean".to_string(),
-                    vec![sample_edit("b"), sample_edit("c")],
-                ),
-            ],
-        };
-        let filtered = workspace_edit_current_file_edits(&edit, "file:///proof.lean");
-        assert_eq!(filtered.len(), 1);
-        assert_eq!(filtered[0].new_text, "a");
     }
 }

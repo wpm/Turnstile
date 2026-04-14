@@ -24,6 +24,7 @@ import {
   type CodeActionInfo,
   type WorkspaceEditDto,
 } from './lspRequests'
+import { lspPosToCmOffset } from './positionConvert'
 
 // ---------------------------------------------------------------------------
 // State: actions available at the current cursor line
@@ -68,15 +69,10 @@ export function workspaceEditToChanges(
 
   const changes: { from: number; to: number; insert: string }[] = []
   for (const te of matching) {
-    const startLineNum = te.start_line + 1
-    const endLineNum = te.end_line + 1
-    if (startLineNum < 1 || startLineNum > doc.lines) continue
-    if (endLineNum < 1 || endLineNum > doc.lines) continue
-    const startLine = doc.line(startLineNum)
-    const endLine = doc.line(endLineNum)
-    const from = Math.min(startLine.from + te.start_character, startLine.to)
-    const to = Math.min(endLine.from + te.end_character, endLine.to)
-    changes.push({ from, to, insert: te.new_text })
+    const start = lspPosToCmOffset(doc, te.start_line, te.start_character)
+    const end = lspPosToCmOffset(doc, te.end_line, te.end_character)
+    if (!start || !end) continue
+    changes.push({ from: start.offset, to: end.offset, insert: te.new_text })
   }
   return changes.length > 0 ? changes : null
 }

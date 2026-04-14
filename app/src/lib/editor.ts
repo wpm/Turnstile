@@ -45,7 +45,14 @@ import {
 } from '@codemirror/autocomplete'
 import { searchKeymap, highlightSelectionMatches } from '@codemirror/search'
 import { lintKeymap } from '@codemirror/lint'
-import type { CompletionItem, DiagnosticInfo, FileProgressRange, SemanticToken } from './tauri'
+import {
+  invoke,
+  type CompletionItem,
+  type DiagnosticInfo,
+  type FileProgressRange,
+  type SemanticToken,
+} from './tauri'
+import { cmLineToLsp, cmPosToLsp } from './positionConvert'
 import { fileProgressExtension, setFileProgressEffect } from './fileProgress'
 import {
   diagRange,
@@ -310,17 +317,14 @@ async function lspCompletionSource(ctx: CompletionContext): Promise<CompletionRe
   if (!ctx.explicit && !ctx.matchBefore(/\w+/)) return null
 
   const pos = ctx.pos
-  const line = ctx.state.doc.lineAt(pos)
-  // LSP expects 0-indexed line and character
-  const lspLine = line.number - 1
-  const lspCol = pos - line.from
+  const { line: lspLine, character: lspCol } = cmPosToLsp(ctx.state.doc, pos)
 
   let items: CompletionItem[]
   try {
-    items = (await window.__TAURI__.core.invoke('get_completions', {
+    items = await invoke<CompletionItem[]>('get_completions', {
       line: lspLine,
       col: lspCol,
-    })) as CompletionItem[]
+    })
   } catch {
     return null
   }
@@ -455,8 +459,7 @@ export function mountEditor(
         if (update.selectionSet || update.docChanged) {
           const head = update.state.selection.main.head
           const line = update.state.doc.lineAt(head)
-          // LSP uses 0-indexed line and column
-          onCursorChangeCb(line.number - 1, head - line.from)
+          onCursorChangeCb(cmLineToLsp(line.number), head - line.from)
         }
       })
     : []

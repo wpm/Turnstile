@@ -9,6 +9,7 @@
 import { EditorView, keymap } from '@codemirror/view'
 import type { Extension } from '@codemirror/state'
 import { lspDefinition, type DefinitionLocation } from './lspRequests'
+import { cmPosToLsp, lspPosToCmOffset } from './positionConvert'
 
 interface GotoDefinitionOptions {
   /** Called when the definition is resolved in a different file. */
@@ -29,9 +30,7 @@ export async function handleGotoDefinition(
   options: GotoDefinitionOptions,
 ): Promise<'jumped' | 'external' | 'none'> {
   const doc = view.state.doc
-  const line = doc.lineAt(pos)
-  const col = pos - line.from
-  const lspLine = line.number - 1
+  const { line: lspLine, character: col } = cmPosToLsp(doc, pos)
 
   const fetchDefinition = options.fetchDefinition ?? lspDefinition
 
@@ -48,15 +47,12 @@ export async function handleGotoDefinition(
     return 'external'
   }
 
-  // Convert 0-indexed LSP position to CM6 offset.
-  const targetLineNum = def.line + 1 // CM6 is 1-indexed
-  if (targetLineNum < 1 || targetLineNum > doc.lines) return 'none'
-  const targetLine = doc.line(targetLineNum)
-  const anchor = Math.min(targetLine.from + def.character, targetLine.to)
+  const target = lspPosToCmOffset(doc, def.line, def.character)
+  if (!target) return 'none'
 
   view.dispatch({
-    selection: { anchor },
-    effects: EditorView.scrollIntoView(anchor, { y: 'center' }),
+    selection: { anchor: target.offset },
+    effects: EditorView.scrollIntoView(target.offset, { y: 'center' }),
   })
   view.focus()
   return 'jumped'

@@ -9,6 +9,7 @@
 import { hoverTooltip, type Tooltip, type EditorView } from '@codemirror/view'
 import type { Extension } from '@codemirror/state'
 import { lspHover, type HoverInfo } from './lspRequests'
+import { cmPosToLsp } from './positionConvert'
 
 /** Hover delay in ms — matches VS Code. Exported for tests. */
 export const HOVER_TYPE_DELAY_MS = 300
@@ -27,9 +28,7 @@ export async function hoverTypeSource(
   pos: number,
   fetchHover: (line: number, character: number) => Promise<HoverInfo | null> = lspHover,
 ): Promise<Tooltip | null> {
-  const line = view.state.doc.lineAt(pos)
-  const col = pos - line.from
-  const lspLine = line.number - 1
+  const { line: lspLine, character: col } = cmPosToLsp(view.state.doc, pos)
 
   let hover: HoverInfo | null
   try {
