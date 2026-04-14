@@ -125,6 +125,35 @@ export async function injectTauriMock(page: Page, opts: TauriMockOptions = {}): 
             if (cmd === 'set_model') return Promise.resolve(null)
             if (cmd === 'check_auto_save') return Promise.resolve(hasAutoSave)
             if (cmd === 'delete_auto_save') return Promise.resolve(null)
+            if (cmd === 'restore_auto_save') {
+              // Simulate the backend emitting session-loaded with the
+              // autosave's content so the frontend can restore the editor.
+              void Promise.resolve().then(() => {
+                for (const cb2 of listeners.get('session-loaded') ?? []) {
+                  cb2({
+                    payload: {
+                      meta: {
+                        format_version: 1,
+                        created_at: '',
+                        saved_at: '',
+                        cursor_line: 0,
+                        cursor_col: 0,
+                        editor_scroll_top: 0,
+                        chat_width_pct: 25,
+                        proof_view: 'formal',
+                        goal_panel_pct: 30,
+                        word_wrap: false,
+                      },
+                      proof_lean: 'restored autosave content',
+                      prose: { text: '', tactic_state_hash: null },
+                      transcript: [],
+                      summary: null,
+                    },
+                  })
+                }
+              })
+              return Promise.resolve(null)
+            }
             if (cmd === 'get_last_session') return Promise.resolve(null)
             if (cmd === 'set_last_session') return Promise.resolve(null)
             if (cmd === 'generate_prose') {

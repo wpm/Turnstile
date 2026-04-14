@@ -7,9 +7,21 @@
 //! - `save_session_as` — save with native file picker
 //! - `auto_save_session` — write autosave.turn to app data dir
 //! - `check_auto_save` — return true if autosave.turn exists
+//! - `restore_auto_save` — load autosave.turn into the session and delete it
 //! - `delete_auto_save` — delete autosave.turn
 //! - `get_last_session` — read last_session.txt from app data dir
 //! - `set_last_session` — write path to last_session.txt
+//!
+//! # Autosave lifecycle
+//!
+//! The autosave file (`{app_data_dir}/autosave.turn`) represents
+//! uncommitted work from a prior session. It is created by
+//! `auto_save_session` only when the session is dirty, and it is deleted
+//! whenever that uncommitted work is either promoted to a saved session
+//! (via `save_session` or `save_session_as`) or explicitly discarded or
+//! restored by the user. Without those deletions, a stale autosave would
+//! trigger a false-positive "Restore unsaved session?" prompt on the next
+//! app launch.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
@@ -30,6 +42,16 @@ fn app_data_dir(app: &AppHandle) -> Result<PathBuf, String> {
 
 fn autosave_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(app_data_dir(app)?.join("autosave.turn"))
+}
+
+/// Delete the autosave file at `path` if it exists. A missing file is not
+/// an error — this is idempotent so callers can invoke it unconditionally
+/// after any save/open/discard without having to check first.
+fn remove_autosave_file(path: &Path) -> Result<(), String> {
+    if path.exists() {
+        std::fs::remove_file(path).map_err(|e| format!("Failed to delete autosave: {e}"))?;
+    }
+    Ok(())
 }
 
 /// Emit a `session-loaded` event so the frontend can restore UI state.
@@ -76,6 +98,43 @@ pub async fn new_session(app: AppHandle, state: tauri::State<'_, AppState>) -> R
     Ok(())
 }
 
+/// Load `session` into app state and emit `session-loaded`. Shared by
+/// `open_session` (saved `.turn` file) and `restore_auto_save` (anonymous
+/// autosave). `session_path` is the path to record as the current session
+/// file, or `None` if the loaded session has no associated file yet.
+async fn apply_loaded_session(
+    app: &AppHandle,
+    state: &AppState,
+    session: &SessionState,
+    session_path: Option<PathBuf>,
+) {
+    // Restore chat state.
+    {
+        let mut chat = state.chat_state.lock().await;
+        chat.summary = session.summary.clone();
+        chat.transcript = session
+            .transcript
+            .iter()
+            .map(|t| crate::chat::Turn {
+                role: match t.role.as_str() {
+                    "assistant" => crate::chat::Role::Assistant,
+                    "system" => crate::chat::Role::System,
+                    _ => crate::chat::Role::User,
+                },
+                content: t.content.clone(),
+                timestamp: t.timestamp,
+            })
+            .collect();
+    }
+
+    // Update session path and clear dirty flag.
+    *state.current_session_path.lock().await = session_path;
+    state.session_dirty.store(false, Ordering::SeqCst);
+
+    // Emit so frontend can restore editor/prose UI.
+    emit_session_loaded(app, session);
+}
+
 /// Open a `.turn` file. If `path` is `None`, shows a native file picker.
 #[tauri::command]
 pub async fn open_session(
@@ -106,32 +165,32 @@ pub async fn open_session(
     };
 
     let session = session::load(&file_path)?;
+    apply_loaded_session(&app, &state, &session, Some(file_path)).await;
 
-    // Restore chat state.
-    {
-        let mut chat = state.chat_state.lock().await;
-        chat.summary = session.summary.clone();
-        chat.transcript = session
-            .transcript
-            .iter()
-            .map(|t| crate::chat::Turn {
-                role: match t.role.as_str() {
-                    "assistant" => crate::chat::Role::Assistant,
-                    "system" => crate::chat::Role::System,
-                    _ => crate::chat::Role::User,
-                },
-                content: t.content.clone(),
-                timestamp: t.timestamp,
-            })
-            .collect();
+    Ok(())
+}
+
+/// Load `autosave.turn` back into the session as an anonymous recovery
+/// draft, then delete the autosave file. The restored session has no
+/// associated `.turn` path — a subsequent Save will prompt for a filename.
+///
+/// Returns an error if no autosave file exists or if it fails to parse.
+#[tauri::command]
+pub async fn restore_auto_save(
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let path = autosave_path(&app)?;
+    if !path.exists() {
+        return Err("No autosave file to restore".to_string());
     }
 
-    // Update session path and clear dirty flag.
-    *state.current_session_path.lock().await = Some(file_path);
-    state.session_dirty.store(false, Ordering::SeqCst);
+    let session = session::load(&path)?;
+    apply_loaded_session(&app, &state, &session, None).await;
 
-    // Emit so frontend can restore editor/prose UI.
-    emit_session_loaded(&app, &session);
+    // Restoring the autosave consumes it — delete so we never offer the
+    // same draft twice.
+    remove_autosave_file(&path).ok();
 
     Ok(())
 }
@@ -153,6 +212,12 @@ pub async fn save_session(
             do_save(&app, &state, &p, proof_lean, prose_text, prose_hash, meta).await?;
             if let Ok(data_dir) = app_data_dir(&app) {
                 write_last_session(&data_dir, &p).ok();
+            }
+            // Saving commits the work — any prior autosave is now stale and
+            // would otherwise trigger a false "Restore unsaved session?"
+            // prompt on the next launch.
+            if let Ok(auto_path) = autosave_path(&app) {
+                remove_autosave_file(&auto_path).ok();
             }
         }
         None => {
@@ -212,6 +277,11 @@ pub async fn save_session_as(
     *state.current_session_path.lock().await = Some(file_path.clone());
     if let Ok(data_dir) = app_data_dir(&app) {
         write_last_session(&data_dir, &file_path).ok();
+    }
+    // Saving commits the work — drop any prior autosave so the next launch
+    // does not offer to restore the now-obsolete draft.
+    if let Ok(auto_path) = autosave_path(&app) {
+        remove_autosave_file(&auto_path).ok();
     }
     Ok(())
 }
@@ -300,10 +370,7 @@ pub fn check_auto_save(app: AppHandle) -> Result<bool, String> {
 #[tauri::command]
 pub fn delete_auto_save(app: AppHandle) -> Result<(), String> {
     let path = autosave_path(&app)?;
-    if path.exists() {
-        std::fs::remove_file(&path).map_err(|e| format!("Failed to delete autosave: {e}"))?;
-    }
-    Ok(())
+    remove_autosave_file(&path)
 }
 
 /// Read `{app_data_dir}/last_session.txt` and return the path if it exists.
@@ -385,5 +452,53 @@ mod tests {
             read_last_session(dir.path()),
             Some("/new/path.turn".to_string())
         );
+    }
+
+    // ── Autosave file lifecycle ─────────────────────────────────────
+    //
+    // These tests exercise `remove_autosave_file` directly. The save/open
+    // commands are tested through the frontend via `fake-invoke` mocks;
+    // here we pin down the file-level invariant that ensures the recovery
+    // prompt doesn't fire on every launch (issue #90): removing the
+    // autosave is idempotent and any prior autosave is gone after the
+    // call returns.
+
+    #[test]
+    fn remove_autosave_file_deletes_existing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("autosave.turn");
+        std::fs::write(&path, b"dummy autosave contents").unwrap();
+        assert!(path.exists());
+
+        remove_autosave_file(&path).unwrap();
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn remove_autosave_file_is_idempotent_when_missing() {
+        // Called twice in a row, or before any autosave has been written:
+        // must succeed without error so callers can invoke it
+        // unconditionally after save/open/discard.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("autosave.turn");
+        assert!(!path.exists());
+
+        remove_autosave_file(&path).unwrap(); // missing file — ok
+        remove_autosave_file(&path).unwrap(); // still missing — still ok
+    }
+
+    #[test]
+    fn remove_autosave_file_leaves_sibling_files_alone() {
+        // Defensive: deleting the autosave must not touch last_session.txt
+        // or any other app-data-dir content.
+        let dir = tempfile::tempdir().unwrap();
+        let autosave = dir.path().join("autosave.turn");
+        let last_session = dir.path().join("last_session.txt");
+        std::fs::write(&autosave, b"autosave").unwrap();
+        std::fs::write(&last_session, b"/home/user/proof.turn").unwrap();
+
+        remove_autosave_file(&autosave).unwrap();
+        assert!(!autosave.exists());
+        assert!(last_session.exists());
     }
 }

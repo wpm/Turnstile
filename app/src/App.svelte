@@ -164,7 +164,6 @@
   let goalDragStartPct = 0
 
   let showRecoveryPrompt = $state(false)
-  let autoSavePath = $state<string | null>(null)
   let recoveryPromptEl = $state<HTMLElement | null>(null)
   let recoveryTriggerEl: Element | null = null
 
@@ -376,13 +375,13 @@
   // Recovery flow helpers
   async function restoreAutoSave(): Promise<void> {
     showRecoveryPrompt = false
-    if (autoSavePath) {
-      await invoke('open_session', { path: autoSavePath }).catch(() => {
-        /* ignore restore errors */
-      })
-    }
-    await invoke('delete_auto_save').catch(() => {
-      /* ignore delete errors */
+    // restore_auto_save loads autosave.turn into session state, emits
+    // session-loaded, and deletes the autosave file. We do NOT fall back
+    // to get_last_session here — the restored draft is what the user asked
+    // for, even if a saved session exists on disk.
+    await invoke('restore_auto_save').catch((err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err)
+      showError(`Could not restore unsaved session: ${msg}`)
     })
   }
 
@@ -391,6 +390,18 @@
     await invoke('delete_auto_save').catch(() => {
       /* ignore delete errors */
     })
+    // Discarding the draft means "start from my last saved state" — fall
+    // back to the same last-session reopen the no-autosave branch uses.
+    await reopenLastSession()
+  }
+
+  async function reopenLastSession(): Promise<void> {
+    const lastPath = await invoke<string | null>('get_last_session').catch(() => null)
+    if (lastPath) {
+      await invoke('open_session', { path: lastPath }).catch(() => {
+        // File may have been moved/deleted since last run — silently ignore.
+      })
+    }
   }
 
   // Keyboard shortcut handler — session (N/O/S/Shift+S) + settings (,)
@@ -585,17 +596,10 @@
     // Check for autosave recovery after setup is done
     const hasAutoSave = await invoke<boolean>('check_auto_save').catch(() => false)
     if (hasAutoSave) {
-      // Get the autosave path for restoration
-      autoSavePath = null // The backend knows the path; open_session with null will use it
       showRecoveryPrompt = true
     } else {
       // No autosave — try reopening the last saved session.
-      const lastPath = await invoke<string | null>('get_last_session').catch(() => null)
-      if (lastPath) {
-        await invoke('open_session', { path: lastPath }).catch(() => {
-          // File may have been moved/deleted since last run — silently ignore.
-        })
-      }
+      await reopenLastSession()
     }
   }
 </script>

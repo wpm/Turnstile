@@ -825,6 +825,7 @@ pub fn run() {
             session_commands::save_session_as,
             session_commands::auto_save_session,
             session_commands::check_auto_save,
+            session_commands::restore_auto_save,
             session_commands::delete_auto_save,
             session_commands::get_last_session,
             session_commands::set_last_session,
