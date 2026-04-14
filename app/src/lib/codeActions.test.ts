@@ -8,6 +8,7 @@ import {
   codeActionsExtension,
   codeActionsField,
   setCodeActionsEffect,
+  showActionsPopup,
   type WorkspaceEditDto,
   type CodeActionInfo,
 } from './codeActions'
@@ -400,6 +401,171 @@ describe('codeActionsExtension', () => {
 
     view.dispatch({ changes: { from: 0, insert: 'X' } })
     expect(view.state.field(codeActionsField).size).toBe(0)
+    view.destroy()
+  })
+})
+
+describe('showActionsPopup', () => {
+  beforeEach(() => {
+    vi.useRealTimers()
+  })
+
+  function bareView(doc: string): EditorView {
+    const parent = document.createElement('div')
+    document.body.appendChild(parent)
+    return new EditorView({
+      state: EditorState.create({ doc }),
+      parent,
+    })
+  }
+
+  function pressKey(el: HTMLElement, key: string): KeyboardEvent {
+    const ev = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true })
+    el.dispatchEvent(ev)
+    return ev
+  }
+
+  it('renders action titles and selects the first item', () => {
+    const view = bareView('abc\n')
+    const actions: CodeActionInfo[] = [
+      { title: 'First action', kind: null, edit: { changes: [] }, resolve_data: null },
+      { title: 'Second action', kind: null, edit: { changes: [] }, resolve_data: null },
+    ]
+    const popup = showActionsPopup(view, actions, () => Promise.resolve(true))
+    expect(popup.dom.textContent).toContain('First action')
+    expect(popup.dom.textContent).toContain('Second action')
+    const items = popup.dom.querySelectorAll('.lean-code-action-item')
+    expect(items[0]?.classList.contains('lean-code-action-item-selected')).toBe(true)
+    expect(items[1]?.classList.contains('lean-code-action-item-selected')).toBe(false)
+    popup.destroy()
+    view.destroy()
+  })
+
+  it('Escape dismisses the popup', () => {
+    const view = bareView('abc\n')
+    const actions: CodeActionInfo[] = [
+      { title: 'X', kind: null, edit: { changes: [] }, resolve_data: null },
+    ]
+    const popup = showActionsPopup(view, actions, () => Promise.resolve(true))
+    expect(document.querySelector('.lean-code-action-popup')).not.toBeNull()
+
+    const ev = pressKey(popup.dom, 'Escape')
+    expect(ev.defaultPrevented).toBe(true)
+    expect(document.querySelector('.lean-code-action-popup')).toBeNull()
+    view.destroy()
+  })
+
+  it('ArrowDown / ArrowUp navigate selection with wrap-around', () => {
+    const view = bareView('abc\n')
+    const actions: CodeActionInfo[] = [
+      { title: 'A', kind: null, edit: { changes: [] }, resolve_data: null },
+      { title: 'B', kind: null, edit: { changes: [] }, resolve_data: null },
+      { title: 'C', kind: null, edit: { changes: [] }, resolve_data: null },
+    ]
+    const popup = showActionsPopup(view, actions, () => Promise.resolve(true))
+    const items = popup.dom.querySelectorAll('.lean-code-action-item')
+
+    pressKey(popup.dom, 'ArrowDown')
+    expect(items[1]?.classList.contains('lean-code-action-item-selected')).toBe(true)
+    pressKey(popup.dom, 'ArrowDown')
+    expect(items[2]?.classList.contains('lean-code-action-item-selected')).toBe(true)
+    // Wraps forward
+    pressKey(popup.dom, 'ArrowDown')
+    expect(items[0]?.classList.contains('lean-code-action-item-selected')).toBe(true)
+    // Wraps backward
+    pressKey(popup.dom, 'ArrowUp')
+    expect(items[2]?.classList.contains('lean-code-action-item-selected')).toBe(true)
+
+    popup.destroy()
+    view.destroy()
+  })
+
+  it('Enter applies the selected action and dismisses when onApply returns true', async () => {
+    const view = bareView('abc\n')
+    const applied: string[] = []
+    const onApply = vi.fn((a: CodeActionInfo) => {
+      applied.push(a.title)
+      return Promise.resolve(true)
+    })
+    const actions: CodeActionInfo[] = [
+      { title: 'First', kind: null, edit: { changes: [] }, resolve_data: null },
+      { title: 'Second', kind: null, edit: { changes: [] }, resolve_data: null },
+    ]
+    const popup = showActionsPopup(view, actions, onApply)
+    pressKey(popup.dom, 'ArrowDown') // select Second
+    pressKey(popup.dom, 'Enter')
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(applied).toEqual(['Second'])
+    expect(document.querySelector('.lean-code-action-popup')).toBeNull()
+    view.destroy()
+  })
+
+  it('Enter keeps the popup open when onApply returns false', async () => {
+    const view = bareView('abc\n')
+    const onApply = vi.fn(() => Promise.resolve(false))
+    const actions: CodeActionInfo[] = [
+      { title: 'Fails', kind: null, edit: { changes: [] }, resolve_data: null },
+    ]
+    const popup = showActionsPopup(view, actions, onApply)
+    pressKey(popup.dom, 'Enter')
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(onApply).toHaveBeenCalled()
+    expect(document.querySelector('.lean-code-action-popup')).not.toBeNull()
+    popup.destroy()
+    view.destroy()
+  })
+
+  it('mousedown on an item applies that action', async () => {
+    const view = bareView('abc\n')
+    const applied: string[] = []
+    const actions: CodeActionInfo[] = [
+      { title: 'One', kind: null, edit: { changes: [] }, resolve_data: null },
+      { title: 'Two', kind: null, edit: { changes: [] }, resolve_data: null },
+    ]
+    const popup = showActionsPopup(view, actions, (a) => {
+      applied.push(a.title)
+      return Promise.resolve(true)
+    })
+    const second = popup.dom.querySelectorAll('.lean-code-action-item')[1] as HTMLElement
+    const ev = new MouseEvent('mousedown', { bubbles: true, cancelable: true })
+    second.dispatchEvent(ev)
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(ev.defaultPrevented).toBe(true)
+    expect(applied).toEqual(['Two'])
+    view.destroy()
+  })
+
+  it('mouseenter highlights the hovered item', () => {
+    const view = bareView('abc\n')
+    const actions: CodeActionInfo[] = [
+      { title: 'A', kind: null, edit: { changes: [] }, resolve_data: null },
+      { title: 'B', kind: null, edit: { changes: [] }, resolve_data: null },
+    ]
+    const popup = showActionsPopup(view, actions, () => Promise.resolve(true))
+    const [first, second] = popup.dom.querySelectorAll('.lean-code-action-item')
+    second?.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }))
+    expect(second?.classList.contains('lean-code-action-item-selected')).toBe(true)
+    expect(first?.classList.contains('lean-code-action-item-selected')).toBe(false)
+    popup.destroy()
+    view.destroy()
+  })
+
+  it('unrelated keys do not interfere', () => {
+    const view = bareView('abc\n')
+    const actions: CodeActionInfo[] = [
+      { title: 'A', kind: null, edit: { changes: [] }, resolve_data: null },
+    ]
+    const popup = showActionsPopup(view, actions, () => Promise.resolve(true))
+    const ev = pressKey(popup.dom, 'x')
+    expect(ev.defaultPrevented).toBe(false)
+    expect(document.querySelector('.lean-code-action-popup')).not.toBeNull()
+    popup.destroy()
     view.destroy()
   })
 })

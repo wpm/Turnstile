@@ -153,7 +153,7 @@ interface Popup {
   destroy: () => void
 }
 
-function showActionsPopup(
+export function showActionsPopup(
   view: EditorView,
   actions: CodeActionInfo[],
   onApply: (action: CodeActionInfo) => Promise<boolean>,
@@ -212,8 +212,14 @@ function showActionsPopup(
     }
   }
 
-  // Anchor above the cursor.
-  const cursorRect = view.coordsAtPos(view.state.selection.main.head)
+  // Anchor above the cursor. `coordsAtPos` can throw in environments without
+  // layout (jsdom in unit tests); the popup still functions unanchored.
+  let cursorRect: { top: number; left: number } | null = null
+  try {
+    cursorRect = view.coordsAtPos(view.state.selection.main.head)
+  } catch {
+    cursorRect = null
+  }
   if (cursorRect) {
     dom.style.position = 'fixed'
     dom.style.top = `${String(cursorRect.top - 4)}px`
