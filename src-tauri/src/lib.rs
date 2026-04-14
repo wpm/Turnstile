@@ -260,76 +260,109 @@ async fn update_document(app: AppHandle, content: String) -> Result<(), String> 
     Ok(())
 }
 
+/// Debounce interval: how long to wait after an edit for the source to settle
+/// before attempting prose regeneration.
+const PROSE_DEBOUNCE: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Outcome of the pre-flight checks that decide whether to run the LLM.
+#[derive(Debug)]
+enum ShouldGenerate {
+    /// Source is clean, non-empty, and has changed — run the backend.
+    Proceed { source: String, hash: String },
+    /// Abort this task entirely (stale seq, errors present, unchanged source,
+    /// or empty source).
+    Abort,
+}
+
+/// Decide whether to regenerate prose for sequence number `seq`.
+///
+/// Performs (in order): staleness check, diagnostics check, source-hash check,
+/// and empty-source check. All four are short synchronous operations except
+/// the source clone which needs the async mutex on `current_source`.
+async fn should_generate_prose(state: &AppState, seq: u64) -> ShouldGenerate {
+    // A newer edit has superseded us.
+    if state.prose_generation_seq.load(Ordering::SeqCst) != seq {
+        return ShouldGenerate::Abort;
+    }
+
+    // Don't translate a broken proof.
+    let has_errors = {
+        let diags = state.current_diagnostics.lock().unwrap();
+        diags.iter().any(|d| d.severity == 1)
+    };
+    if has_errors {
+        return ShouldGenerate::Abort;
+    }
+
+    let source = state.current_source.lock().await.clone();
+    let hash = chat::compute_source_hash(&source);
+
+    // Source hasn't changed since the last prose generation (e.g. type then undo).
+    if *state.prose_source_hash.lock().unwrap() == hash {
+        return ShouldGenerate::Abort;
+    }
+
+    // Nothing to translate.
+    if source.trim().is_empty() {
+        return ShouldGenerate::Abort;
+    }
+
+    ShouldGenerate::Proceed { source, hash }
+}
+
+/// Run the LLM translator on `source` and return the generated prose.
+async fn perform_prose_generation(
+    backend: &dyn chat::ChatBackend,
+    source: &str,
+    app: &AppHandle,
+) -> Result<String, chat::ChatError> {
+    let turn = backend
+        .send_raw_message(chat::TRANSLATOR_PROMPT, source, app)
+        .await?;
+    Ok(turn.content)
+}
+
 /// Spawn a background task that waits for the editing debounce period, then
 /// regenerates the prose proof if the source has settled and compiles cleanly.
 fn spawn_prose_regeneration(app: AppHandle, seq: u64) {
     tokio::spawn(async move {
-        // Debounce: wait 2 seconds for edits to settle.
-        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-
         let state = app.state::<AppState>();
 
         loop {
-            // Check if this task is still current (no newer edit arrived).
-            let current_seq = state.prose_generation_seq.load(Ordering::SeqCst);
-            if current_seq != seq {
-                return; // A newer edit superseded us.
-            }
+            tokio::time::sleep(PROSE_DEBOUNCE).await;
 
-            // Check that there are zero errors in diagnostics.
-            let has_errors = {
-                let diags = state.current_diagnostics.lock().unwrap();
-                diags.iter().any(|d| d.severity == 1)
+            let (source, hash) = match should_generate_prose(&state, seq).await {
+                ShouldGenerate::Abort => return,
+                ShouldGenerate::Proceed { source, hash } => (source, hash),
             };
-            if has_errors {
-                return; // Don't translate a broken proof.
-            }
 
-            // Check if the source actually changed from what we last translated.
-            let source = state.current_source.lock().await.clone();
-            let source_hash = chat::compute_source_hash(&source);
-            {
-                let existing_hash = state.prose_source_hash.lock().unwrap();
-                if *existing_hash == source_hash {
-                    return; // Source hasn't changed (e.g. type then undo).
-                }
-            }
-
-            if source.trim().is_empty() {
-                return; // Nothing to translate.
-            }
-
-            // Clear dirty flag before starting generation.
+            // Clear dirty flag before starting generation so that any edit
+            // arriving during the LLM call re-sets it.
             state.prose_dirty.store(false, Ordering::SeqCst);
 
-            // Generate prose via the LLM.
             let backend = state.chat_backend.clone();
-            let result = backend
-                .send_raw_message(chat::TRANSLATOR_PROMPT, &source, &app)
-                .await;
+            let result = perform_prose_generation(backend.as_ref(), &source, &app).await;
 
-            // Check if we're still current after the (potentially long) LLM call.
-            let current_seq = state.prose_generation_seq.load(Ordering::SeqCst);
-            if current_seq != seq {
-                return; // Source changed during generation; discard.
+            // Discard the result if a newer edit superseded us during the
+            // (potentially long) LLM call.
+            if state.prose_generation_seq.load(Ordering::SeqCst) != seq {
+                return;
             }
 
-            if let Ok(turn) = result {
-                // Store the result.
-                *state.current_prose.lock().await = turn.content.clone();
-                *state.prose_source_hash.lock().unwrap() = source_hash;
+            if let Ok(prose) = result {
+                *state.current_prose.lock().await = prose.clone();
+                *state.prose_source_hash.lock().unwrap() = hash;
 
                 #[derive(serde::Serialize)]
                 struct ProsePayload {
                     text: String,
                     hash: Option<String>,
                 }
-                let hash = chat::compute_source_hash(&source);
                 app.emit(
                     "prose-updated",
                     &ProsePayload {
-                        text: turn.content,
-                        hash: Some(hash),
+                        text: prose,
+                        hash: Some(chat::compute_source_hash(&source)),
                     },
                 )
                 .ok();
@@ -337,13 +370,11 @@ fn spawn_prose_regeneration(app: AppHandle, seq: u64) {
                 state.session_dirty.store(true, Ordering::SeqCst);
             }
 
-            // If an edit arrived during generation, re-trigger (loop back with debounce).
-            if state.prose_dirty.load(Ordering::SeqCst) {
-                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-                continue;
+            // If an edit arrived during generation, loop back to re-debounce
+            // and retry; otherwise we're done.
+            if !state.prose_dirty.load(Ordering::SeqCst) {
+                return;
             }
-
-            return; // Done — prose is up to date.
         }
     });
 }
@@ -838,9 +869,14 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicI64, Ordering};
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
+    use std::sync::Mutex;
 
-    use super::end_of_document_position;
+    use super::{
+        chat, end_of_document_position, lsp, should_generate_prose, AppState, ShouldGenerate,
+    };
+    use std::sync::Arc;
 
     #[test]
     fn doc_version_strictly_increasing_after_did_open() {
@@ -864,5 +900,140 @@ mod tests {
         assert_eq!(end_of_document_position("abc\ndef"), (1, 3));
         assert_eq!(end_of_document_position("abc\ndef\n"), (2, 0));
         assert_eq!(end_of_document_position("abc\ndef\nghi"), (2, 3));
+    }
+
+    /// Minimal `AppState` suitable for exercising `should_generate_prose`. The
+    /// LSP client, chat state, and session fields are not read by the
+    /// pre-flight checks.
+    fn make_state() -> AppState {
+        AppState {
+            lsp_client: Arc::new(tokio::sync::Mutex::new(None)),
+            project_path: PathBuf::new(),
+            doc_version: AtomicI64::new(1),
+            setup_running: Arc::new(AtomicBool::new(false)),
+            chat_state: Arc::new(tokio::sync::Mutex::new(chat::ChatState::default())),
+            chat_backend: Arc::new(chat::MockBackend::echo()),
+            current_source: Arc::new(tokio::sync::Mutex::new(String::new())),
+            current_prose: Arc::new(tokio::sync::Mutex::new(String::new())),
+            settings: Arc::new(tokio::sync::Mutex::new(crate::settings::Settings::default())),
+            current_session_path: Arc::new(tokio::sync::Mutex::new(None)),
+            session_dirty: Arc::new(AtomicBool::new(false)),
+            current_diagnostics: Arc::new(Mutex::new(Vec::new())),
+            prose_dirty: Arc::new(AtomicBool::new(false)),
+            prose_generation_seq: Arc::new(AtomicU64::new(0)),
+            prose_source_hash: Arc::new(Mutex::new(String::new())),
+            goal_state_seq: Arc::new(AtomicU64::new(0)),
+        }
+    }
+
+    fn error_diagnostic() -> lsp::DiagnosticInfo {
+        lsp::DiagnosticInfo {
+            start_line: 0,
+            start_col: 0,
+            end_line: 0,
+            end_col: 1,
+            severity: 1,
+            message: "boom".to_string(),
+        }
+    }
+
+    fn warning_diagnostic() -> lsp::DiagnosticInfo {
+        lsp::DiagnosticInfo {
+            start_line: 0,
+            start_col: 0,
+            end_line: 0,
+            end_col: 1,
+            severity: 2,
+            message: "heads up".to_string(),
+        }
+    }
+
+    #[tokio::test]
+    async fn should_generate_aborts_when_seq_is_stale() {
+        let state = make_state();
+        state.prose_generation_seq.store(7, Ordering::SeqCst);
+        *state.current_source.lock().await = "theorem foo".to_string();
+
+        // We're task seq=5, but the latest edit bumped seq to 7.
+        assert!(matches!(
+            should_generate_prose(&state, 5).await,
+            ShouldGenerate::Abort
+        ));
+    }
+
+    #[tokio::test]
+    async fn should_generate_aborts_when_diagnostics_have_errors() {
+        let state = make_state();
+        state.prose_generation_seq.store(1, Ordering::SeqCst);
+        *state.current_source.lock().await = "theorem foo".to_string();
+        state
+            .current_diagnostics
+            .lock()
+            .unwrap()
+            .push(error_diagnostic());
+
+        assert!(matches!(
+            should_generate_prose(&state, 1).await,
+            ShouldGenerate::Abort
+        ));
+    }
+
+    #[tokio::test]
+    async fn should_generate_proceeds_when_diagnostics_have_only_warnings() {
+        let state = make_state();
+        state.prose_generation_seq.store(1, Ordering::SeqCst);
+        *state.current_source.lock().await = "theorem foo".to_string();
+        state
+            .current_diagnostics
+            .lock()
+            .unwrap()
+            .push(warning_diagnostic());
+
+        assert!(matches!(
+            should_generate_prose(&state, 1).await,
+            ShouldGenerate::Proceed { .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn should_generate_aborts_when_source_hash_unchanged() {
+        let state = make_state();
+        state.prose_generation_seq.store(1, Ordering::SeqCst);
+        let source = "theorem foo : True := trivial".to_string();
+        *state.current_source.lock().await = source.clone();
+        *state.prose_source_hash.lock().unwrap() = chat::compute_source_hash(&source);
+
+        assert!(matches!(
+            should_generate_prose(&state, 1).await,
+            ShouldGenerate::Abort
+        ));
+    }
+
+    #[tokio::test]
+    async fn should_generate_aborts_when_source_is_whitespace_only() {
+        let state = make_state();
+        state.prose_generation_seq.store(1, Ordering::SeqCst);
+        *state.current_source.lock().await = "   \n\t  ".to_string();
+
+        assert!(matches!(
+            should_generate_prose(&state, 1).await,
+            ShouldGenerate::Abort
+        ));
+    }
+
+    #[tokio::test]
+    async fn should_generate_proceeds_with_clean_source_and_matching_seq() {
+        let state = make_state();
+        state.prose_generation_seq.store(3, Ordering::SeqCst);
+        let source = "theorem foo : True := trivial".to_string();
+        *state.current_source.lock().await = source.clone();
+
+        match should_generate_prose(&state, 3).await {
+            ShouldGenerate::Proceed { source: s, hash } => {
+                assert_eq!(s, source);
+                assert_eq!(hash, chat::compute_source_hash(&source));
+            }
+            ShouldGenerate::Abort => panic!("expected Proceed"),
+        }
     }
 }
