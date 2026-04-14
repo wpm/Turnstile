@@ -716,15 +716,9 @@ pub fn parse_file_progress(params: &Value) -> Vec<FileProgressRange> {
 /// Parse a `textDocument/hover` response, keeping only the type signature
 /// (the first fenced Lean code block) and dropping any trailing documentation.
 ///
-/// The Lean server returns markdown of the form:
-/// ```
-/// ```lean
-/// <type signature>
-/// ```
-/// <docstring, if any>
-/// ```
-/// We keep the first block and discard the rest. Returns `None` if the
-/// response is null or has no readable contents.
+/// The Lean server returns markdown with a fenced lean block followed by an
+/// optional docstring block. We keep the first block and discard the rest.
+/// Returns `None` if the response is null or has no readable contents.
 pub fn parse_hover(result: &Value) -> Option<HoverInfo> {
     if result.is_null() {
         return None;
