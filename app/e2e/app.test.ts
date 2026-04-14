@@ -51,7 +51,6 @@ test.describe('SetupOverlay', () => {
             if (cmd === 'start_setup') return lspReady
             if (cmd === 'start_lsp') return Promise.resolve(null)
             if (cmd === 'update_document') return Promise.resolve(null)
-            if (cmd === 'get_goal_state') return Promise.resolve(null)
             if (cmd === 'get_settings')
               return Promise.resolve({
                 editor_font_size: 13,

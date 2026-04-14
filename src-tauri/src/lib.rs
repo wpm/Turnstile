@@ -7,10 +7,10 @@
 //! Frontend change → `update_document` → `textDocument/didChange` → LSP emits
 //! `textDocument/publishDiagnostics` → `lsp-diagnostics` Tauri event → frontend.
 //!
-//! **Document → goal state:**
-//! Document change → `get_full_proof_goal_state` and
-//! `get_per_line_goal_states` → `$/lean/plainGoal` (awaited) → response
-//! `{ "rendered": "..." }` → frontend goal panel.
+//! **Elaboration complete → goal state:**
+//! LSP emits `$/lean/fileProgress` with empty ranges → `spawn_goal_state_refresh`
+//! debounces 150 ms, then issues `$/lean/plainGoal` at end-of-doc and at every
+//! line-end → `goal-state-updated` Tauri event → frontend goal panel.
 
 pub mod chat;
 pub mod lsp;
@@ -62,6 +62,11 @@ pub struct AppState {
     /// Hash of the Lean source that produced the current prose. Empty if no
     /// prose has been generated yet.
     pub prose_source_hash: Arc<Mutex<String>>,
+    /// Monotonically increasing sequence number for goal-state refresh
+    /// requests. Bumped on every `update_document` and on every empty
+    /// `$/lean/fileProgress` event, so that a stale background refresh task
+    /// does not overwrite the panel with old data.
+    pub goal_state_seq: Arc<AtomicU64>,
 }
 
 impl AppState {
@@ -197,6 +202,10 @@ async fn update_document(app: AppHandle, content: String) -> Result<(), String> 
     // Keep current_source in sync so the LLM can read it via read_lean_source.
     *state.current_source.lock().await = content.clone();
 
+    // Invalidate any in-flight goal-state refresh task spawned before this
+    // edit. The subsequent empty-`fileProgress` event will spawn a fresh one.
+    state.goal_state_seq.fetch_add(1, Ordering::SeqCst);
+
     // Clone the client Arc so we can release the lock before the semantic token request.
     let client_arc = {
         let lock = state.lsp_client.lock().await;
@@ -226,7 +235,8 @@ async fn update_document(app: AppHandle, content: String) -> Result<(), String> 
     }
 
     // Request semantic tokens separately, outside the didChange lock scope,
-    // so concurrent get_goal_state calls are not blocked.
+    // so concurrent `$/lean/plainGoal` calls from the goal-state refresh task
+    // are not blocked.
     {
         let lock = client_arc.lock().await;
         if let Some(client) = lock.as_ref() {
@@ -335,43 +345,12 @@ fn spawn_prose_regeneration(app: AppHandle, seq: u64) {
     });
 }
 
-#[tauri::command]
-#[allow(clippy::significant_drop_tightening)] // lock must be held while awaiting on client
-async fn get_goal_state(app: AppHandle, line: u32, col: u32) -> Result<String, String> {
-    let state = app.state::<AppState>();
-    let lock = state.lsp_client.lock().await;
-
-    let Some(client) = lock.as_ref() else {
-        return Err("LSP not connected".to_string());
-    };
-
-    let doc_uri = state.doc_uri();
-    let result = client
-        .send_request_await(
-            "$/lean/plainGoal",
-            json!({
-                "textDocument": { "uri": doc_uri },
-                "position": { "line": line, "character": col },
-            }),
-        )
-        .await?;
-
-    let rendered = result
-        .get("rendered")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-    Ok(rendered)
-}
-
-/// Return the goal state at the end of the current document.
+/// Fetch the goal state at the end of the current document.
 ///
 /// This is the "whole proof" goal state — what Lean reports after feeding it
 /// the entire Formal Proof. Independent of cursor position.
-#[tauri::command]
-#[allow(clippy::significant_drop_tightening)]
-async fn get_full_proof_goal_state(app: AppHandle) -> Result<String, String> {
-    let state = app.state::<AppState>();
+#[allow(clippy::significant_drop_tightening)] // lock must be held while awaiting on client
+async fn fetch_full_proof_goal_state(state: &AppState) -> Result<String, String> {
     let source = state.current_source.lock().await.clone();
     let (line, col) = end_of_document_position(&source);
 
@@ -399,15 +378,13 @@ async fn get_full_proof_goal_state(app: AppHandle) -> Result<String, String> {
     Ok(rendered)
 }
 
-/// Return the rendered goal state at the end of every line in the document.
+/// Fetch the rendered goal state at the end of every line in the document.
 ///
 /// Returns a `Vec<String>` with one entry per line (same length as the number
 /// of lines in the source). Requests are issued sequentially to avoid
 /// hammering the LSP.
-#[tauri::command]
 #[allow(clippy::significant_drop_tightening)]
-async fn get_per_line_goal_states(app: AppHandle) -> Result<Vec<String>, String> {
-    let state = app.state::<AppState>();
+async fn fetch_per_line_goal_states(state: &AppState) -> Result<Vec<String>, String> {
     let source = state.current_source.lock().await.clone();
 
     let lock = state.lsp_client.lock().await;
@@ -439,6 +416,60 @@ async fn get_per_line_goal_states(app: AppHandle) -> Result<Vec<String>, String>
     }
 
     Ok(results)
+}
+
+#[derive(serde::Serialize, Clone)]
+struct GoalStatePayload {
+    full: String,
+    per_line: Vec<String>,
+}
+
+/// Spawn a background task that, after a short debounce, fetches the
+/// whole-proof and per-line goal states and emits a `goal-state-updated`
+/// event to the frontend.
+///
+/// The task is sequence-guarded: if `state.goal_state_seq` advances before
+/// the debounce fires (because another edit or another empty-progress event
+/// arrived), this task returns without emitting. This coalesces the burst of
+/// empty-`fileProgress` frames Lean emits as elaboration settles, and
+/// discards stale results that would overwrite newer ones.
+fn spawn_goal_state_refresh(app: AppHandle, seq: u64) {
+    tokio::spawn(async move {
+        // Debounce: coalesce bursts of empty-progress frames.
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+
+        let state = app.state::<AppState>();
+        if state.goal_state_seq.load(Ordering::SeqCst) != seq {
+            return; // A newer edit or progress event superseded us.
+        }
+
+        let full = match fetch_full_proof_goal_state(&state).await {
+            Ok(s) => s,
+            Err(e) => {
+                log::debug!("goal-state refresh: full fetch failed: {e}");
+                return;
+            }
+        };
+
+        if state.goal_state_seq.load(Ordering::SeqCst) != seq {
+            return;
+        }
+
+        let per_line = match fetch_per_line_goal_states(&state).await {
+            Ok(v) => v,
+            Err(e) => {
+                log::debug!("goal-state refresh: per-line fetch failed: {e}");
+                return;
+            }
+        };
+
+        if state.goal_state_seq.load(Ordering::SeqCst) != seq {
+            return;
+        }
+
+        app.emit("goal-state-updated", &GoalStatePayload { full, per_line })
+            .ok();
+    });
 }
 
 /// Compute the (line, character) position at the end of the document.
@@ -535,8 +566,14 @@ fn handle_lsp_message(
                 app.emit("lsp-diagnostics", diagnostics).ok();
             }
             "$/lean/fileProgress" => {
-                app.emit("lsp-file-progress", lsp::parse_file_progress(&params))
-                    .ok();
+                let ranges = lsp::parse_file_progress(&params);
+                let elaboration_done = ranges.is_empty();
+                app.emit("lsp-file-progress", ranges).ok();
+                if elaboration_done {
+                    let state = app.state::<AppState>();
+                    let seq = state.goal_state_seq.fetch_add(1, Ordering::SeqCst) + 1;
+                    spawn_goal_state_refresh(app.clone(), seq);
+                }
             }
             "window/logMessage" | "window/showMessage" => {
                 if let Some(message) = params.get("message").and_then(|m| m.as_str()) {
@@ -636,6 +673,7 @@ pub fn run() {
                 prose_dirty: Arc::new(AtomicBool::new(false)),
                 prose_generation_seq: Arc::new(AtomicU64::new(0)),
                 prose_source_hash: Arc::new(Mutex::new(String::new())),
+                goal_state_seq: Arc::new(AtomicU64::new(0)),
             });
 
             Ok(())
@@ -658,9 +696,6 @@ pub fn run() {
             start_setup,
             start_lsp,
             update_document,
-            get_goal_state,
-            get_full_proof_goal_state,
-            get_per_line_goal_states,
             get_completions,
             chat::send_chat_message,
             chat::get_chat_state,

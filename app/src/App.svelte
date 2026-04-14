@@ -16,8 +16,6 @@
   import ProsePanel from './components/ProsePanel.svelte'
   import GoalPanel from './components/GoalPanel.svelte'
   import { renderContent } from './lib/renderContent'
-  import { createGoalStateFetcher } from './lib/goalState'
-  import type { GoalStateFetcher } from './lib/goalState'
   import { buildGoalLineMap } from './lib/goalLineMap'
   import { theme, systemTheme, toggleTheme, resolveTheme } from './lib/theme'
   import type { ResolvedTheme } from './lib/theme'
@@ -121,7 +119,6 @@
   let goalPanelPct = $state(30)
   const GOAL_PANEL_MIN = 20
   const GOAL_PANEL_MAX = 80
-  let goalFetcher: GoalStateFetcher | null = null
   let goalDragging = false
   let goalDragStartY = 0
   let goalDragStartPct = 0
@@ -207,15 +204,6 @@
     invoke('update_document', { content }).catch(() => {
       /* LSP not yet connected */
     })
-    refreshGoalState(content)
-  }
-
-  function refreshGoalState(content: string): void {
-    goalFetcher ??= createGoalStateFetcher(({ full, perLine }) => {
-      goalText = full
-      goalLineToProofLine = buildGoalLineMap(full, perLine)
-    })
-    goalFetcher.update(content)
   }
 
   function handleHighlightLine(line: number | null): void {
@@ -423,6 +411,13 @@
     const progressPromise = listen<FileProgressRange[]>('lsp-file-progress', (ranges) => {
       fileProgress = ranges
     })
+    const goalStatePromise = listen<{ full: string; per_line: string[] }>(
+      'goal-state-updated',
+      ({ full, per_line }) => {
+        goalText = full
+        goalLineToProofLine = buildGoalLineMap(full, per_line)
+      },
+    )
 
     // Listen for prose-updated events from other components
     const prosePromise = listen<{ text: string; hash: string | null }>('prose-updated', (data) => {
@@ -460,6 +455,7 @@
       diagPromise,
       tokensPromise,
       progressPromise,
+      goalStatePromise,
       prosePromise,
       sessionPromise,
       menuPromise,
@@ -468,6 +464,7 @@
         unlistenDiag,
         unlistenTokens,
         unlistenProgress,
+        unlistenGoalState,
         unlistenProse,
         unlistenSession,
         unlistenMenu,
@@ -477,6 +474,7 @@
           unlistenDiag()
           unlistenTokens()
           unlistenProgress()
+          unlistenGoalState()
           unlistenProse()
           unlistenSession()
           unlistenMenu()
@@ -491,7 +489,6 @@
 
     return () => {
       clearInterval(autoSaveTimer)
-      goalFetcher?.destroy()
       window.removeEventListener('keydown', handleKeydown)
       mql.removeEventListener('change', onSystemChange)
     }
