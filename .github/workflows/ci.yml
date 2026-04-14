@@ -209,9 +209,13 @@ jobs:
       # the env vars (RUSTFLAGS=-Cinstrument-coverage, LLVM_PROFILE_FILE,
       # etc.) that cargo-llvm-cov normally injects, so `cargo test --no-run`
       # produces artifacts that the downstream llvm-cov jobs can reuse.
+      #
+      # Source from a file (not process substitution) because macOS runners
+      # ship bash 3.2, where `source <(...)` drops some exports silently.
       - name: Compile all test binaries with coverage instrumentation
         run: |
-          source <(cargo llvm-cov show-env --sh)
+          cargo llvm-cov show-env --sh > llvm-cov-env.sh
+          . ./llvm-cov-env.sh
           cargo test --no-run
 
       - name: Save compiled test artifacts for downstream jobs
@@ -258,9 +262,14 @@ jobs:
       # as in compile-rust-tests. `cargo llvm-cov --no-clean --lib` would
       # use target/llvm-cov-target/ instead of target/, miss the cached
       # artifacts, and rebuild everything.
+      #
+      # Source from a file (not process substitution) because macOS runners
+      # ship bash 3.2, where `source <(...)` drops some exports silently.
+      # See taiki-e/cargo-llvm-cov's own CI for this same workaround.
       - name: cargo test --lib + llvm-cov report (Rust unit tests)
         run: |
-          source <(cargo llvm-cov show-env --sh)
+          cargo llvm-cov show-env --sh > llvm-cov-env.sh
+          . ./llvm-cov-env.sh
           cargo test --lib
           cargo llvm-cov report --lcov --output-path lcov-rust.info
 
@@ -411,9 +420,13 @@ jobs:
       # as in compile-rust-tests. `cargo llvm-cov --no-clean --test` would
       # use target/llvm-cov-target/ instead of target/, miss the cached
       # artifacts, and rebuild everything.
+      #
+      # Source from a file (not process substitution) because macOS runners
+      # ship bash 3.2, where `source <(...)` drops some exports silently.
       - name: cargo test --test + llvm-cov report (Lean LSP integration)
         run: |
-          source <(cargo llvm-cov show-env --sh)
+          cargo llvm-cov show-env --sh > llvm-cov-env.sh
+          . ./llvm-cov-env.sh
           cargo test --test lean_lsp_integration
           cargo llvm-cov report --lcov --output-path lcov-integration.info
         env:
