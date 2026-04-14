@@ -18,6 +18,9 @@ use serde_json::{json, Value};
 
 use log::{debug, error, info, warn};
 
+pub mod error;
+pub use error::LspError;
+
 // ── Public types for Tauri events ─────────────────────────────────────
 
 #[derive(Clone, Serialize)]
@@ -145,7 +148,7 @@ impl LspClient {
     ///
     /// # Errors
     /// Returns an error if the process cannot be spawned or its stdin cannot be captured.
-    pub fn spawn(command: &str, args: &[&str], cwd: &Path) -> Result<Self, String> {
+    pub fn spawn(command: &str, args: &[&str], cwd: &Path) -> Result<Self, LspError> {
         info!(
             "Spawning LSP server: {command} {args:?} (cwd: {})",
             cwd.display()
@@ -158,12 +161,12 @@ impl LspClient {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .map_err(|e| format!("Failed to spawn LSP server '{command}': {e}"))?;
+            .map_err(|source| LspError::SpawnFailed {
+                command: command.to_string(),
+                source,
+            })?;
 
-        let stdin = child
-            .stdin
-            .take()
-            .ok_or("Failed to capture LSP server stdin")?;
+        let stdin = child.stdin.take().ok_or(LspError::StdinCaptureFailed)?;
 
         Ok(Self {
             process: child,
@@ -178,7 +181,7 @@ impl LspClient {
     ///
     /// # Errors
     /// Returns an error if serialization or writing to the server fails.
-    pub async fn send_request(&self, method: &str, params: Value) -> Result<i64, String> {
+    pub async fn send_request(&self, method: &str, params: Value) -> Result<i64, LspError> {
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
         let msg = json!({
             "jsonrpc": "2.0",
@@ -195,12 +198,15 @@ impl LspClient {
     ///
     /// # Errors
     /// Returns an error if the request cannot be sent or the response times out.
-    pub async fn send_request_await(&self, method: &str, params: Value) -> Result<Value, String> {
+    pub async fn send_request_await(&self, method: &str, params: Value) -> Result<Value, LspError> {
         let (tx, rx) = mpsc::sync_channel::<Value>(1);
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
 
         {
-            let mut pending = self.pending.lock().map_err(|_| "Pending lock poisoned")?;
+            let mut pending = self
+                .pending
+                .lock()
+                .map_err(|_| LspError::LockPoisoned { lock: "pending" })?;
             pending.insert(id, tx);
         }
 
@@ -215,17 +221,18 @@ impl LspClient {
         let method_owned = method.to_owned();
         tokio::task::spawn_blocking(move || {
             rx.recv_timeout(std::time::Duration::from_secs(10))
-                .map_err(|e| format!("Timed out waiting for LSP response to {method_owned}: {e}"))
+                .map_err(|_| LspError::Timeout {
+                    method: method_owned,
+                })
         })
-        .await
-        .map_err(|e| format!("spawn_blocking failed: {e}"))?
+        .await?
     }
 
     /// Send a JSON-RPC notification (no id, no response expected).
     ///
     /// # Errors
     /// Returns an error if serialization or writing to the server fails.
-    pub async fn send_notification(&self, method: &str, params: Value) -> Result<(), String> {
+    pub async fn send_notification(&self, method: &str, params: Value) -> Result<(), LspError> {
         let msg = json!({
             "jsonrpc": "2.0",
             "method": method,
@@ -316,9 +323,8 @@ impl LspClient {
         self.process.stdout.take()
     }
 
-    async fn send_message(&self, msg: &Value) -> Result<(), String> {
-        let body =
-            serde_json::to_string(msg).map_err(|e| format!("JSON serialization failed: {e}"))?;
+    async fn send_message(&self, msg: &Value) -> Result<(), LspError> {
+        let body = serde_json::to_string(msg)?;
         let header = format!("Content-Length: {}\r\n\r\n", body.len());
 
         debug!(
@@ -329,11 +335,20 @@ impl LspClient {
         let mut writer = self.writer.lock().await;
         writer
             .write_all(header.as_bytes())
-            .map_err(|e| format!("Write header failed: {e}"))?;
+            .map_err(|source| LspError::Io {
+                operation: "write header",
+                source,
+            })?;
         writer
             .write_all(body.as_bytes())
-            .map_err(|e| format!("Write body failed: {e}"))?;
-        writer.flush().map_err(|e| format!("Flush failed: {e}"))?;
+            .map_err(|source| LspError::Io {
+                operation: "write body",
+                source,
+            })?;
+        writer.flush().map_err(|source| LspError::Io {
+            operation: "flush",
+            source,
+        })?;
         drop(writer);
 
         Ok(())
@@ -397,9 +412,8 @@ impl LspClient {
     }
 
     /// Write a JSON-RPC message synchronously using `try_lock`.
-    fn send_message_sync(&self, msg: &Value) -> Result<(), String> {
-        let body =
-            serde_json::to_string(msg).map_err(|e| format!("JSON serialization failed: {e}"))?;
+    fn send_message_sync(&self, msg: &Value) -> Result<(), LspError> {
+        let body = serde_json::to_string(msg)?;
         let header = format!("Content-Length: {}\r\n\r\n", body.len());
 
         debug!(
@@ -410,14 +424,23 @@ impl LspClient {
         let mut writer = self
             .writer
             .try_lock()
-            .map_err(|_| "Writer lock contended during shutdown".to_string())?;
+            .map_err(|_| LspError::WriterContended)?;
         writer
             .write_all(header.as_bytes())
-            .map_err(|e| format!("Write header failed: {e}"))?;
+            .map_err(|source| LspError::Io {
+                operation: "write header",
+                source,
+            })?;
         writer
             .write_all(body.as_bytes())
-            .map_err(|e| format!("Write body failed: {e}"))?;
-        writer.flush().map_err(|e| format!("Flush failed: {e}"))?;
+            .map_err(|source| LspError::Io {
+                operation: "write body",
+                source,
+            })?;
+        writer.flush().map_err(|source| LspError::Io {
+            operation: "flush",
+            source,
+        })?;
         Ok(())
     }
 }
@@ -443,10 +466,9 @@ impl Drop for LspClient {
 pub fn ack_request(
     writer: &Arc<tokio::sync::Mutex<Box<dyn Write + Send>>>,
     id: &Value,
-) -> Result<(), String> {
+) -> Result<(), LspError> {
     let msg = json!({ "jsonrpc": "2.0", "id": id, "result": Value::Null });
-    let body =
-        serde_json::to_string(&msg).map_err(|e| format!("JSON serialization failed: {e}"))?;
+    let body = serde_json::to_string(&msg)?;
     let header = format!("Content-Length: {}\r\n\r\n", body.len());
     debug!(
         "LSP → {}",
@@ -455,11 +477,20 @@ pub fn ack_request(
     let mut guard = writer.blocking_lock();
     guard
         .write_all(header.as_bytes())
-        .map_err(|e| format!("Write header failed: {e}"))?;
+        .map_err(|source| LspError::Io {
+            operation: "write header",
+            source,
+        })?;
     guard
         .write_all(body.as_bytes())
-        .map_err(|e| format!("Write body failed: {e}"))?;
-    guard.flush().map_err(|e| format!("Flush failed: {e}"))?;
+        .map_err(|source| LspError::Io {
+            operation: "write body",
+            source,
+        })?;
+    guard.flush().map_err(|source| LspError::Io {
+        operation: "flush",
+        source,
+    })?;
     drop(guard);
     Ok(())
 }
@@ -477,7 +508,7 @@ pub fn send_request_sync(
     next_id: &Arc<AtomicI64>,
     method: &str,
     params: Value,
-) -> Result<(), String> {
+) -> Result<(), LspError> {
     let id = next_id.fetch_add(1, Ordering::SeqCst);
     let msg = json!({
         "jsonrpc": "2.0",
@@ -485,8 +516,7 @@ pub fn send_request_sync(
         "method": method,
         "params": params,
     });
-    let body =
-        serde_json::to_string(&msg).map_err(|e| format!("JSON serialization failed: {e}"))?;
+    let body = serde_json::to_string(&msg)?;
     let header = format!("Content-Length: {}\r\n\r\n", body.len());
     debug!(
         "LSP → {}",
@@ -495,11 +525,20 @@ pub fn send_request_sync(
     let mut guard = writer.blocking_lock();
     guard
         .write_all(header.as_bytes())
-        .map_err(|e| format!("Write header failed: {e}"))?;
+        .map_err(|source| LspError::Io {
+            operation: "write header",
+            source,
+        })?;
     guard
         .write_all(body.as_bytes())
-        .map_err(|e| format!("Write body failed: {e}"))?;
-    guard.flush().map_err(|e| format!("Flush failed: {e}"))?;
+        .map_err(|source| LspError::Io {
+            operation: "write body",
+            source,
+        })?;
+    guard.flush().map_err(|source| LspError::Io {
+        operation: "flush",
+        source,
+    })?;
     drop(guard);
     Ok(())
 }

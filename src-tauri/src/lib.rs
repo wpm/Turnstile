@@ -30,7 +30,7 @@ use tauri::{AppHandle, Emitter, Manager};
 
 use lsp::{
     CodeActionInfo, CompletionItem, DefinitionLocation, DocumentSymbolInfo, HoverInfo, LspClient,
-    LspStatus, WorkspaceEditDto,
+    LspError, LspStatus, WorkspaceEditDto,
 };
 
 pub struct AppState {
@@ -359,7 +359,7 @@ async fn fetch_full_proof_goal_state(state: &AppState) -> Result<String, String>
 
     let lock = state.lsp_client.lock().await;
     let Some(client) = lock.as_ref() else {
-        return Err("LSP not connected".to_string());
+        return Err(LspError::NotConnected.into());
     };
 
     let doc_uri = state.doc_uri();
@@ -397,14 +397,14 @@ async fn fetch_per_line_goal_states(state: &AppState, seq: u64) -> Result<Vec<St
 
     let lock = state.lsp_client.lock().await;
     let Some(client) = lock.as_ref() else {
-        return Err("LSP not connected".to_string());
+        return Err(LspError::NotConnected.into());
     };
     let doc_uri = state.doc_uri();
 
     let mut results: Vec<String> = Vec::new();
     for (idx, line_text) in source.split('\n').enumerate() {
         if state.goal_state_seq.load(Ordering::SeqCst) != seq {
-            return Err("stale".to_string());
+            return Err(LspError::Stale.into());
         }
         let line = u32::try_from(idx).map_err(|e| e.to_string())?;
         let col = u32::try_from(line_text.chars().count()).map_err(|e| e.to_string())?;

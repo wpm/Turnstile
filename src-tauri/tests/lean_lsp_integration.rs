@@ -135,6 +135,7 @@ impl Session {
             tokio::runtime::Handle::current()
                 .block_on(self.client.send_request_await(method, params))
         })
+        .map_err(Into::into)
     }
 
     /// Replace the document with `text` and wait for elaboration + diagnostics.
