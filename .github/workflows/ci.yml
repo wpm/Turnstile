@@ -315,8 +315,15 @@ jobs:
         id: cache-lean-project
         uses: actions/cache@v4
         with:
-          path: ${{ env.LEAN_PROJECT }}/.lake
-          key: lean-project-${{ runner.os }}-${{ steps.lean-versions.outputs.mathlib-rev }}
+          # lake-manifest.json lives at the project root, not inside .lake/.
+          # Without it, lake regenerates the manifest at test time (running
+          # mathlib post-update hooks) which pollutes LSP JSON output and
+          # breaks integration tests on every cache-hit run.
+          path: |
+            ${{ env.LEAN_PROJECT }}/.lake
+            ${{ env.LEAN_PROJECT }}/lake-manifest.json
+          # v2: bust the cache since v1 omitted lake-manifest.json.
+          key: lean-project-v2-${{ runner.os }}-${{ steps.lean-versions.outputs.mathlib-rev }}
 
       - name: Create Lean project
         run: |
