@@ -355,6 +355,16 @@ jobs:
           lake --version
           test -d "$LEAN_PROJECT/.lake/packages/mathlib"
 
+      # Drain Mathlib's post-update hooks before the LSP-driven tests run.
+      # On cache-hit runs, the first `lake setup-file` invocation inside a
+      # test re-fires `lake exe cache get`, which streams ~8232 lines of
+      # progress onto stdout. The LSP bridge expects a single JSON line and
+      # reports the preamble as an "Invalid output" diagnostic, masking the
+      # real error diagnostics the tests assert on. Running `lake setup-file`
+      # once here absorbs that output into the workflow log.
+      - name: Pre-warm lake setup-file (drain post-update hooks)
+        run: cd "$LEAN_PROJECT" && lake setup-file Proof.lean > /dev/null
+
       # ── Run integration tests with coverage ───────────────────────────
       - name: cargo llvm-cov (Lean LSP integration tests)
         run: cargo llvm-cov --test lean_lsp_integration --lcov --output-path lcov-integration.info
