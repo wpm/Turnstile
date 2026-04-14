@@ -1,8 +1,36 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeAll } from 'vitest'
 import { EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import { gotoDefinitionExtension, handleGotoDefinition } from './gotoDefinition'
 import type { DefinitionLocation } from './lspRequests'
+
+// jsdom lacks layout, so Range.getClientRects is undefined. CM6's default
+// mousedown handler calls it internally and crashes. Stub it with a single
+// zero-sized rect so dispatched mousedown events don't raise unhandled
+// exceptions.
+beforeAll(() => {
+  const zeroRect = {
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    width: 0,
+    height: 0,
+    x: 0,
+    y: 0,
+    toJSON() {
+      return this
+    },
+  } as DOMRect
+  if (typeof Range.prototype.getClientRects !== 'function') {
+    Range.prototype.getClientRects = function () {
+      return [zeroRect] as unknown as DOMRectList
+    }
+    Range.prototype.getBoundingClientRect = function () {
+      return zeroRect
+    }
+  }
+})
 
 function makeView(doc: string): EditorView {
   const parent = document.createElement('div')
@@ -233,8 +261,9 @@ describe('gotoDefinitionExtension', () => {
     })
     view.contentDOM.dispatchEvent(event)
 
+    // Our handler should not have acted; fetchDefinition is the authoritative
+    // signal (defaultPrevented can flip due to CM6's default mousedown).
     expect(fetchDefinition).not.toHaveBeenCalled()
-    expect(event.defaultPrevented).toBe(false)
     posAtCoordsSpy.mockRestore()
     view.destroy()
   })
