@@ -1,0 +1,70 @@
+/**
+ * CodeMirror hover-tooltip extension showing Lean type info at the cursor.
+ *
+ * Delegates to the Rust `lsp_hover` Tauri command (which calls
+ * `textDocument/hover`). The returned markdown is stripped to the type
+ * signature (no docstrings) in the backend; we render it as text here.
+ */
+
+import { hoverTooltip, type Tooltip, type EditorView } from '@codemirror/view'
+import type { Extension } from '@codemirror/state'
+import { lspHover, type HoverInfo } from './lspRequests'
+
+/** Hover delay in ms — matches VS Code. Exported for tests. */
+export const HOVER_TYPE_DELAY_MS = 300
+
+/**
+ * Inner hover-source function used by the `hoverTooltip` extension.
+ *
+ * Split out for direct unit testing without booting a full EditorView.
+ *
+ * @param view CodeMirror view — only `state.doc.lineAt` is used.
+ * @param pos Document offset the user is hovering over.
+ * @param fetchHover Override used by tests. Defaults to `lspHover`.
+ */
+export async function hoverTypeSource(
+  view: EditorView,
+  pos: number,
+  fetchHover: (line: number, character: number) => Promise<HoverInfo | null> = lspHover,
+): Promise<Tooltip | null> {
+  const line = view.state.doc.lineAt(pos)
+  const col = pos - line.from
+  const lspLine = line.number - 1
+
+  let hover: HoverInfo | null
+  try {
+    hover = await fetchHover(lspLine, col)
+  } catch {
+    return null
+  }
+  if (!hover || hover.contents.trim() === '') return null
+
+  const contents = hover.contents
+
+  return {
+    pos,
+    above: true,
+    create() {
+      const dom = document.createElement('div')
+      dom.className = 'lean-hover-popup'
+      // Type signatures are short — render as preformatted text so Lean
+      // spacing is preserved and no HTML interpretation happens.
+      const pre = document.createElement('pre')
+      pre.className = 'lean-hover-popup-content'
+      pre.textContent = contents
+      dom.appendChild(pre)
+      return { dom }
+    },
+  }
+}
+
+/**
+ * Build the hover-type CodeMirror extension.
+ *
+ * @param fetchHover Override used by tests. Defaults to `lspHover`.
+ */
+export function hoverTypeExtension(fetchHover: typeof lspHover = lspHover): Extension {
+  return hoverTooltip((view, pos) => hoverTypeSource(view, pos, fetchHover), {
+    hoverTime: HOVER_TYPE_DELAY_MS,
+  })
+}

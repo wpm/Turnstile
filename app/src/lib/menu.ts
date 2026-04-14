@@ -5,6 +5,7 @@ export const MENU_IDS = {
   SAVE_SESSION: 'save_session',
   SAVE_SESSION_AS: 'save_session_as',
   SETTINGS: 'settings',
+  TOGGLE_WORD_WRAP: 'toggle_word_wrap',
 } as const
 
 export interface MenuActions {
@@ -13,6 +14,7 @@ export interface MenuActions {
   saveSession: () => void
   saveSessionAs: () => void
   openSettings: () => void
+  toggleWordWrap: () => void
 }
 
 /** Dispatch a menu-event ID to the appropriate action.  Returns true if handled. */
@@ -32,6 +34,9 @@ export function handleMenuEvent(id: string, actions: MenuActions): boolean {
       return true
     case MENU_IDS.SETTINGS:
       actions.openSettings()
+      return true
+    case MENU_IDS.TOGGLE_WORD_WRAP:
+      actions.toggleWordWrap()
       return true
     default:
       return false
