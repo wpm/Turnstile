@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte'
+  import { onMount, untrack } from 'svelte'
   import { invoke, listen } from './lib/tauri'
   import type {
     SetupProgressPayload,
@@ -104,6 +104,20 @@
   let autoSavePath = $state<string | null>(null)
   let recoveryPromptEl = $state<HTMLElement | null>(null)
   let recoveryTriggerEl: Element | null = null
+
+  // When the Editor remounts (e.g. after toggling prose → formal), restore the
+  // current content into the fresh CodeMirror instance.  We read editorContent
+  // inside untrack() so this effect only re-runs when editorRef changes — not
+  // on every keystroke.
+  $effect(() => {
+    if (editorRef) {
+      const content = untrack(() => editorContent)
+      if (content) {
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Svelte 5 bind:this doesn't expose exported functions in the component type
+        editorRef.setContent(content)
+      }
+    }
+  })
 
   // Focus management for the recovery prompt: move focus in on open, return on close.
   $effect(() => {
