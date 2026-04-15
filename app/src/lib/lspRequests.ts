@@ -58,6 +58,20 @@ export async function lspHover(line: number, character: number): Promise<HoverIn
   return invoke<HoverInfo | null>('lsp_hover', { line, character })
 }
 
+/**
+ * Request hover info for an identifier in the Goal State panel. The backend
+ * maps `panelFlatLine` (0-indexed flat row across concatenated code blocks)
+ * back to the Formal Proof line that produced it, extracts the word at
+ * `character` (a UTF-16 column within the panel line), locates it on the
+ * source line, and queries the LSP there.
+ */
+export async function lspHoverGoalPanel(
+  panelFlatLine: number,
+  character: number,
+): Promise<HoverInfo | null> {
+  return invoke<HoverInfo | null>('lsp_hover_goal_panel', { panelFlatLine, character })
+}
+
 /** Request `textDocument/definition` at the given 0-indexed position. */
 export async function lspDefinition(
   line: number,

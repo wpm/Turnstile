@@ -7,6 +7,7 @@
 //! [`crate::session::SessionState`], and [`translator`] generates prose from
 //! formal.
 
+pub mod goal_panel_hover;
 pub mod goal_panel_map;
 pub mod translator;
 

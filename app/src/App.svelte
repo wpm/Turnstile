@@ -603,6 +603,7 @@
                 <GoalPanel
                   goalText={lspState.goalText}
                   goalLineToProofLine={lspState.goalLineToProofLine}
+                  theme={resolved}
                   onHighlightLine={handleHighlightLine}
                 />
               {:else}

@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import {
   lspHover,
+  lspHoverGoalPanel,
   lspDefinition,
   lspCodeActions,
   lspResolveCodeAction,
@@ -81,5 +82,20 @@ describe('lspRequests', () => {
     tauri.core.invoke.mockResolvedValue([])
     await lspDocumentSymbols()
     expect(tauri.core.invoke).toHaveBeenCalledWith('lsp_document_symbols', undefined)
+  })
+
+  it('lspHoverGoalPanel forwards the flat line and character', async () => {
+    tauri.core.invoke.mockResolvedValue({ contents: 'Nat' })
+    const result = await lspHoverGoalPanel(3, 7)
+    expect(tauri.core.invoke).toHaveBeenCalledWith('lsp_hover_goal_panel', {
+      panelFlatLine: 3,
+      character: 7,
+    })
+    expect(result).toEqual({ contents: 'Nat' })
+  })
+
+  it('lspHoverGoalPanel propagates null responses', async () => {
+    tauri.core.invoke.mockResolvedValue(null)
+    expect(await lspHoverGoalPanel(0, 0)).toBeNull()
   })
 })
