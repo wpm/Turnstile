@@ -179,12 +179,12 @@ test.describe('Theme toggle', () => {
     await mountApp()
     const editor = page.locator('.cm-editor')
 
-    // Dark theme background (Catppuccin Mocha base: #1e1e2e)
-    await expect(editor).toHaveCSS('background-color', 'rgb(30, 30, 46)')
+    // Dark theme background (GitHub Dark canvas: #0d1117)
+    await expect(editor).toHaveCSS('background-color', 'rgb(13, 17, 23)')
 
     // Switch to light
     await themeToggleBtn(page).click()
-    await expect(editor).toHaveCSS('background-color', 'rgb(239, 241, 245)') // Latte base: #eff1f5
+    await expect(editor).toHaveCSS('background-color', 'rgb(255, 255, 255)') // GitHub Light canvas: #ffffff
   })
 })
 
@@ -596,8 +596,8 @@ test.describe('Diagnostic underlines', () => {
     await expect(underlined).toBeVisible()
     const decoration = await underlined.evaluate((el) => getComputedStyle(el).textDecoration)
     expect(decoration).toContain('wavy')
-    // Catppuccin Mocha red #f38ba8 → rgb(243, 139, 168)
-    expect(decoration).toContain('rgb(243, 139, 168)')
+    // GitHub Dark danger red #f85149 → rgb(248, 81, 73)
+    expect(decoration).toContain('rgb(248, 81, 73)')
   })
 
   test('multiple diagnostics produce multiple underlined spans', async ({
