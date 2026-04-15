@@ -55,11 +55,12 @@ import {
 import { cmLineToLsp, cmPosToLsp } from './positionConvert'
 import { fileProgressExtension, setFileProgressEffect } from './fileProgress'
 import {
+  buildDiagnosticRanges,
+  buildSemanticTokenRanges,
+  computeGoalLines,
   diagRange,
   diagnosticGutterClass,
   diagnosticPopupClass,
-  diagnosticSeverityClass,
-  semanticTokenRange,
 } from './editorHelpers'
 import type { ResolvedTheme } from './theme'
 import { findAbbrevReplacement } from './leanAbbrev'
@@ -131,14 +132,9 @@ const semanticTokensField = StateField.define<DecorationSet>({
     decorations = decorations.map(tr.changes)
     for (const effect of tr.effects) {
       if (effect.is(setSemanticTokensEffect)) {
-        const ranges: Range<Decoration>[] = []
-        for (const token of effect.value) {
-          const r = semanticTokenRange(token, tr.state.doc)
-          if (!r) continue
-          ranges.push(Decoration.mark({ class: r.cssClass }).range(r.from, r.to))
-        }
-        // RangeSet requires ranges sorted by `from`
-        ranges.sort((a, b) => a.from - b.from)
+        const ranges = buildSemanticTokenRanges(effect.value, tr.state.doc).map((r) =>
+          Decoration.mark({ class: r.cssClass }).range(r.from, r.to),
+        )
         decorations = RangeSet.of(ranges)
       }
     }
@@ -178,15 +174,9 @@ const diagnosticUnderlineField = StateField.define<DecorationSet>({
     decorations = decorations.map(tr.changes)
     for (const effect of tr.effects) {
       if (effect.is(setDiagnosticsEffect)) {
-        const ranges: Range<Decoration>[] = []
-        for (const diag of effect.value) {
-          const r = diagRange(diag, tr.state.doc)
-          if (!r) continue
-          ranges.push(
-            Decoration.mark({ class: diagnosticSeverityClass(diag.severity) }).range(r.from, r.to),
-          )
-        }
-        ranges.sort((a, b) => a.from - b.from)
+        const ranges = buildDiagnosticRanges(effect.value, tr.state.doc).map((r) =>
+          Decoration.mark({ class: r.cssClass }).range(r.from, r.to),
+        )
         decorations = RangeSet.of(ranges)
       }
     }
@@ -278,26 +268,13 @@ const goalLineField = StateField.define<DecorationSet>({
   update(decorations, tr) {
     for (const effect of tr.effects) {
       if (effect.is(setGoalLineEffect)) {
-        const lines = effect.value
+        const lines = computeGoalLines(tr.state.doc, effect.value)
         if (lines.length === 0) return Decoration.none
-
-        const lineDecos: Range<Decoration>[] = []
         const doc = tr.state.doc
-
-        for (const lineNum of lines) {
-          if (lineNum >= 1 && lineNum <= doc.lines) {
-            lineDecos.push(goalLineDeco.range(doc.line(lineNum).from))
-          }
-        }
-
-        lineDecos.sort((a, b) => a.from - b.from)
-        let prevFrom = -1
-        const unique = lineDecos.filter((d) => {
-          const dominated = d.from === prevFrom
-          prevFrom = d.from
-          return !dominated
-        })
-        return RangeSet.of(unique)
+        const lineDecos: Range<Decoration>[] = lines.map((n) =>
+          goalLineDeco.range(doc.line(n).from),
+        )
+        return RangeSet.of(lineDecos)
       }
     }
     return decorations.map(tr.changes)
