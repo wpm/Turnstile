@@ -111,7 +111,7 @@ test.describe('Proof View Toggle', () => {
       },
       proof_lean: 'theorem foo : True := by trivial',
       prose: { text: 'A prose proof.', tactic_state_hash: null },
-      transcript: [],
+      turns: [],
       summary: null,
     })
 

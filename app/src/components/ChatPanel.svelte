@@ -63,7 +63,7 @@
   // ---------------------------------------------------------------------------
 
   onMount(() => {
-    void listen<ChatTurn>('chat-message-complete', (turn) => {
+    void listen<ChatTurn>('proof-assistant-complete', (turn) => {
       streaming = false
       streamingContent = ''
       messages = [...messages, { ...turn, id: nextId++ }]
@@ -71,13 +71,13 @@
       unlistenComplete = fn
     })
 
-    void listen<string>('chat-stream-delta', (text) => {
+    void listen<string>('proof-assistant-delta', (text) => {
       streamingContent += text
     }).then((fn) => {
       unlistenDelta = fn
     })
 
-    void listen<unknown>('chat-stream-done', () => {
+    void listen<unknown>('proof-assistant-stream-done', () => {
       streaming = false
       streamingContent = ''
     }).then((fn) => {
@@ -85,7 +85,7 @@
     })
 
     void listen<SessionState>('session-loaded', (session) => {
-      messages = session.transcript.map((t) => ({
+      messages = session.turns.map((t) => ({
         role: t.role,
         content: t.content,
         timestamp: t.timestamp,
@@ -165,7 +165,7 @@
     streamingContent = ''
 
     try {
-      await invoke<null>('send_chat_message', { content })
+      await invoke<null>('send_message', { content })
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       showError(`Failed to send message: ${msg}`)

@@ -46,7 +46,7 @@ export interface TauriMockOptions {
   semanticTokens?: SemanticTokenFixture[]
   /** Items returned by get_completions (default []) */
   completionItems?: CompletionItemFixture[]
-  /** When true, send_chat_message does NOT auto-fire chat-message-complete (default false) */
+  /** When true, send_message does NOT auto-fire proof-assistant-complete (default false) */
   noAutoReply?: boolean
 }
 
@@ -146,7 +146,7 @@ export async function injectTauriMock(page: Page, opts: TauriMockOptions = {}): 
                       },
                       proof_lean: 'restored autosave content',
                       prose: { text: '', tactic_state_hash: null },
-                      transcript: [],
+                      turns: [],
                       summary: null,
                     },
                   })
@@ -202,17 +202,18 @@ export async function injectTauriMock(page: Page, opts: TauriMockOptions = {}): 
         },
       }
 
-      // Patch invoke to handle chat commands and auto-fire chat-message-complete.
+      // Patch invoke to handle proof-assistant commands and auto-fire
+      // proof-assistant-complete.
       type TauriInvoke = (cmd: string, args?: unknown) => Promise<unknown>
       const tauri = window.__TAURI__ as { core: { invoke: TauriInvoke } }
       const originalInvoke: TauriInvoke = tauri.core.invoke.bind(tauri.core)
       tauri.core.invoke = function (cmd: string, args?: unknown) {
-        if (cmd === 'send_chat_message') {
+        if (cmd === 'send_message') {
           if (!noAutoReply) {
             const content = (args as { content?: string } | undefined)?.content ?? ''
-            // Fire chat-message-complete on the next tick (echo mock)
+            // Fire proof-assistant-complete on the next tick (echo mock)
             void Promise.resolve().then(() => {
-              for (const cb of listeners.get('chat-message-complete') ?? []) {
+              for (const cb of listeners.get('proof-assistant-complete') ?? []) {
                 cb({
                   payload: {
                     role: 'assistant',
@@ -225,10 +226,10 @@ export async function injectTauriMock(page: Page, opts: TauriMockOptions = {}): 
           }
           return Promise.resolve(null)
         }
-        if (cmd === 'get_chat_state') {
-          return Promise.resolve({ summary: null, transcript: [] })
+        if (cmd === 'get_transcript') {
+          return Promise.resolve({ summary: null, turns: [] })
         }
-        if (cmd === 'load_chat_state') {
+        if (cmd === 'load_transcript') {
           return Promise.resolve(null)
         }
         return originalInvoke(cmd, args)

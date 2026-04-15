@@ -12,12 +12,12 @@
 //! debounces 150 ms, then issues `$/lean/plainGoal` at end-of-doc and at every
 //! line-end → `goal-state-updated` Tauri event → frontend goal panel.
 
-pub mod chat;
+pub mod llm;
 pub mod lsp;
 pub mod menu;
-pub mod models;
+pub mod proof;
+pub mod proof_assistant;
 pub mod session;
-mod session_commands;
 pub mod settings;
 mod setup;
 
@@ -41,14 +41,12 @@ pub struct AppState {
     doc_version: AtomicI64,
     /// Whether setup is currently running (prevents double-start); shared with the setup task
     setup_running: Arc<AtomicBool>,
-    /// Chat conversation state, shared with Tauri command handlers.
-    pub chat_state: Arc<tokio::sync::Mutex<chat::ChatState>>,
+    /// The proof currently being developed — formal + prose + goal state.
+    pub proof: Arc<tokio::sync::Mutex<proof::Proof>>,
+    /// Proof-assistant conversation state.
+    pub transcript: Arc<tokio::sync::Mutex<proof_assistant::Transcript>>,
     /// LLM backend (mock or real Anthropic).
-    pub chat_backend: Arc<dyn chat::ChatBackend>,
-    /// Current Lean source text — synced on every `update_document` call.
-    pub current_source: Arc<tokio::sync::Mutex<String>>,
-    /// Current prose proof draft — read/written by LLM tool calls.
-    pub current_prose: Arc<tokio::sync::Mutex<String>>,
+    pub llm: Arc<dyn llm::Llm>,
     /// Persisted user settings.
     pub settings: Arc<tokio::sync::Mutex<settings::Settings>>,
     /// Path of the currently open `.turn` file (None if unsaved).
@@ -62,9 +60,6 @@ pub struct AppState {
     /// Monotonically increasing sequence number for prose generation requests.
     /// Used to discard stale results when the source changes mid-generation.
     pub prose_generation_seq: Arc<AtomicU64>,
-    /// Hash of the Lean source that produced the current prose. Empty if no
-    /// prose has been generated yet.
-    pub prose_source_hash: Arc<Mutex<String>>,
     /// Monotonically increasing sequence number for goal-state refresh
     /// requests. Bumped on every `update_document` and on every empty
     /// `$/lean/fileProgress` event, so that a stale background refresh task
@@ -73,7 +68,7 @@ pub struct AppState {
 }
 
 impl AppState {
-    fn doc_uri(&self) -> String {
+    pub(crate) fn doc_uri(&self) -> String {
         lsp::path_to_file_uri(&self.project_path.join("Proof.lean"))
     }
 
@@ -202,8 +197,9 @@ async fn update_document(app: AppHandle, content: String) -> Result<(), String> 
     let doc_uri = state.doc_uri();
     let version = state.doc_version.fetch_add(1, Ordering::SeqCst);
 
-    // Keep current_source in sync so the LLM can read it via read_lean_source.
-    *state.current_source.lock().await = content.clone();
+    // Keep the formal proof source in sync so the LLM can read it via
+    // read_lean_source.
+    state.proof.lock().await.formal.source = content.clone();
 
     // Invalidate any in-flight goal-state refresh task spawned before this
     // edit. The subsequent empty-`fileProgress` event will spawn a fresh one.
@@ -278,7 +274,7 @@ enum ShouldGenerate {
 ///
 /// Performs (in order): staleness check, diagnostics check, source-hash check,
 /// and empty-source check. All four are short synchronous operations except
-/// the source clone which needs the async mutex on `current_source`.
+/// the proof clone which needs the async mutex on `proof`.
 async fn should_generate_prose(state: &AppState, seq: u64) -> ShouldGenerate {
     // A newer edit has superseded us.
     if state.prose_generation_seq.load(Ordering::SeqCst) != seq {
@@ -294,11 +290,14 @@ async fn should_generate_prose(state: &AppState, seq: u64) -> ShouldGenerate {
         return ShouldGenerate::Abort;
     }
 
-    let source = state.current_source.lock().await.clone();
-    let hash = chat::compute_source_hash(&source);
+    let (source, last_hash) = {
+        let guard = state.proof.lock().await;
+        (guard.formal.source.clone(), guard.prose.source_hash.clone())
+    };
+    let hash = proof::compute_source_hash(&source);
 
     // Source hasn't changed since the last prose generation (e.g. type then undo).
-    if *state.prose_source_hash.lock().unwrap() == hash {
+    if last_hash == hash {
         return ShouldGenerate::Abort;
     }
 
@@ -308,18 +307,6 @@ async fn should_generate_prose(state: &AppState, seq: u64) -> ShouldGenerate {
     }
 
     ShouldGenerate::Proceed { source, hash }
-}
-
-/// Run the LLM translator on `source` and return the generated prose.
-async fn perform_prose_generation(
-    backend: &dyn chat::ChatBackend,
-    source: &str,
-    app: &AppHandle,
-) -> Result<String, chat::ChatError> {
-    let turn = backend
-        .send_raw_message(chat::TRANSLATOR_PROMPT, source, app)
-        .await?;
-    Ok(turn.content)
 }
 
 /// Spawn a background task that waits for the editing debounce period, then
@@ -340,8 +327,8 @@ fn spawn_prose_regeneration(app: AppHandle, seq: u64) {
             // arriving during the LLM call re-sets it.
             state.prose_dirty.store(false, Ordering::SeqCst);
 
-            let backend = state.chat_backend.clone();
-            let result = perform_prose_generation(backend.as_ref(), &source, &app).await;
+            let backend = state.llm.clone();
+            let result = proof::translator::run_translator(backend.as_ref(), &source, &app).await;
 
             // Discard the result if a newer edit superseded us during the
             // (potentially long) LLM call.
@@ -349,20 +336,18 @@ fn spawn_prose_regeneration(app: AppHandle, seq: u64) {
                 return;
             }
 
-            if let Ok(prose) = result {
-                *state.current_prose.lock().await = prose.clone();
-                *state.prose_source_hash.lock().unwrap() = hash;
-
-                #[derive(serde::Serialize)]
-                struct ProsePayload {
-                    text: String,
-                    hash: Option<String>,
+            if let Ok(prose_text) = result {
+                {
+                    let mut proof_guard = state.proof.lock().await;
+                    proof_guard.prose.text = prose_text.clone();
+                    proof_guard.prose.source_hash = hash.clone();
                 }
+
                 app.emit(
-                    "prose-updated",
-                    &ProsePayload {
-                        text: prose,
-                        hash: Some(chat::compute_source_hash(&source)),
+                    proof::PROSE_UPDATED_EVENT,
+                    &proof::ProsePayload {
+                        text: prose_text,
+                        hash: Some(hash),
                     },
                 )
                 .ok();
@@ -385,7 +370,7 @@ fn spawn_prose_regeneration(app: AppHandle, seq: u64) {
 /// the entire Formal Proof. Independent of cursor position.
 #[allow(clippy::significant_drop_tightening)] // lock must be held while awaiting on client
 async fn fetch_full_proof_goal_state(state: &AppState) -> Result<String, String> {
-    let source = state.current_source.lock().await.clone();
+    let source = state.proof.lock().await.formal.source.clone();
     let (line, col) = end_of_document_position(&source);
 
     let lock = state.lsp_client.lock().await;
@@ -424,7 +409,7 @@ async fn fetch_full_proof_goal_state(state: &AppState) -> Result<String, String>
 /// reaches the UI on long proofs.
 #[allow(clippy::significant_drop_tightening)]
 async fn fetch_per_line_goal_states(state: &AppState, seq: u64) -> Result<Vec<String>, String> {
-    let source = state.current_source.lock().await.clone();
+    let source = state.proof.lock().await.formal.source.clone();
 
     let lock = state.lsp_client.lock().await;
     let Some(client) = lock.as_ref() else {
@@ -789,13 +774,13 @@ pub fn run() {
             let initial_settings = settings::load_settings(&app_data_dir);
 
             #[cfg(feature = "mock-llm")]
-            let chat_backend: Arc<dyn chat::ChatBackend> = Arc::new(chat::MockBackend::from_env());
+            let llm_backend: Arc<dyn llm::Llm> = Arc::new(llm::MockBackend::from_env());
 
             #[cfg(not(feature = "mock-llm"))]
-            let chat_backend: Arc<dyn chat::ChatBackend> = {
-                match chat::AnthropicBackend::from_env() {
+            let llm_backend: Arc<dyn llm::Llm> = {
+                match llm::AnthropicBackend::from_env() {
                     Ok(b) => Arc::new(b),
-                    Err(_) => Arc::new(chat::MockBackend::echo()),
+                    Err(_) => Arc::new(llm::MockBackend::echo()),
                 }
             };
 
@@ -804,17 +789,17 @@ pub fn run() {
                 project_path,
                 doc_version: AtomicI64::new(2),
                 setup_running: Arc::new(AtomicBool::new(false)),
-                chat_state: Arc::new(tokio::sync::Mutex::new(chat::ChatState::default())),
-                chat_backend,
-                current_source: Arc::new(tokio::sync::Mutex::new(String::new())),
-                current_prose: Arc::new(tokio::sync::Mutex::new(String::new())),
+                proof: Arc::new(tokio::sync::Mutex::new(proof::Proof::default())),
+                transcript: Arc::new(tokio::sync::Mutex::new(
+                    proof_assistant::Transcript::default(),
+                )),
+                llm: llm_backend,
                 settings: Arc::new(tokio::sync::Mutex::new(initial_settings)),
                 current_session_path: Arc::new(tokio::sync::Mutex::new(None)),
                 session_dirty: Arc::new(AtomicBool::new(false)),
                 current_diagnostics: Arc::new(Mutex::new(Vec::new())),
                 prose_dirty: Arc::new(AtomicBool::new(false)),
                 prose_generation_seq: Arc::new(AtomicU64::new(0)),
-                prose_source_hash: Arc::new(Mutex::new(String::new())),
                 goal_state_seq: Arc::new(AtomicU64::new(0)),
             });
 
@@ -844,25 +829,25 @@ pub fn run() {
             lsp_code_actions,
             lsp_resolve_code_action,
             lsp_document_symbols,
-            chat::send_chat_message,
-            chat::get_chat_state,
-            chat::load_chat_state,
-            chat::generate_prose,
+            proof_assistant::send_message,
+            proof_assistant::get_transcript,
+            proof_assistant::load_transcript,
+            proof::translator::generate_prose,
             settings::get_settings,
             settings::save_settings,
-            settings::get_available_models,
-            settings::set_model,
-            session_commands::new_session,
-            session_commands::open_session,
-            session_commands::save_session,
-            session_commands::save_session_as,
-            session_commands::auto_save_session,
-            session_commands::check_auto_save,
-            session_commands::restore_auto_save,
-            session_commands::delete_auto_save,
-            session_commands::get_last_session,
-            session_commands::set_last_session,
-            session_commands::set_window_title,
+            llm::get_available_models,
+            llm::set_model,
+            session::new_session,
+            session::open_session,
+            session::save_session,
+            session::save_session_as,
+            session::auto_save_session,
+            session::check_auto_save,
+            session::restore_auto_save,
+            session::delete_auto_save,
+            session::get_last_session,
+            session::set_last_session,
+            session::set_window_title,
             menu::set_menu_item_enabled,
         ])
         .run(tauri::generate_context!())
@@ -876,7 +861,8 @@ mod tests {
     use std::sync::Mutex;
 
     use super::{
-        chat, end_of_document_position, lsp, should_generate_prose, AppState, ShouldGenerate,
+        end_of_document_position, llm, lsp, proof, proof_assistant, should_generate_prose,
+        AppState, ShouldGenerate,
     };
     use std::sync::Arc;
 
@@ -905,7 +891,7 @@ mod tests {
     }
 
     /// Minimal `AppState` suitable for exercising `should_generate_prose`. The
-    /// LSP client, chat state, and session fields are not read by the
+    /// LSP client, transcript, and session fields are not read by the
     /// pre-flight checks.
     fn make_state() -> AppState {
         AppState {
@@ -913,17 +899,17 @@ mod tests {
             project_path: PathBuf::new(),
             doc_version: AtomicI64::new(1),
             setup_running: Arc::new(AtomicBool::new(false)),
-            chat_state: Arc::new(tokio::sync::Mutex::new(chat::ChatState::default())),
-            chat_backend: Arc::new(chat::MockBackend::echo()),
-            current_source: Arc::new(tokio::sync::Mutex::new(String::new())),
-            current_prose: Arc::new(tokio::sync::Mutex::new(String::new())),
+            proof: Arc::new(tokio::sync::Mutex::new(proof::Proof::default())),
+            transcript: Arc::new(tokio::sync::Mutex::new(
+                proof_assistant::Transcript::default(),
+            )),
+            llm: Arc::new(llm::MockBackend::echo()),
             settings: Arc::new(tokio::sync::Mutex::new(crate::settings::Settings::default())),
             current_session_path: Arc::new(tokio::sync::Mutex::new(None)),
             session_dirty: Arc::new(AtomicBool::new(false)),
             current_diagnostics: Arc::new(Mutex::new(Vec::new())),
             prose_dirty: Arc::new(AtomicBool::new(false)),
             prose_generation_seq: Arc::new(AtomicU64::new(0)),
-            prose_source_hash: Arc::new(Mutex::new(String::new())),
             goal_state_seq: Arc::new(AtomicU64::new(0)),
         }
     }
@@ -954,7 +940,7 @@ mod tests {
     async fn should_generate_aborts_when_seq_is_stale() {
         let state = make_state();
         state.prose_generation_seq.store(7, Ordering::SeqCst);
-        *state.current_source.lock().await = "theorem foo".to_string();
+        state.proof.lock().await.formal.source = "theorem foo".to_string();
 
         // We're task seq=5, but the latest edit bumped seq to 7.
         assert!(matches!(
@@ -967,7 +953,7 @@ mod tests {
     async fn should_generate_aborts_when_diagnostics_have_errors() {
         let state = make_state();
         state.prose_generation_seq.store(1, Ordering::SeqCst);
-        *state.current_source.lock().await = "theorem foo".to_string();
+        state.proof.lock().await.formal.source = "theorem foo".to_string();
         state
             .current_diagnostics
             .lock()
@@ -984,7 +970,7 @@ mod tests {
     async fn should_generate_proceeds_when_diagnostics_have_only_warnings() {
         let state = make_state();
         state.prose_generation_seq.store(1, Ordering::SeqCst);
-        *state.current_source.lock().await = "theorem foo".to_string();
+        state.proof.lock().await.formal.source = "theorem foo".to_string();
         state
             .current_diagnostics
             .lock()
@@ -1002,8 +988,11 @@ mod tests {
         let state = make_state();
         state.prose_generation_seq.store(1, Ordering::SeqCst);
         let source = "theorem foo : True := trivial".to_string();
-        *state.current_source.lock().await = source.clone();
-        *state.prose_source_hash.lock().unwrap() = chat::compute_source_hash(&source);
+        {
+            let mut guard = state.proof.lock().await;
+            guard.formal.source = source.clone();
+            guard.prose.source_hash = proof::compute_source_hash(&source);
+        }
 
         assert!(matches!(
             should_generate_prose(&state, 1).await,
@@ -1015,7 +1004,7 @@ mod tests {
     async fn should_generate_aborts_when_source_is_whitespace_only() {
         let state = make_state();
         state.prose_generation_seq.store(1, Ordering::SeqCst);
-        *state.current_source.lock().await = "   \n\t  ".to_string();
+        state.proof.lock().await.formal.source = "   \n\t  ".to_string();
 
         assert!(matches!(
             should_generate_prose(&state, 1).await,
@@ -1028,12 +1017,12 @@ mod tests {
         let state = make_state();
         state.prose_generation_seq.store(3, Ordering::SeqCst);
         let source = "theorem foo : True := trivial".to_string();
-        *state.current_source.lock().await = source.clone();
+        state.proof.lock().await.formal.source = source.clone();
 
         match should_generate_prose(&state, 3).await {
             ShouldGenerate::Proceed { source: s, hash } => {
                 assert_eq!(s, source);
-                assert_eq!(hash, chat::compute_source_hash(&source));
+                assert_eq!(hash, proof::compute_source_hash(&source));
             }
             ShouldGenerate::Abort => panic!("expected Proceed"),
         }

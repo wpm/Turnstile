@@ -56,7 +56,7 @@ export interface SessionState {
   meta: SessionMeta
   proof_lean: string
   prose: { text: string; tactic_state_hash: string | null }
-  transcript: ChatTurn[]
+  turns: ChatTurn[]
   summary: string | null
 }
 

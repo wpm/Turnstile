@@ -9,8 +9,6 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 use tauri::Manager;
 
-use crate::models;
-
 fn default_theme() -> String {
     "auto".to_string()
 }
@@ -107,33 +105,6 @@ pub async fn save_settings(app: tauri::AppHandle, settings: Settings) -> Result<
     Ok(())
 }
 
-/// Return the list of available models from `models.rs`.
-#[tauri::command]
-pub fn get_available_models() -> Vec<models::ModelInfo> {
-    models::MODELS.to_vec()
-}
-
-/// Update the selected model in settings and persist to disk.
-#[tauri::command]
-pub async fn set_model(app: tauri::AppHandle, model_id: String) -> Result<(), String> {
-    if !models::is_valid_model_id(&model_id) {
-        return Err(format!("Unknown model ID: {model_id}"));
-    }
-
-    let app_data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("Failed to resolve app data directory: {e}"))?;
-
-    let state = app.state::<crate::AppState>();
-    let mut lock = state.settings.lock().await;
-    lock.model = Some(model_id);
-    let updated = lock.clone();
-    drop(lock);
-
-    save_settings_to_disk(&updated, &app_data_dir)
-}
-
 // ── Tests ─────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -152,7 +123,6 @@ mod tests {
     #[test]
     fn graceful_fallback_on_missing_file() {
         let dir = tempfile::tempdir().unwrap();
-        // No settings.json in the temp dir — should return defaults.
         let s = load_settings(dir.path());
         assert_eq!(s, Settings::default());
     }
@@ -208,7 +178,6 @@ mod tests {
     fn load_returns_defaults_for_empty_json_object() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("settings.json"), b"{}").unwrap();
-        // serde's default field values kick in for missing keys.
         let s = load_settings(dir.path());
         assert_eq!(s, Settings::default());
     }
@@ -245,7 +214,6 @@ mod tests {
     #[test]
     fn theme_falls_back_on_missing_key() {
         let dir = tempfile::tempdir().unwrap();
-        // JSON without a "theme" key — serde field default kicks in.
         std::fs::write(
             dir.path().join("settings.json"),
             br#"{"editor_font_size": 14}"#,
@@ -265,9 +233,9 @@ mod tests {
         .unwrap();
         let s = load_settings(dir.path());
         assert_eq!(s.editor_font_size, 20);
-        assert_eq!(s.prose_font_size, 13); // default
-        assert_eq!(s.chat_font_size, 13); // default
-        assert_eq!(s.model, None); // default
+        assert_eq!(s.prose_font_size, 13);
+        assert_eq!(s.chat_font_size, 13);
+        assert_eq!(s.model, None);
     }
 
     #[test]

@@ -110,13 +110,16 @@ test.describe('Message rendering', () => {
     await expect(page.locator('.chat-message-user')).toBeVisible()
   })
 
-  test('assistant reply appears after chat-message-complete event', async ({ page, mountApp }) => {
+  test('assistant reply appears after proof-assistant-complete event', async ({
+    page,
+    mountApp,
+  }) => {
     await mountApp()
     await chatInput(page).click()
     await page.keyboard.type('hello')
     await page.keyboard.press('Enter')
 
-    // The fixture mock fires chat-message-complete automatically (see fixtures.ts)
+    // The fixture mock fires proof-assistant-complete automatically (see fixtures.ts)
     await expect(page.locator('.chat-message-assistant')).toBeVisible({ timeout: 3000 })
     await expect(chatHistory(page)).toContainText('[echo] hello')
   })
@@ -128,7 +131,7 @@ test.describe('Message rendering', () => {
   }) => {
     await mountApp()
     // Simulate an assistant message containing Lean code in backticks
-    await emitEvent('chat-message-complete', {
+    await emitEvent('proof-assistant-complete', {
       role: 'assistant',
       content: 'Try `def foo := 42` in your file.',
       timestamp: Date.now(),
@@ -144,7 +147,7 @@ test.describe('Message rendering', () => {
     emitEvent,
   }) => {
     await mountApp()
-    await emitEvent('chat-message-complete', {
+    await emitEvent('proof-assistant-complete', {
       role: 'assistant',
       content: 'The formula is $x^2 + y^2 = r^2$.',
       timestamp: Date.now(),
@@ -168,7 +171,7 @@ test.describe('Auto-scroll', () => {
     await mountApp()
     // Add several messages to push content below the fold
     for (let i = 0; i < 5; i++) {
-      await emitEvent('chat-message-complete', {
+      await emitEvent('proof-assistant-complete', {
         role: 'assistant',
         content: `Message ${String(i)}: ${'A long message that takes up space. '.repeat(10)}`,
         timestamp: Date.now() + i,
@@ -193,7 +196,7 @@ test.describe('Auto-scroll', () => {
 
 test.describe('Streaming and thinking indicator', () => {
   test('thinking indicator shows while waiting for assistant reply', async ({ page, mountApp }) => {
-    // Mount with a mock that does NOT auto-fire chat-message-complete
+    // Mount with a mock that does NOT auto-fire proof-assistant-complete
     await mountApp({ noAutoReply: true })
     await chatInput(page).click()
     await page.keyboard.type('hello')
@@ -203,7 +206,7 @@ test.describe('Streaming and thinking indicator', () => {
     await expect(page.locator('.chat-thinking-indicator')).toBeVisible({ timeout: 2000 })
   })
 
-  test('thinking indicator disappears after chat-message-complete', async ({
+  test('thinking indicator disappears after proof-assistant-complete', async ({
     page,
     mountApp,
     emitEvent,
@@ -216,8 +219,8 @@ test.describe('Streaming and thinking indicator', () => {
     await expect(page.locator('.chat-thinking-indicator')).toBeVisible({ timeout: 2000 })
 
     // Simulate assistant reply completing
-    await emitEvent('chat-stream-done', null)
-    await emitEvent('chat-message-complete', {
+    await emitEvent('proof-assistant-stream-done', null)
+    await emitEvent('proof-assistant-complete', {
       role: 'assistant',
       content: '[echo] hello',
       timestamp: Date.now(),
@@ -237,8 +240,8 @@ test.describe('Streaming and thinking indicator', () => {
     await page.keyboard.press('Enter')
 
     // Send streaming deltas
-    await emitEvent('chat-stream-delta', 'Hello ')
-    await emitEvent('chat-stream-delta', 'world')
+    await emitEvent('proof-assistant-delta', 'Hello ')
+    await emitEvent('proof-assistant-delta', 'world')
 
     // The streaming bubble should contain the accumulated text
     const streamingBubble = page.locator('.chat-message-streaming')
@@ -246,8 +249,8 @@ test.describe('Streaming and thinking indicator', () => {
     await expect(streamingBubble).toContainText('Hello world')
 
     // Complete the message
-    await emitEvent('chat-stream-done', null)
-    await emitEvent('chat-message-complete', {
+    await emitEvent('proof-assistant-stream-done', null)
+    await emitEvent('proof-assistant-complete', {
       role: 'assistant',
       content: 'Hello world',
       timestamp: Date.now(),
@@ -271,8 +274,8 @@ test.describe('Streaming and thinking indicator', () => {
     await expect(sendBtn).toBeDisabled()
 
     // Complete the stream
-    await emitEvent('chat-stream-done', null)
-    await emitEvent('chat-message-complete', {
+    await emitEvent('proof-assistant-stream-done', null)
+    await emitEvent('proof-assistant-complete', {
       role: 'assistant',
       content: '[echo] hello',
       timestamp: Date.now(),
