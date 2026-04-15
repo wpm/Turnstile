@@ -18,7 +18,7 @@
 
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 
 use crate::llm::{Llm, LlmError};
 
@@ -168,22 +168,22 @@ pub fn default_tools() -> Vec<ToolDefinition> {
         },
         ToolDefinition {
             name: ToolName::ReadTacticState.as_str().into(),
-            description: "Read the tactic state at a given cursor position in the Lean source. \
-                          If position is omitted, returns tactic state for every tactic step."
+            description: "Read the tactic state at a specific cursor position in the Lean source. \
+                          Both line and column are required."
                 .into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "line": {
                         "type": "integer",
-                        "description": "0-indexed line in the Lean source (optional)"
+                        "description": "0-indexed line in the Lean source"
                     },
                     "column": {
                         "type": "integer",
-                        "description": "0-indexed column in the Lean source (optional)"
+                        "description": "0-indexed column in the Lean source"
                     }
                 },
-                "required": []
+                "required": ["line", "column"]
             }),
         },
         ToolDefinition {
@@ -238,8 +238,6 @@ pub async fn dispatch_tool(
     tool_input: &serde_json::Value,
     app: &AppHandle,
 ) -> String {
-    use tauri::{Emitter, Manager};
-
     let state = app.state::<crate::AppState>();
 
     let tool = match ToolName::try_from(tool_name) {
@@ -282,8 +280,7 @@ pub async fn dispatch_tool(
                             Err(e) => format!("Error reading tactic state: {e}"),
                         }
                     } else {
-                        "(no position provided — pass line and column to query goal state)"
-                            .to_string()
+                        "(missing line/column — both are required)".to_string()
                     }
                 }
                 None => "(LSP not connected)".to_string(),
@@ -368,20 +365,33 @@ pub async fn summarize_oldest(
     let cut = (n * 3 / 4).max(1);
     let to_summarize: Vec<Turn> = transcript.turns.drain(..cut).collect();
 
-    // Build a lightweight transcript containing only what we want summarized.
-    let summary_transcript = Transcript {
-        summary: transcript.summary.clone(),
-        turns: to_summarize,
-        max_tokens: transcript.max_tokens,
-    };
+    // Format the turns to be summarized as plain text for the completion prompt.
+    let mut history = String::new();
+    if let Some(prev_summary) = &transcript.summary {
+        history.push_str("[Previous summary]\n");
+        history.push_str(prev_summary);
+        history.push_str("\n\n");
+    }
+    for turn in &to_summarize {
+        let role = match turn.role {
+            Role::User => "User",
+            Role::Assistant => "Assistant",
+            Role::System => "System",
+        };
+        history.push_str(role);
+        history.push_str(": ");
+        history.push_str(&turn.content);
+        history.push('\n');
+    }
+    history.push_str(
+        "\nSummarize the conversation history above into a concise paragraph \
+                      for use as context in a future message. Preserve all technical \
+                      details (theorem names, tactic sequences, error messages).",
+    );
 
-    let prompt = "Summarize the conversation history above into a concise paragraph \
-                  for use as context in a future message. Preserve all technical \
-                  details (theorem names, tactic sequences, error messages).";
-
-    let summary_turn = llm
-        .send_with_tools(SYSTEM_PROMPT, &summary_transcript, &[], app, prompt)
-        .await?;
+    // Use `complete` (not `send_with_tools`) — summarization is a one-shot call
+    // with no tool use, and `complete` does not emit COMPLETE_EVENT to the UI.
+    let summary_turn = llm.complete(SYSTEM_PROMPT, &history, app).await?;
 
     transcript.summary = Some(summary_turn.content);
     Ok(())
@@ -416,8 +426,9 @@ pub async fn send_message(
     let transcript_arc = state.transcript.clone();
     let tools = default_tools();
 
-    // Append user turn and check if summarization is needed.
-    {
+    // Append user turn, optionally summarize, then snapshot — all under one lock
+    // acquisition so the snapshot is consistent with the appended turn.
+    let snapshot = {
         let mut transcript = transcript_arc.lock().await;
         transcript.turns.push(Turn {
             role: Role::User,
@@ -430,10 +441,9 @@ pub async fn send_message(
             let backend_ref: &dyn Llm = backend.as_ref();
             let _ = summarize_oldest(&mut transcript, backend_ref, &app).await;
         }
-    }
 
-    // Call LLM with a snapshot of the current transcript.
-    let snapshot = transcript_arc.lock().await.clone();
+        transcript.clone()
+    };
     let system_prompt = effective_system_prompt(&app).await;
     let assistant_turn = backend
         .send_with_tools(&system_prompt, &snapshot, &tools, &app, &content)

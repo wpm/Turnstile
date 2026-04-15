@@ -225,15 +225,6 @@ impl AnthropicBackend {
         })
     }
 
-    /// Returns a no-op backend that returns an error message when no API key is set.
-    pub fn no_op() -> Self {
-        Self {
-            api_key: String::new(),
-            model: "none".to_string(),
-            client: reqwest::Client::new(),
-        }
-    }
-
     /// Stream one request to the Anthropic API and collect the full response.
     ///
     /// Returns `(stop_reason, full_text, tool_use_blocks)` where `tool_use_blocks`
@@ -292,9 +283,12 @@ impl AnthropicBackend {
         let mut stop_reason = String::new();
         let mut buf = String::new();
 
-        // Tool use accumulation: block index → (id, name, accumulated input json string)
-        let mut tool_blocks: std::collections::HashMap<usize, (String, String, String)> =
-            std::collections::HashMap::new();
+        // Tool use accumulation: block index → (id, name, accumulated input json string).
+        // BTreeMap preserves insertion order by key, which matches the Anthropic stream's
+        // monotonically increasing `index` values.  The API requires tool_result blocks to
+        // appear in the same order as the corresponding tool_use blocks.
+        let mut tool_blocks: std::collections::BTreeMap<usize, (String, String, String)> =
+            std::collections::BTreeMap::new();
         let mut current_tool_idx: Option<usize> = None;
 
         while let Some(chunk) = stream.next().await {
