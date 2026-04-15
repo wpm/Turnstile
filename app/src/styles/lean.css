@@ -117,7 +117,7 @@
 }
 
 .cm-lean-processing {
-  animation: leanProcessingPulse 2.5s ease-in-out infinite alternate;
+  animation: leanProcessingPulse 0.8s ease-in-out infinite alternate;
 }
 
 @media (prefers-reduced-motion: reduce) {

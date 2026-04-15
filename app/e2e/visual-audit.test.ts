@@ -50,11 +50,11 @@ test.describe('Visual audit', () => {
     await page.getByLabel('Toggle theme').click()
     await expect(page.locator('html')).toHaveClass(/light/)
 
-    // --bg-primary: #eff1f5 (Catppuccin Latte base) in light theme
+    // --bg-primary: #ffffff (GitHub Light canvas) in light theme
     const editorBg = await page
       .locator('.cm-editor')
       .evaluate((el) => getComputedStyle(el).backgroundColor)
-    expect(editorBg).toBe('rgb(239, 241, 245)')
+    expect(editorBg).toBe('rgb(255, 255, 255)')
 
     await page.screenshot({ path: path.join(SCREENSHOT_DIR, '03-light-main.png'), fullPage: true })
   })

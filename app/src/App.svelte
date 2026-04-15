@@ -418,7 +418,7 @@
         <div
           role="alert"
           class="flex items-center justify-between px-4 py-2
-            bg-red-900/90 text-red-100 text-[13px] border-b border-red-700"
+            bg-error text-bg-primary text-[13px] border-b border-error/70"
         >
           <span>{message}</span>
           <button
@@ -426,8 +426,8 @@
               dismissError(i)
             }}
             aria-label="Dismiss error"
-            class="ml-4 shrink-0 px-2 py-0.5 rounded text-red-200 hover:text-white hover:bg-red-800
-              transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400"
+            class="ml-4 shrink-0 px-2 py-0.5 rounded text-bg-primary/90 hover:text-bg-primary hover:bg-error/80
+              transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-bg-primary/50"
           >
             Dismiss
           </button>
