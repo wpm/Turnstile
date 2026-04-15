@@ -81,11 +81,13 @@ export const activeLineField = StateField.define<DecorationSet>({
 // `dark` flag so scrollbars and its own highlight-style fallback pick up the
 // correct palette.
 
+// `.cm-scroller` intentionally omits `font-size` so app.css's
+// `--editor-font-size` knob takes effect (#127). Consumers that want a fixed
+// size (e.g. CodeWindow) pin it with their own component-scoped style.
 export const baseTheme = EditorView.baseTheme({
   '.cm-scroller': {
     overflow: 'auto',
     fontFamily: '"JetBrains Mono", ui-monospace, "SF Mono", "Cascadia Mono", monospace',
-    fontSize: '14px',
     lineHeight: '1.5',
   },
 })

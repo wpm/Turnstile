@@ -1,4 +1,4 @@
-import { type Page } from '@playwright/test'
+import { type Locator, type Page } from '@playwright/test'
 import { test, expect } from './fixtures'
 
 // ---------------------------------------------------------------------------
@@ -33,6 +33,11 @@ async function pickSelectFieldOption(page: Page, testId: string, labelText: stri
   await page.getByRole('option', { name: labelText }).click()
 }
 
+/** Assert every locator has the given computed `font-size`. */
+async function expectFontSize(locators: Locator[], size: string): Promise<void> {
+  for (const l of locators) await expect(l).toHaveCSS('font-size', size)
+}
+
 test.describe('Settings Apply — Appearance', () => {
   test('Editor font size applies to the editor DOM immediately on Apply', async ({
     page,
@@ -45,13 +50,21 @@ test.describe('Settings Apply — Appearance', () => {
     const editor = page.locator('.cm-editor').first()
     await expect(editor).toHaveCSS('font-size', '13px')
 
+    // The `.cm-scroller` inside is what actually renders the visible text.
+    // Asserting here guards against CodeMirror theme extensions pinning the
+    // size at a higher specificity than the inherited `.cm-editor` rule.
+    const scroller = page.locator('.cm-scroller').first()
+    await expect(scroller).toHaveCSS('font-size', '13px')
+
     // Change Editor font size to 20 and Apply.
     await pickSelectFieldOption(page, 'editor-font-size-select', '20px')
     await page.getByTestId('apply-appearance-button').click()
 
     // The editor font size visibly updates in the background while the
-    // Settings modal is still open.
+    // Settings modal is still open — both on the `.cm-editor` wrapper and
+    // on the `.cm-scroller` that renders text.
     await expect(editor).toHaveCSS('font-size', '20px')
+    await expect(scroller).toHaveCSS('font-size', '20px')
     await expect(page.getByTestId('settings-modal')).toBeVisible()
   })
 
@@ -60,17 +73,34 @@ test.describe('Settings Apply — Appearance', () => {
     mountApp,
   }) => {
     await mountApp()
+
+    // Pre-Apply: post a message so a user bubble exists in the DOM. The
+    // fixture's Tauri echo mock also produces an assistant bubble.
+    const chatInput = page.locator('.chat-input')
+    await chatInput.click()
+    await page.keyboard.type('scale me')
+    await page.keyboard.press('Enter')
+    const userBubble = page.locator('.chat-message-user').first()
+    const assistantBubble = page.locator('.chat-message-assistant').first()
+    await expect(userBubble).toBeVisible()
+    await expect(assistantBubble).toBeVisible()
+
     await openSettings(page)
 
-    // After mount, the chat panel should already reflect the default 13px
-    // from settings. If it does not, Settings is not plumbed to the panel.
+    // Regression guard for #127: asserting the `.chat-panel` wrapper alone
+    // is not enough. If a child pins its own `text-[Npx]`, the wrapper's
+    // inline `font-size` updates but the user sees no change — so assert
+    // on the elements that actually render conversational text too.
     const chatPanel = page.locator('.chat-panel')
+    const scalable = [chatInput, userBubble, assistantBubble]
     await expect(chatPanel).toHaveCSS('font-size', '13px')
+    await expectFontSize(scalable, '13px')
 
     await pickSelectFieldOption(page, 'chat-font-size-select', '18px')
     await page.getByTestId('apply-appearance-button').click()
 
     await expect(chatPanel).toHaveCSS('font-size', '18px')
+    await expectFontSize(scalable, '18px')
   })
 
   test('Apply button disables after Apply and re-enables on next change', async ({

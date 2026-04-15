@@ -371,7 +371,7 @@
         <!-- User: right-aligned, accent-tinted background -->
         <div class="flex justify-end">
           <div
-            class="chat-message-user rounded-xl rounded-tr-sm px-3.5 py-2.5 text-[13px] leading-relaxed
+            class="chat-message-user rounded-xl rounded-tr-sm px-3.5 py-2.5 leading-relaxed
               max-w-[85%] break-words bg-accent/15 border border-accent/25 text-text-primary"
           >
             <!-- eslint-disable-next-line svelte/no-at-html-tags -->
@@ -382,7 +382,7 @@
         <!-- Assistant: left-aligned, secondary background -->
         <div class="flex justify-start">
           <div
-            class="chat-message-assistant rounded-xl rounded-tl-sm px-3.5 py-2.5 text-[13px] leading-relaxed
+            class="chat-message-assistant rounded-xl rounded-tl-sm px-3.5 py-2.5 leading-relaxed
               max-w-[85%] break-words bg-bg-secondary border border-border text-text-primary"
           >
             <!-- eslint-disable-next-line svelte/no-at-html-tags -->
@@ -395,7 +395,7 @@
       <div class="flex justify-start">
         {#if streamingContent}
           <div
-            class="chat-message-streaming rounded-xl rounded-tl-sm px-3.5 py-2.5 text-[13px] leading-relaxed
+            class="chat-message-streaming rounded-xl rounded-tl-sm px-3.5 py-2.5 leading-relaxed
               max-w-[85%] break-words bg-bg-secondary border border-border text-text-primary"
           >
             <!-- eslint-disable-next-line svelte/no-at-html-tags -->
@@ -461,7 +461,7 @@
       tabindex="0"
       aria-label="Message to proof assistant"
       aria-multiline="true"
-      class="chat-input flex-1 min-h-0 w-full overflow-y-auto rounded border border-border p-2 text-[13px]
+      class="chat-input flex-1 min-h-0 w-full overflow-y-auto rounded border border-border p-2
         font-mono outline-none bg-bg-primary text-text-primary
         focus:border-accent transition-colors"
       oninput={onInput}
