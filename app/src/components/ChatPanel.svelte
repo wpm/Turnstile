@@ -6,7 +6,7 @@
   import { renderContent } from '../lib/renderContent'
   import { showError } from '../lib/errorNotification.svelte'
   import { findAbbrevReplacement, applyAbbrevReplacement } from '../lib/leanAbbrev'
-  import { detectCompletedDelimiter } from '../lib/delimiterDetect'
+  import { detectCompletedDelimiter, isInsideOpenDelimiter } from '../lib/delimiterDetect'
   import {
     extractPlainText,
     getCursorOffset,
@@ -207,14 +207,17 @@
     inputNonEmpty = plainText.trim().length > 0
     const cursorPos = getCursorOffset(el)
 
-    // 1. Lean abbreviation replacement
-    const abbrev = findAbbrevReplacement(plainText, cursorPos)
-    if (abbrev) {
-      const { newText, newCursorPos } = applyAbbrevReplacement(plainText, abbrev)
-      replaceRangeWithText(el, abbrev.from, abbrev.to, abbrev.replacement)
-      inputNonEmpty = newText.trim().length > 0
-      setCursorOffset(el, newCursorPos)
-      return
+    // 1. Lean abbreviation replacement (suppressed inside open delimiters
+    //    to avoid cursor jumps from mid-span text mutations)
+    if (!isInsideOpenDelimiter(plainText, cursorPos)) {
+      const abbrev = findAbbrevReplacement(plainText, cursorPos)
+      if (abbrev) {
+        const { newText, newCursorPos } = applyAbbrevReplacement(plainText, abbrev)
+        replaceRangeWithText(el, abbrev.from, abbrev.to, abbrev.replacement)
+        inputNonEmpty = newText.trim().length > 0
+        setCursorOffset(el, newCursorPos)
+        return
+      }
     }
 
     // 2. Delimiter formatting

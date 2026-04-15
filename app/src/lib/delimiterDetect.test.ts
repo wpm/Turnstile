@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { detectCompletedDelimiter } from './delimiterDetect'
+import { detectCompletedDelimiter, isInsideOpenDelimiter } from './delimiterDetect'
 import type { DelimitedSpan } from './delimiterDetect'
 
 /** Assert that result is non-null and return it with narrowed type. */
@@ -118,6 +118,74 @@ describe('detectCompletedDelimiter', () => {
       const r = expectNonNull(detectCompletedDelimiter('$$x$$', 5))
       expect(r.kind).toBe('display-math')
       expect(r.content).toBe('x')
+    })
+  })
+})
+
+// ── isInsideOpenDelimiter ─────────────────────────────────────────────
+
+describe('isInsideOpenDelimiter', () => {
+  describe('returns true when cursor is inside an open delimiter', () => {
+    it('open inline math: $\\alpha', () => {
+      expect(isInsideOpenDelimiter('$\\alpha', 7)).toBe(true)
+    })
+
+    it('just after opening $', () => {
+      expect(isInsideOpenDelimiter('$', 1)).toBe(true)
+    })
+
+    it('open backtick: `code ', () => {
+      expect(isInsideOpenDelimiter('`code ', 6)).toBe(true)
+    })
+
+    it('open display math: $$\\frac{', () => {
+      expect(isInsideOpenDelimiter('$$\\frac{', 8)).toBe(true)
+    })
+
+    it('just after opening $$', () => {
+      expect(isInsideOpenDelimiter('$$', 2)).toBe(true)
+    })
+
+    it('closed then reopened: $a$ $b', () => {
+      expect(isInsideOpenDelimiter('$a$ $b', 6)).toBe(true)
+    })
+
+    it('text before open math: text $x + ', () => {
+      expect(isInsideOpenDelimiter('text $x + ', 10)).toBe(true)
+    })
+  })
+
+  describe('returns false when cursor is not inside any delimiter', () => {
+    it('empty input', () => {
+      expect(isInsideOpenDelimiter('', 0)).toBe(false)
+    })
+
+    it('plain text', () => {
+      expect(isInsideOpenDelimiter('hello', 5)).toBe(false)
+    })
+
+    it('closed inline math: $x$', () => {
+      expect(isInsideOpenDelimiter('$x$', 3)).toBe(false)
+    })
+
+    it('closed backtick: `code`', () => {
+      expect(isInsideOpenDelimiter('`code`', 6)).toBe(false)
+    })
+
+    it('closed display math: $$x$$', () => {
+      expect(isInsideOpenDelimiter('$$x$$', 5)).toBe(false)
+    })
+
+    it('backslash sequence without delimiter: \\alpha', () => {
+      expect(isInsideOpenDelimiter('\\alpha', 6)).toBe(false)
+    })
+
+    it('escaped dollar is not an opener: \\$x', () => {
+      expect(isInsideOpenDelimiter('\\$x', 3)).toBe(false)
+    })
+
+    it('after closed math with trailing text: $a$ text', () => {
+      expect(isInsideOpenDelimiter('$a$ text', 8)).toBe(false)
     })
   })
 })

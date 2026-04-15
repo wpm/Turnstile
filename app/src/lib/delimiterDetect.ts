@@ -80,3 +80,80 @@ export function detectCompletedDelimiter(text: string, cursorPos: number): Delim
 
   return null
 }
+
+// ── Open-delimiter detection ──────────────────────────────────────────
+
+const enum State {
+  Normal,
+  Backtick,
+  InlineMath,
+  DisplayMath,
+}
+
+/**
+ * Returns ``true`` when ``cursorPos`` falls inside an unclosed delimiter
+ * (`` ` ``, ``$``, or ``$$``).  Used to suppress abbreviation replacement
+ * while the user is typing the contents of a delimited span.
+ *
+ * The scan runs forward from position 0 so that nested/sequential
+ * delimiters are tracked correctly.  Escape handling mirrors
+ * {@link detectCompletedDelimiter}.
+ */
+export function isInsideOpenDelimiter(text: string, cursorPos: number): boolean {
+  let state: State = State.Normal
+  let i = 0
+  const end = Math.min(cursorPos, text.length)
+
+  while (i < end) {
+    const ch = text[i]
+
+    switch (state) {
+      case State.Normal:
+        if (ch === '`') {
+          state = State.Backtick
+          i++
+        } else if (ch === '$') {
+          // Check not escaped
+          if (i >= 1 && text[i - 1] === '\\') {
+            i++
+            break
+          }
+          if (i + 1 < end && text[i + 1] === '$') {
+            state = State.DisplayMath
+            i += 2
+          } else {
+            state = State.InlineMath
+            i++
+          }
+        } else {
+          i++
+        }
+        break
+
+      case State.Backtick:
+        if (ch === '`') {
+          state = State.Normal
+        }
+        i++
+        break
+
+      case State.InlineMath:
+        if (ch === '$' && !(i >= 1 && text[i - 1] === '\\')) {
+          state = State.Normal
+        }
+        i++
+        break
+
+      case State.DisplayMath:
+        if (ch === '$' && i + 1 < end && text[i + 1] === '$' && !(i >= 1 && text[i - 1] === '\\')) {
+          state = State.Normal
+          i += 2
+        } else {
+          i++
+        }
+        break
+    }
+  }
+
+  return state !== State.Normal
+}
