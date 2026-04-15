@@ -448,12 +448,12 @@ async fn fetch_per_line_goal_states(state: &AppState, seq: u64) -> Result<Vec<St
 #[derive(serde::Serialize, Clone)]
 struct GoalStatePayload {
     full: String,
-    per_line: Vec<String>,
+    panel_line_to_source_line: Vec<Option<u32>>,
 }
 
 /// Spawn a background task that, after a short debounce, fetches the
-/// whole-proof and per-line goal states and emits a `goal-state-updated`
-/// event to the frontend.
+/// whole-proof and per-line goal states and emits a
+/// [`proof::GOAL_STATE_UPDATED_EVENT`] to the frontend.
 ///
 /// The task is sequence-guarded: if `state.goal_state_seq` advances before
 /// the debounce fires (because another edit or another empty-progress event
@@ -495,8 +495,17 @@ fn spawn_goal_state_refresh(app: AppHandle, seq: u64) {
             }
         };
 
-        app.emit("goal-state-updated", &GoalStatePayload { full, per_line })
-            .ok();
+        let panel_line_to_source_line =
+            proof::goal_panel_map::build_panel_line_to_source_line(&full, &per_line);
+
+        app.emit(
+            proof::GOAL_STATE_UPDATED_EVENT,
+            &GoalStatePayload {
+                full,
+                panel_line_to_source_line,
+            },
+        )
+        .ok();
     });
 }
 

@@ -10,7 +10,6 @@
 
 import { listen } from './tauri'
 import type { DiagnosticInfo, FileProgressRange, SemanticToken } from './tauri'
-import { buildGoalLineMap } from './goalLineMap'
 import type { DocumentSymbolInfo } from './lspRequests'
 
 let diagnostics = $state<DiagnosticInfo[] | null>(null)
@@ -65,10 +64,13 @@ export async function setupLspListeners(): Promise<() => void> {
     listen<FileProgressRange[]>('lsp-file-progress', (ranges) => {
       fileProgress = ranges
     }),
-    listen<{ full: string; per_line: string[] }>('goal-state-updated', ({ full, per_line }) => {
-      goalText = full
-      goalLineToProofLine = buildGoalLineMap(full, per_line)
-    }),
+    listen<{ full: string; panel_line_to_source_line: (number | null)[] }>(
+      'goal-state-updated',
+      ({ full, panel_line_to_source_line }) => {
+        goalText = full
+        goalLineToProofLine = panel_line_to_source_line
+      },
+    ),
   ])
 
   return () => {

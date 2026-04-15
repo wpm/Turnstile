@@ -7,6 +7,7 @@
 //! [`crate::session::SessionState`], and [`translator`] generates prose from
 //! formal.
 
+pub mod goal_panel_map;
 pub mod translator;
 
 use serde::{Deserialize, Serialize};
@@ -30,19 +31,19 @@ pub struct ProseProof {
 
 /// The goal state reported by the Lean LSP while elaborating the formal proof.
 ///
-/// * `full` — what Lean reports at the end of the document (the "whole-proof"
-///   goal state, independent of cursor position).
-/// * `per_line` — one entry per line in the source, precomputed so the UI can
-///   show the goal state at any tactic step without a round-trip.
+/// `full` is what Lean reports at the end of the document (the "whole-proof"
+/// goal state, independent of cursor position).
 ///
 /// Currently populated on-demand and delivered to the UI via the
-/// `goal-state-updated` Tauri event; the in-memory `Proof.goal_state` field
-/// is reserved for future readers (PA tool dispatch, session save) and is
-/// not kept continuously in sync.
+/// [`GOAL_STATE_UPDATED_EVENT`] Tauri event; the in-memory `Proof.goal_state`
+/// field is reserved for future readers (PA tool dispatch, session save) and
+/// is not kept continuously in sync. The UI-side panel-line → source-line
+/// mapping is derived at emit time by
+/// [`goal_panel_map::build_panel_line_to_source_line`] and is not retained
+/// here.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GoalState {
     pub full: String,
-    pub per_line: Vec<String>,
 }
 
 /// A proof represented both formally (Lean) and in prose, together with the
@@ -68,6 +69,11 @@ pub struct ProsePayload {
 /// Emitted when the prose draft changes — by the translator, by a PA tool
 /// call, or by a session load.  Payload: [`ProsePayload`].
 pub const PROSE_UPDATED_EVENT: &str = "prose-updated";
+
+/// Emitted when the whole-proof goal state has been refreshed, carrying both
+/// the rendered text and the precomputed panel-row → source-line mapping for
+/// the Goal State panel.
+pub const GOAL_STATE_UPDATED_EVENT: &str = "goal-state-updated";
 
 /// Compute a fast hash of a string for change detection (not cryptographic).
 pub fn compute_source_hash(source: &str) -> String {
@@ -111,7 +117,6 @@ mod tests {
         assert!(p.prose.text.is_empty());
         assert!(p.prose.source_hash.is_empty());
         assert!(p.goal_state.full.is_empty());
-        assert!(p.goal_state.per_line.is_empty());
     }
 
     #[test]
@@ -126,7 +131,6 @@ mod tests {
             },
             goal_state: GoalState {
                 full: "⊢ True".into(),
-                per_line: vec!["⊢ True".into(), "no goals".into()],
             },
         };
         let json = serde_json::to_string(&proof).unwrap();
