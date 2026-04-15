@@ -9,6 +9,7 @@ import {
   semanticTokenRange,
   buildSemanticTokenRanges,
   buildDiagnosticRanges,
+  computeGoalLines,
 } from './editorHelpers'
 
 // ---------------------------------------------------------------------------
@@ -289,5 +290,45 @@ describe('buildDiagnosticRanges', () => {
     const result = buildDiagnosticRanges(diags, doc)
     expect(result).toHaveLength(1)
     expect(result[0]?.cssClass).toBe('cm-diag-info')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// computeGoalLines
+// ---------------------------------------------------------------------------
+
+describe('computeGoalLines', () => {
+  const doc = makeDoc('one\ntwo\nthree\nfour\nfive') // 5 lines
+
+  it('returns empty array for empty input', () => {
+    expect(computeGoalLines(doc, [])).toEqual([])
+  })
+
+  it('returns a single in-bounds line unchanged', () => {
+    expect(computeGoalLines(doc, [3])).toEqual([3])
+  })
+
+  it('sorts unsorted input ascending', () => {
+    expect(computeGoalLines(doc, [4, 1, 3, 2])).toEqual([1, 2, 3, 4])
+  })
+
+  it('drops line numbers below 1', () => {
+    expect(computeGoalLines(doc, [0, -1, 2])).toEqual([2])
+  })
+
+  it('drops line numbers past end-of-document', () => {
+    expect(computeGoalLines(doc, [2, 6, 99])).toEqual([2])
+  })
+
+  it('keeps only in-bounds lines when input is mixed', () => {
+    expect(computeGoalLines(doc, [-5, 0, 1, 3, 5, 6, 100])).toEqual([1, 3, 5])
+  })
+
+  it('accepts line numbers at both bounds (1 and doc.lines)', () => {
+    expect(computeGoalLines(doc, [1, 5])).toEqual([1, 5])
+  })
+
+  it('deduplicates across out-of-bounds and duplicate inputs', () => {
+    expect(computeGoalLines(doc, [2, 99, 2, 0, 3, 3])).toEqual([2, 3])
   })
 })

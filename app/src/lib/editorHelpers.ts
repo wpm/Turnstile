@@ -138,3 +138,19 @@ export function buildDiagnosticRanges(
   ranges.sort((a, b) => a.from - b.from)
   return ranges
 }
+
+/**
+ * Filter goal line numbers to those in document bounds, then sort and
+ * deduplicate. Line numbers outside `[1, doc.lines]` are dropped.
+ *
+ * Returns a stable array suitable for mapping to line decorations — the
+ * same clamp-and-dedupe shape as `computeProcessingLines` in fileProgress.ts.
+ */
+export function computeGoalLines(doc: DocLike, lineNums: number[]): number[] {
+  if (lineNums.length === 0) return []
+  const seen = new Set<number>()
+  for (const n of lineNums) {
+    if (n >= 1 && n <= doc.lines) seen.add(n)
+  }
+  return Array.from(seen).sort((a, b) => a - b)
+}
