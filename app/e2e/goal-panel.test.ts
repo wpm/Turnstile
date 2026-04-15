@@ -33,29 +33,42 @@ test.describe('GoalPanel', () => {
     await expect(page.getByText(/hp : p/)).toBeVisible()
   })
 
-  test('clicking a goal-panel line highlights the mapped Formal Proof line', async ({
+  test('editor cursor highlights the matching goal-panel line when focused', async ({
     page,
     mountApp,
     emitEvent,
   }) => {
     await mountApp()
-    await emitEvent('goal-state-updated', {
-      full: GOAL_TEXT,
-      // Every panel line maps to Formal Proof source line 1.
-      panel_line_to_source_line: [1, 1, 1, 1],
-    })
-
-    // Put some content in the editor so line 1 exists to be highlighted.
+    // Two-line proof so we can move the cursor between source lines and see
+    // the panel highlight follow.
+    const proofText = 'theorem t : True := by\n  trivial'
     const editor = page.locator('.cm-content').first()
     await editor.click()
-    await page.keyboard.type('theorem t : True := by trivial')
+    await page.keyboard.type(proofText)
 
-    // Click the second line of the CodeWindow — "hp : p".
-    const panelLine = page.locator('.code-window .cm-line').nth(1)
-    await panelLine.click()
+    // Each panel row maps to a distinct Formal Proof line:
+    //   case left → 1, hp : p → 1, hq : q → 2, ⊢ p → 2
+    await emitEvent('goal-state-updated', {
+      full: GOAL_TEXT,
+      panel_line_to_source_line: [1, 1, 2, 2],
+    })
 
-    // The Editor (first .cm-editor) should have exactly one cm-goal-line.
-    const editorRoot = page.locator('.cm-editor').first()
-    await expect(editorRoot.locator('.cm-goal-line')).toHaveCount(1)
+    const codeWindow = page.locator('.code-window .cm-editor')
+
+    // Cursor on source line 1 (after typing the first character) → first panel
+    // line that maps to source 1 is "case left" (CodeWindow line 1).
+    await page.keyboard.press('Home')
+    await page.keyboard.press('ArrowUp')
+    await expect(codeWindow.locator('.cm-line.cm-goal-line')).toHaveCount(1)
+    await expect(codeWindow.locator('.cm-line.cm-goal-line')).toHaveText(/case left/)
+
+    // Move the cursor down to source line 2 → first panel line that maps to
+    // source 2 is "hq : q" (CodeWindow line 3).
+    await page.keyboard.press('ArrowDown')
+    await expect(codeWindow.locator('.cm-line.cm-goal-line')).toHaveText(/hq : q/)
+
+    // Click into the goal panel — editor loses focus, highlight clears.
+    await codeWindow.click()
+    await expect(codeWindow.locator('.cm-line.cm-goal-line')).toHaveCount(0)
   })
 })
