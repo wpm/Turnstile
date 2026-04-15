@@ -1,5 +1,6 @@
 import { defineConfig } from 'vitest/config'
 import { svelte } from '@sveltejs/vite-plugin-svelte'
+import { playwright } from '@vitest/browser-playwright'
 import tailwindcss from '@tailwindcss/vite'
 
 // https://vite.dev/config/
@@ -18,13 +19,37 @@ export default defineConfig({
     sourcemap: !!process.env.TAURI_ENV_DEBUG,
   },
   test: {
-    environment: 'jsdom',
-    include: ['src/**/*.test.ts'],
-    exclude: ['e2e/**'],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'lcov'],
       reportsDirectory: './coverage',
     },
+    // Split unit tests (jsdom, fast) from component tests (real browser via
+    // Playwright). Browser tests exercise Svelte 5 components end-to-end and
+    // require a Chromium install; unit tests run in jsdom with no browser.
+    projects: [
+      {
+        extends: true,
+        test: {
+          name: 'unit',
+          environment: 'jsdom',
+          include: ['src/**/*.test.ts'],
+          exclude: ['src/**/*.svelte.test.ts'],
+        },
+      },
+      {
+        extends: true,
+        test: {
+          name: 'browser',
+          include: ['src/**/*.svelte.test.ts'],
+          browser: {
+            enabled: true,
+            provider: playwright(),
+            headless: true,
+            instances: [{ browser: 'chromium' }],
+          },
+        },
+      },
+    ],
   },
 })

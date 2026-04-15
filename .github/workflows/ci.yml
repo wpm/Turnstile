@@ -148,6 +148,22 @@ jobs:
         working-directory: app
         run: npm ci
 
+      # Vitest "browser" project uses Playwright/Chromium to exercise Svelte
+      # components in a real browser; share the cache with test-e2e.
+      - name: Cache Playwright browsers
+        id: cache-playwright
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('app/package-lock.json') }}
+          restore-keys: |
+            playwright-${{ runner.os }}-
+
+      - name: Install Playwright browsers
+        if: steps.cache-playwright.outputs.cache-hit != 'true'
+        working-directory: app
+        run: npx playwright install chromium --with-deps
+
       - name: Vitest (frontend unit tests with coverage)
         working-directory: app
         run: npx vitest run --coverage
