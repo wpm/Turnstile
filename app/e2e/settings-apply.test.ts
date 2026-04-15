@@ -2,11 +2,11 @@ import { type Locator, type Page } from '@playwright/test'
 import { test, expect } from './fixtures'
 
 // ---------------------------------------------------------------------------
-// These tests codify the user-visible contract for the Settings "Apply" button:
+// These tests codify the user-visible contract for optimistic font settings:
 //
-//   1. On Apply, the setting is immediately applied to the UI in the background.
-//   2. On Apply, the button disables itself (the tab is no longer "dirty").
-//   3. Changing a field after Apply re-enables the button.
+//   1. Font sizes apply immediately on select — no Apply button needed.
+//   2. Restore Defaults resets all three font sizes back to 13px.
+//   3. The Appearance tab has no Apply button (Model/Custom Prompt still do).
 //
 // They are end-to-end because the bug being guarded against is specifically
 // "a setting exists in the store but no UI component reads it." A unit test
@@ -18,8 +18,8 @@ async function openSettings(page: Page): Promise<void> {
   // The app listens for Meta+, on both macOS and Linux/Windows (meta || ctrl).
   await page.keyboard.press('ControlOrMeta+Comma')
   await page.getByTestId('settings-modal').waitFor({ state: 'visible' })
-  // Appearance is the default active tab; make sure it's visible.
-  await expect(page.getByTestId('apply-appearance-button')).toBeVisible()
+  // Appearance is the default active tab; make sure font selects are visible.
+  await expect(page.getByTestId('editor-font-size-select')).toBeVisible()
 }
 
 /**
@@ -38,11 +38,8 @@ async function expectFontSize(locators: Locator[], size: string): Promise<void> 
   for (const l of locators) await expect(l).toHaveCSS('font-size', size)
 }
 
-test.describe('Settings Apply — Appearance', () => {
-  test('Editor font size applies to the editor DOM immediately on Apply', async ({
-    page,
-    mountApp,
-  }) => {
+test.describe('Settings — Optimistic Appearance', () => {
+  test('Editor font size applies immediately on select', async ({ page, mountApp }) => {
     await mountApp()
     await openSettings(page)
 
@@ -56,9 +53,8 @@ test.describe('Settings Apply — Appearance', () => {
     const scroller = page.locator('.cm-scroller').first()
     await expect(scroller).toHaveCSS('font-size', '13px')
 
-    // Change Editor font size to 20 and Apply.
+    // Change Editor font size to 20 — no Apply click needed.
     await pickSelectFieldOption(page, 'editor-font-size-select', '20px')
-    await page.getByTestId('apply-appearance-button').click()
 
     // The editor font size visibly updates in the background while the
     // Settings modal is still open — both on the `.cm-editor` wrapper and
@@ -68,14 +64,11 @@ test.describe('Settings Apply — Appearance', () => {
     await expect(page.getByTestId('settings-modal')).toBeVisible()
   })
 
-  test('Chat font size applies to the chat panel immediately on Apply', async ({
-    page,
-    mountApp,
-  }) => {
+  test('Chat font size applies immediately on select', async ({ page, mountApp }) => {
     await mountApp()
 
-    // Pre-Apply: post a message so a user bubble exists in the DOM. The
-    // fixture's Tauri echo mock also produces an assistant bubble.
+    // Post a message so a user bubble exists in the DOM. The fixture's
+    // Tauri echo mock also produces an assistant bubble.
     const chatInput = page.locator('.chat-input')
     await chatInput.click()
     await page.keyboard.type('scale me')
@@ -97,51 +90,55 @@ test.describe('Settings Apply — Appearance', () => {
     await expectFontSize(scalable, '13px')
 
     await pickSelectFieldOption(page, 'chat-font-size-select', '18px')
-    await page.getByTestId('apply-appearance-button').click()
 
     await expect(chatPanel).toHaveCSS('font-size', '18px')
     await expectFontSize(scalable, '18px')
   })
 
-  test('Apply button disables after Apply and re-enables on next change', async ({
-    page,
-    mountApp,
-  }) => {
+  test('No Apply button on the Appearance tab', async ({ page, mountApp }) => {
     await mountApp()
     await openSettings(page)
 
-    const applyBtn = page.getByTestId('apply-appearance-button')
+    // The Appearance tab should not have an Apply button.
+    await expect(page.getByTestId('apply-appearance-button')).toHaveCount(0)
 
-    // Opens in a non-dirty state.
-    await expect(applyBtn).toBeDisabled()
+    // Model and Custom Prompt tabs still have their Apply buttons.
+    await page.getByTestId('settings-tab-model').click()
+    await expect(page.getByTestId('apply-model-button')).toBeVisible()
 
-    // Dirtying a field enables the button.
-    await pickSelectFieldOption(page, 'editor-font-size-select', '16px')
-    await expect(applyBtn).toBeEnabled()
-
-    // Clicking Apply returns the button to a disabled state — the tab is
-    // no longer dirty because the committed snapshot now matches the draft.
-    await applyBtn.click()
-    await expect(applyBtn).toBeDisabled()
-
-    // Changing any field again re-enables the button.
-    await pickSelectFieldOption(page, 'editor-font-size-select', '18px')
-    await expect(applyBtn).toBeEnabled()
+    await page.getByTestId('settings-tab-customPrompt').click()
+    await expect(page.getByTestId('apply-custom-prompt-button')).toBeVisible()
   })
 
-  test('Multiple font changes in one Apply all land in the background', async ({
-    page,
-    mountApp,
-  }) => {
+  test('Restore Defaults resets all font sizes immediately', async ({ page, mountApp }) => {
+    await mountApp()
+    await openSettings(page)
+
+    const editor = page.locator('.cm-editor').first()
+
+    // Change all three font sizes away from the default.
+    await pickSelectFieldOption(page, 'editor-font-size-select', '20px')
+    await pickSelectFieldOption(page, 'prose-font-size-select', '18px')
+    await pickSelectFieldOption(page, 'chat-font-size-select', '16px')
+
+    await expect(editor).toHaveCSS('font-size', '20px')
+    await expect(page.locator('.chat-panel')).toHaveCSS('font-size', '16px')
+
+    // Click Restore Defaults — all three should snap back to 13px.
+    await page.getByTestId('restore-defaults-button').click()
+
+    await expect(editor).toHaveCSS('font-size', '13px')
+    await expect(page.locator('.chat-panel')).toHaveCSS('font-size', '13px')
+  })
+
+  test('Multiple font changes each apply independently', async ({ page, mountApp }) => {
     await mountApp()
     await openSettings(page)
 
     await pickSelectFieldOption(page, 'editor-font-size-select', '16px')
     await pickSelectFieldOption(page, 'chat-font-size-select', '20px')
-    await page.getByTestId('apply-appearance-button').click()
 
     await expect(page.locator('.cm-editor').first()).toHaveCSS('font-size', '16px')
     await expect(page.locator('.chat-panel')).toHaveCSS('font-size', '20px')
-    await expect(page.getByTestId('apply-appearance-button')).toBeDisabled()
   })
 })
