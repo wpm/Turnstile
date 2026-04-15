@@ -65,6 +65,18 @@ pub struct AppState {
     /// `$/lean/fileProgress` event, so that a stale background refresh task
     /// does not overwrite the panel with old data.
     pub goal_state_seq: Arc<AtomicU64>,
+    /// Snapshot of the last goal-state payload — just the data
+    /// [`lsp_hover_goal_panel`] needs to translate a (panel-line, column)
+    /// hover into a Formal Proof document position.
+    pub goal_state_cache: Arc<Mutex<GoalStateCache>>,
+}
+
+/// Index-parallel snapshot of the goal panel's code-block lines and their
+/// mapped Formal Proof source lines (1-indexed, `None` if unmapped).
+#[derive(Default)]
+pub struct GoalStateCache {
+    pub panel_lines: Vec<String>,
+    pub panel_line_to_source_line: Vec<Option<u32>>,
 }
 
 impl AppState {
@@ -497,6 +509,12 @@ fn spawn_goal_state_refresh(app: AppHandle, seq: u64) {
 
         let panel_line_to_source_line =
             proof::goal_panel_map::build_panel_line_to_source_line(&full, &per_line);
+        let panel_lines = proof::goal_panel_map::flatten_code_block_lines(&full);
+
+        if let Ok(mut cache) = state.goal_state_cache.lock() {
+            cache.panel_lines = panel_lines;
+            cache.panel_line_to_source_line = panel_line_to_source_line.clone();
+        }
 
         app.emit(
             proof::GOAL_STATE_UPDATED_EVENT,
@@ -571,6 +589,84 @@ async fn get_completions(
 async fn lsp_hover(app: AppHandle, line: u32, character: u32) -> Result<Option<HoverInfo>, String> {
     let state = app.state::<AppState>();
     let params = text_document_position_params(&state.doc_uri(), line, character);
+    Ok(call_lsp_raw(&state, "textDocument/hover", params)
+        .await?
+        .as_ref()
+        .and_then(lsp::parse_hover))
+}
+
+/// Translate a goal-panel hover into a Formal Proof document position.
+///
+/// Given the panel-line text, the source line it maps to, and a UTF-16
+/// column within the panel line, extract the word under the cursor and
+/// locate it on the source line. Returns the (0-indexed LSP line,
+/// UTF-16 column) to send to `textDocument/hover`, or `None` if the
+/// cursor isn't on a word or the word isn't present on the source line.
+fn resolve_goal_panel_hover_position(
+    panel_line: &str,
+    source_line: &str,
+    source_line_1indexed: u32,
+    panel_column: u32,
+) -> Option<(u32, u32)> {
+    let (word, _, _) = proof::goal_panel_hover::find_word_at(panel_line, panel_column)?;
+    let col = proof::goal_panel_hover::locate_in_source(&word, source_line)?;
+    Some((source_line_1indexed - 1, col))
+}
+
+/// Resolve a hover over an identifier in the Goal State panel by delegating
+/// to the Lean LSP at the corresponding position in the Formal Proof.
+///
+/// `panel_flat_line` is the 0-indexed flat line within the goal panel's
+/// concatenated code blocks (see `GoalPanel.codeBlockOffsets` on the
+/// frontend); `character` is the UTF-16 column the user is hovering.
+/// We look up the mapped Formal Proof line from the cached goal-state
+/// snapshot, find the hovered word on the source line, and issue a
+/// regular `textDocument/hover` there.
+#[tauri::command]
+async fn lsp_hover_goal_panel(
+    app: AppHandle,
+    panel_flat_line: u32,
+    character: u32,
+) -> Result<Option<HoverInfo>, String> {
+    let state = app.state::<AppState>();
+
+    let (panel_line, source_line_1indexed) = {
+        let cache = state
+            .goal_state_cache
+            .lock()
+            .map_err(|e| format!("goal-state cache poisoned: {e}"))?;
+        let idx = usize::try_from(panel_flat_line).map_err(|e| e.to_string())?;
+        let Some(panel_line) = cache.panel_lines.get(idx).cloned() else {
+            return Ok(None);
+        };
+        let Some(src_line) = cache.panel_line_to_source_line.get(idx).copied().flatten() else {
+            return Ok(None);
+        };
+        (panel_line, src_line)
+    };
+
+    // Only the target source line needs to leave the `proof` lock.
+    let source_line = {
+        let proof = state.proof.lock().await;
+        proof
+            .formal
+            .source
+            .split('\n')
+            .nth((source_line_1indexed - 1) as usize)
+            .unwrap_or("")
+            .to_string()
+    };
+
+    let Some((line, col)) = resolve_goal_panel_hover_position(
+        &panel_line,
+        &source_line,
+        source_line_1indexed,
+        character,
+    ) else {
+        return Ok(None);
+    };
+
+    let params = text_document_position_params(&state.doc_uri(), line, col);
     Ok(call_lsp_raw(&state, "textDocument/hover", params)
         .await?
         .as_ref()
@@ -810,6 +906,7 @@ pub fn run() {
                 prose_dirty: Arc::new(AtomicBool::new(false)),
                 prose_generation_seq: Arc::new(AtomicU64::new(0)),
                 goal_state_seq: Arc::new(AtomicU64::new(0)),
+                goal_state_cache: Arc::new(Mutex::new(GoalStateCache::default())),
             });
 
             Ok(())
@@ -834,6 +931,7 @@ pub fn run() {
             update_document,
             get_completions,
             lsp_hover,
+            lsp_hover_goal_panel,
             lsp_definition,
             lsp_code_actions,
             lsp_resolve_code_action,
@@ -870,8 +968,8 @@ mod tests {
     use std::sync::Mutex;
 
     use super::{
-        end_of_document_position, llm, lsp, proof, proof_assistant, should_generate_prose,
-        AppState, ShouldGenerate,
+        end_of_document_position, llm, lsp, proof, proof_assistant,
+        resolve_goal_panel_hover_position, should_generate_prose, AppState, ShouldGenerate,
     };
     use std::sync::Arc;
 
@@ -887,6 +985,33 @@ mod tests {
         assert!(v1 > did_open_version);
         assert!(v2 > v1);
         assert!(v3 > v2);
+    }
+
+    #[test]
+    fn resolve_goal_panel_hover_position_finds_word_and_locates_on_source() {
+        // Hover at column 1 on "hp : p" hits the word "hp"; on the mapped
+        // source line "intro hp hq", "hp" starts at UTF-16 column 6.
+        assert_eq!(
+            resolve_goal_panel_hover_position("hp : p", "intro hp hq", 3, 1),
+            Some((2, 6))
+        );
+    }
+
+    #[test]
+    fn resolve_goal_panel_hover_position_none_when_not_on_word() {
+        // Column 5 on "a    b" is whitespace.
+        assert_eq!(
+            resolve_goal_panel_hover_position("a    b", "let a := b", 1, 3),
+            None
+        );
+    }
+
+    #[test]
+    fn resolve_goal_panel_hover_position_none_when_word_absent_from_source() {
+        assert_eq!(
+            resolve_goal_panel_hover_position("hp : p", "apply or_left", 1, 1),
+            None
+        );
     }
 
     #[test]
@@ -920,6 +1045,7 @@ mod tests {
             prose_dirty: Arc::new(AtomicBool::new(false)),
             prose_generation_seq: Arc::new(AtomicU64::new(0)),
             goal_state_seq: Arc::new(AtomicU64::new(0)),
+            goal_state_cache: Arc::new(Mutex::new(crate::GoalStateCache::default())),
         }
     }
 

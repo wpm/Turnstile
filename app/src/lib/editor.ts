@@ -5,7 +5,6 @@ import {
   RangeSet,
   Compartment,
   Transaction,
-  type Extension,
   type Range,
 } from '@codemirror/state'
 import {
@@ -55,12 +54,10 @@ import {
 import { cmLineToLsp, cmPosToLsp } from './positionConvert'
 import { fileProgressExtension, setFileProgressEffect } from './fileProgress'
 import {
-  buildDiagnosticRanges,
-  buildSemanticTokenRanges,
-  computeGoalLines,
   diagRange,
   diagnosticGutterClass,
   diagnosticPopupClass,
+  diagnosticSeverityClass,
 } from './editorHelpers'
 import type { ResolvedTheme } from './theme'
 import { findAbbrevReplacement } from './leanAbbrev'
@@ -68,6 +65,14 @@ import { indentationMarkers } from '@replit/codemirror-indentation-markers'
 import { hoverTypeExtension } from './hoverTooltip'
 import { gotoDefinitionExtension } from './gotoDefinition'
 import { codeActionsExtension } from './codeActions'
+import {
+  baseTheme,
+  themeExtension,
+  setSemanticTokensEffect,
+  semanticTokensField,
+  setActiveLineEffect,
+  activeLineField,
+} from './codeWindowExtensions'
 
 // ---------------------------------------------------------------------------
 // Lean abbreviation expansion — updateListener
@@ -116,34 +121,7 @@ const leanAbbrevExtension = EditorView.updateListener.of((update: ViewUpdate) =>
 // Effects — used to dispatch state changes from outside the editor
 // ---------------------------------------------------------------------------
 
-const setSemanticTokensEffect = StateEffect.define<SemanticToken[]>()
 const setDiagnosticsEffect = StateEffect.define<DiagnosticInfo[]>()
-const setGoalLineEffect = StateEffect.define<number[]>()
-
-// ---------------------------------------------------------------------------
-// Semantic token highlighting — StateField<DecorationSet>
-// ---------------------------------------------------------------------------
-
-const semanticTokensField = StateField.define<DecorationSet>({
-  create() {
-    return Decoration.none
-  },
-  update(decorations, tr) {
-    decorations = decorations.map(tr.changes)
-    for (const effect of tr.effects) {
-      if (effect.is(setSemanticTokensEffect)) {
-        const ranges = buildSemanticTokenRanges(effect.value, tr.state.doc).map((r) =>
-          Decoration.mark({ class: r.cssClass }).range(r.from, r.to),
-        )
-        decorations = RangeSet.of(ranges)
-      }
-    }
-    return decorations
-  },
-  provide(field) {
-    return EditorView.decorations.from(field)
-  },
-})
 
 // ---------------------------------------------------------------------------
 // Diagnostic gutter markers
@@ -174,9 +152,15 @@ const diagnosticUnderlineField = StateField.define<DecorationSet>({
     decorations = decorations.map(tr.changes)
     for (const effect of tr.effects) {
       if (effect.is(setDiagnosticsEffect)) {
-        const ranges = buildDiagnosticRanges(effect.value, tr.state.doc).map((r) =>
-          Decoration.mark({ class: r.cssClass }).range(r.from, r.to),
-        )
+        const ranges: Range<Decoration>[] = []
+        for (const diag of effect.value) {
+          const r = diagRange(diag, tr.state.doc)
+          if (!r) continue
+          ranges.push(
+            Decoration.mark({ class: diagnosticSeverityClass(diag.severity) }).range(r.from, r.to),
+          )
+        }
+        ranges.sort((a, b) => a.from - b.from)
         decorations = RangeSet.of(ranges)
       }
     }
@@ -256,35 +240,6 @@ const diagnosticGutter = gutter({
 })
 
 // ---------------------------------------------------------------------------
-// Goal line decoration — underline on editor lines linked from goal panel
-// ---------------------------------------------------------------------------
-
-const goalLineDeco = Decoration.line({ class: 'cm-goal-line' })
-
-const goalLineField = StateField.define<DecorationSet>({
-  create() {
-    return Decoration.none
-  },
-  update(decorations, tr) {
-    for (const effect of tr.effects) {
-      if (effect.is(setGoalLineEffect)) {
-        const lines = computeGoalLines(tr.state.doc, effect.value)
-        if (lines.length === 0) return Decoration.none
-        const doc = tr.state.doc
-        const lineDecos: Range<Decoration>[] = lines.map((n) =>
-          goalLineDeco.range(doc.line(n).from),
-        )
-        return RangeSet.of(lineDecos)
-      }
-    }
-    return decorations.map(tr.changes)
-  },
-  provide(field) {
-    return EditorView.decorations.from(field)
-  },
-})
-
-// ---------------------------------------------------------------------------
 // LSP completion source
 // ---------------------------------------------------------------------------
 
@@ -325,58 +280,6 @@ async function lspCompletionSource(ctx: CompletionContext): Promise<CompletionRe
 // ---------------------------------------------------------------------------
 // Public interface
 // ---------------------------------------------------------------------------
-
-// Typography shared by both themes — not color-dependent.
-const baseTheme = EditorView.baseTheme({
-  '.cm-scroller': {
-    overflow: 'auto',
-    fontFamily: '"JetBrains Mono", ui-monospace, "SF Mono", "Cascadia Mono", monospace',
-    fontSize: '14px',
-    lineHeight: '1.5',
-  },
-})
-
-// Shared color theme using CSS custom properties — the actual values are set
-// by :root (dark) / .light selectors in app.css.
-// We still need the themeCompartment to toggle CM6's `dark` boolean for
-// scrollbar appearance and highlight-style fallback.
-const darkTheme = EditorView.theme(
-  {
-    '&': { height: '100%', backgroundColor: 'var(--bg-primary)', color: 'var(--text-primary)' },
-    '.cm-content': { caretColor: 'var(--accent)' },
-    '.cm-cursor': { borderLeftColor: 'var(--accent)' },
-    '.cm-activeLine': { backgroundColor: 'var(--bg-tertiary)' },
-    '.cm-gutters': {
-      backgroundColor: 'var(--bg-secondary)',
-      color: 'var(--text-secondary)',
-      borderRight: '1px solid var(--border)',
-      paddingLeft: '8px',
-    },
-    '.cm-activeLineGutter': { backgroundColor: 'var(--bg-tertiary)' },
-  },
-  { dark: true },
-)
-
-const lightTheme = EditorView.theme(
-  {
-    '&': { height: '100%', backgroundColor: 'var(--bg-primary)', color: 'var(--text-primary)' },
-    '.cm-content': { caretColor: 'var(--accent)' },
-    '.cm-cursor': { borderLeftColor: 'var(--accent)' },
-    '.cm-activeLine': { backgroundColor: 'var(--bg-secondary)' },
-    '.cm-gutters': {
-      backgroundColor: 'var(--bg-secondary)',
-      color: 'var(--text-secondary)',
-      borderRight: '1px solid var(--border)',
-      paddingLeft: '8px',
-    },
-    '.cm-activeLineGutter': { backgroundColor: 'var(--bg-tertiary)' },
-  },
-  { dark: false },
-)
-
-function themeExtension(t: ResolvedTheme): Extension {
-  return t === 'dark' ? darkTheme : lightTheme
-}
 
 interface EditorHandle {
   applySemanticTokens(tokens: SemanticToken[]): void
@@ -497,7 +400,7 @@ export function mountEditor(
         tooltips({ parent: document.body }),
         diagnosticGutter,
         fileProgressExtension(),
-        goalLineField,
+        activeLineField,
         indentationMarkers(),
         gotoDefinitionExtension({ onExternalDef, currentUri }),
         codeActionsExtension({ currentUri }),
@@ -523,7 +426,7 @@ export function mountEditor(
       view.dispatch({ effects: setFileProgressEffect.of(ranges) })
     },
     setGoalLines(lines: number[]) {
-      view.dispatch({ effects: setGoalLineEffect.of(lines) })
+      view.dispatch({ effects: setActiveLineEffect.of(lines) })
     },
     setContent(text: string) {
       view.dispatch({

@@ -54,6 +54,23 @@ pub fn build_panel_line_to_source_line(
     result
 }
 
+/// Flatten the fenced code blocks of `full_goal` into one string per panel
+/// line, preserving the order used by [`build_panel_line_to_source_line`]
+/// so the two vectors are index-parallel.
+#[must_use]
+pub fn flatten_code_block_lines(full_goal: &str) -> Vec<String> {
+    let mut result = Vec::new();
+    for block in parse_fenced_blocks(full_goal) {
+        if !block.is_code {
+            continue;
+        }
+        for line in block.content.split('\n') {
+            result.push(line.to_string());
+        }
+    }
+    result
+}
+
 struct FencedBlock<'a> {
     is_code: bool,
     content: &'a str,
@@ -264,5 +281,36 @@ mod tests {
     fn empty_per_line_goals_all_none() {
         let full = "```\n⊢ p\n```";
         assert_eq!(build_panel_line_to_source_line(full, &[]), vec![None, None]);
+    }
+
+    #[test]
+    fn flatten_code_block_lines_matches_panel_mapping_shape() {
+        // Same shape as `build_panel_line_to_source_line`: text blocks drop
+        // out, code-block lines concatenate in order (including blank lines
+        // and the trailing empty line before the closing fence).
+        let full = [
+            "Some intro text",
+            "",
+            "```lean",
+            "goal A",
+            "```",
+            "",
+            "More prose",
+            "",
+            "```lean",
+            "goal B",
+            "```",
+        ]
+        .join("\n");
+        assert_eq!(
+            flatten_code_block_lines(&full),
+            vec!["goal A", "", "goal B", ""]
+        );
+    }
+
+    #[test]
+    fn flatten_code_block_lines_empty_input_is_empty() {
+        assert!(flatten_code_block_lines("").is_empty());
+        assert!(flatten_code_block_lines("just prose").is_empty());
     }
 }
