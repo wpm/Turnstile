@@ -66,10 +66,24 @@ pub struct FileProgressRange {
     pub end_line: u32,   // 1-indexed
 }
 
-/// Type information from `textDocument/hover` — types only, no docstrings.
+/// Markup kind for hover contents — mirrors LSP's `MarkupKind`.
+///
+/// Serialized as lowercase strings (`"markdown"` / `"plaintext"`) so the
+/// frontend can branch on the payload without a separate mapping step.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum HoverKind {
+    Markdown,
+    Plaintext,
+}
+
+/// Content from `textDocument/hover`, paired with its markup kind so the
+/// frontend can render markdown (fenced Lean blocks, docstrings, LaTeX) as
+/// rich text and plaintext as preformatted text.
 #[derive(Clone, Debug, Serialize)]
 pub struct HoverInfo {
     pub contents: String,
+    pub kind: HoverKind,
 }
 
 /// Result of `textDocument/definition` filtered to a single target location.
@@ -793,83 +807,77 @@ pub fn parse_file_progress(params: &Value) -> Vec<FileProgressRange> {
         .collect()
 }
 
-/// Parse a `textDocument/hover` response, keeping only the type signature
-/// (the first fenced Lean code block) and dropping any trailing documentation.
+/// Parse a `textDocument/hover` response into `HoverInfo`.
 ///
-/// The Lean server returns markdown with a fenced lean block followed by an
-/// optional docstring block. We keep the first block and discard the rest.
-/// Returns `None` if the response is null or has no readable contents.
+/// Preserves the server's markup `kind` so the frontend can render markdown
+/// (fenced Lean blocks, docstrings, inline code, LaTeX) as rich text and
+/// plaintext as preformatted text. Returns `None` if the response is null,
+/// has no readable contents, or the contents are empty.
 pub fn parse_hover(result: &Value) -> Option<HoverInfo> {
     if result.is_null() {
         return None;
     }
-    let raw = hover_contents_string(result.get("contents")?)?;
-    let contents = hover_strip_docstrings(&raw);
+    let (contents, kind) = hover_contents(result.get("contents")?)?;
     if contents.trim().is_empty() {
         None
     } else {
-        Some(HoverInfo { contents })
+        Some(HoverInfo { contents, kind })
     }
 }
 
-/// Flatten a hover `contents` value into one markdown string.
+/// Flatten a hover `contents` value into `(string, kind)`.
 ///
-/// LSP permits three shapes here: a bare string, a `MarkupContent`
-/// (`{ kind, value }`), or an array of strings / `{ language, value }` /
-/// `MarkupContent`. This helper normalizes all three to a single string.
-fn hover_contents_string(contents: &Value) -> Option<String> {
+/// LSP permits three shapes:
+///   - bare string — treated as `Plaintext`.
+///   - `MarkupContent` (`{ kind, value }`) — `kind` is used directly
+///     (defaulting to `Markdown` if missing, per LSP convention).
+///   - array of `MarkedString` / `MarkupContent` / bare strings — values are
+///     joined with blank lines. If any element carries a `language` or
+///     `kind: "markdown"` signal the result is `Markdown`; otherwise it
+///     falls back to `Plaintext`.
+fn hover_contents(contents: &Value) -> Option<(String, HoverKind)> {
     if let Some(s) = contents.as_str() {
-        return Some(s.to_string());
+        return Some((s.to_string(), HoverKind::Plaintext));
     }
     if let Some(v) = contents.get("value").and_then(Value::as_str) {
-        return Some(v.to_string());
+        let kind = match contents.get("kind").and_then(Value::as_str) {
+            Some("plaintext") => HoverKind::Plaintext,
+            _ => HoverKind::Markdown,
+        };
+        return Some((v.to_string(), kind));
     }
     if let Some(arr) = contents.as_array() {
         let mut parts = Vec::new();
+        let mut any_markdown = false;
         for item in arr {
             if let Some(s) = item.as_str() {
                 parts.push(s.to_string());
             } else if let Some(v) = item.get("value").and_then(Value::as_str) {
-                parts.push(v.to_string());
+                // `MarkedString` (`{ language, value }`) renders as a fenced
+                // code block; `MarkupContent` carries an explicit `kind`.
+                if let Some(lang) = item.get("language").and_then(Value::as_str) {
+                    parts.push(format!("```{lang}\n{v}\n```"));
+                    any_markdown = true;
+                } else {
+                    let kind = item.get("kind").and_then(Value::as_str);
+                    if kind != Some("plaintext") {
+                        any_markdown = true;
+                    }
+                    parts.push(v.to_string());
+                }
             }
         }
         if parts.is_empty() {
             return None;
         }
-        return Some(parts.join("\n\n"));
+        let kind = if any_markdown {
+            HoverKind::Markdown
+        } else {
+            HoverKind::Plaintext
+        };
+        return Some((parts.join("\n\n"), kind));
     }
     None
-}
-
-/// Keep only the first fenced `lean` code block from hover markdown; drop the
-/// rest (which is typically a docstring). If no fenced block is present, fall
-/// back to the untouched input.
-fn hover_strip_docstrings(markdown: &str) -> String {
-    let mut in_block = false;
-    let mut collected: Vec<&str> = Vec::new();
-    let mut saw_block = false;
-
-    for line in markdown.lines() {
-        let trimmed = line.trim_start();
-        if trimmed.starts_with("```") {
-            if in_block {
-                // End of the first code block — stop.
-                saw_block = true;
-                break;
-            }
-            in_block = true;
-            continue;
-        }
-        if in_block {
-            collected.push(line);
-        }
-    }
-
-    if saw_block {
-        collected.join("\n").trim().to_string()
-    } else {
-        markdown.trim().to_string()
-    }
 }
 
 /// Parse a `textDocument/definition` response, keeping only the first target.
@@ -1571,15 +1579,22 @@ mod tests {
     // ── Hover parsing ─────────────────────────────────────────────────
 
     #[test]
-    fn parse_hover_markup_content_keeps_type_only() {
-        let result = json!({
-            "contents": {
-                "kind": "markdown",
-                "value": "```lean\ntheorem foo : True\n```\nDocumentation paragraph."
-            }
-        });
+    fn parse_hover_markdown_preserves_docstring() {
+        // The whole markdown body (type block + docstring) is preserved so
+        // the frontend can render it with its markdown pipeline.
+        let raw = "```lean\ntheorem foo : True\n```\nDocumentation paragraph.";
+        let result = json!({ "contents": { "kind": "markdown", "value": raw } });
         let hover = parse_hover(&result).expect("hover should parse");
-        assert_eq!(hover.contents, "theorem foo : True");
+        assert_eq!(hover.contents, raw);
+        assert_eq!(hover.kind, HoverKind::Markdown);
+    }
+
+    #[test]
+    fn parse_hover_plaintext_kind_roundtrips() {
+        let result = json!({ "contents": { "kind": "plaintext", "value": "x : Nat" } });
+        let hover = parse_hover(&result).expect("hover should parse");
+        assert_eq!(hover.contents, "x : Nat");
+        assert_eq!(hover.kind, HoverKind::Plaintext);
     }
 
     #[test]
@@ -1593,14 +1608,17 @@ mod tests {
     }
 
     #[test]
-    fn parse_hover_bare_string() {
+    fn parse_hover_bare_string_is_plaintext() {
         let result = json!({ "contents": "inline type" });
         let hover = parse_hover(&result).expect("hover should parse");
         assert_eq!(hover.contents, "inline type");
+        assert_eq!(hover.kind, HoverKind::Plaintext);
     }
 
     #[test]
-    fn parse_hover_array_contents() {
+    fn parse_hover_array_with_marked_string_is_markdown() {
+        // A `MarkedString` (`{ language, value }`) is fence-wrapped and the
+        // overall kind becomes markdown so the frontend highlights it.
         let result = json!({
             "contents": [
                 { "language": "lean", "value": "theorem foo : True" },
@@ -1608,15 +1626,34 @@ mod tests {
             ]
         });
         let hover = parse_hover(&result).expect("hover should parse");
-        // Array is joined then the first fenced block extracted. Here, no fence
-        // so the whole thing is preserved as the best-effort fallback.
-        assert!(hover.contents.contains("theorem foo : True"));
+        assert_eq!(hover.kind, HoverKind::Markdown);
+        assert!(hover.contents.contains("```lean\ntheorem foo : True\n```"));
+        assert!(hover.contents.contains("Some docs"));
+    }
+
+    #[test]
+    fn parse_hover_array_of_plain_strings_is_plaintext() {
+        let result = json!({ "contents": ["one", "two"] });
+        let hover = parse_hover(&result).expect("hover should parse");
+        assert_eq!(hover.kind, HoverKind::Plaintext);
+        assert_eq!(hover.contents, "one\n\ntwo");
     }
 
     #[test]
     fn parse_hover_empty_returns_none() {
         let result = json!({ "contents": { "kind": "markdown", "value": "" } });
         assert!(parse_hover(&result).is_none());
+    }
+
+    #[test]
+    fn hover_info_serializes_kind_field() {
+        let info = HoverInfo {
+            contents: "foo".to_string(),
+            kind: HoverKind::Markdown,
+        };
+        let v = serde_json::to_value(&info).expect("serialize");
+        assert_eq!(v["contents"], "foo");
+        assert_eq!(v["kind"], "markdown");
     }
 
     // ── Definition parsing ────────────────────────────────────────────

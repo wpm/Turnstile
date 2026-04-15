@@ -9,6 +9,8 @@ import { invoke } from './tauri'
 
 export interface HoverInfo {
   contents: string
+  /** Markup kind from LSP — determines rendering (rich markdown vs. preformatted text). */
+  kind: 'markdown' | 'plaintext'
 }
 
 export interface DefinitionLocation {

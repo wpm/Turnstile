@@ -12,8 +12,8 @@ function makeView(doc: string): EditorView {
 }
 
 describe('hoverTypeSource', () => {
-  it('returns a tooltip when the LSP responds with contents', async () => {
-    const fetchHover = vi.fn().mockResolvedValue({ contents: 'Nat → Nat → Nat' })
+  it('returns a plaintext tooltip when the LSP responds with plaintext contents', async () => {
+    const fetchHover = vi.fn().mockResolvedValue({ contents: 'Nat → Nat → Nat', kind: 'plaintext' })
     const view = makeView('def foo : Nat := 42\n')
     const tooltip = await hoverTypeSource(view, 5, fetchHover)
     view.destroy()
@@ -24,11 +24,34 @@ describe('hoverTypeSource', () => {
     if (!tooltip) throw new Error('expected tooltip')
     const { dom } = tooltip.create(view)
     expect(dom.className).toBe('lean-hover-popup')
-    expect(dom.textContent).toContain('Nat → Nat → Nat')
+    // Plaintext branch: rendered inside <pre> with textContent only — no HTML.
+    const pre = dom.querySelector('pre')
+    expect(pre).not.toBeNull()
+    expect(pre?.textContent).toBe('Nat → Nat → Nat')
+    expect(pre?.innerHTML).toBe('Nat → Nat → Nat')
+  })
+
+  it('renders markdown hover contents as rich HTML', async () => {
+    const contents = '```lean\nfoo : Nat\n```\n\n**Docs** for `foo`.'
+    const fetchHover = vi.fn().mockResolvedValue({ contents, kind: 'markdown' })
+    const view = makeView('def foo : Nat := 42\n')
+    const tooltip = await hoverTypeSource(view, 5, fetchHover)
+    view.destroy()
+    if (!tooltip) throw new Error('expected tooltip')
+
+    const { dom } = tooltip.create(view)
+    expect(dom.className).toBe('lean-hover-popup')
+    // Markdown branch: inner container renders HTML via renderContent.
+    const body = dom.querySelector('.lean-hover-popup-md')
+    expect(body).not.toBeNull()
+    // Bold emphasis from **Docs**.
+    expect(body?.querySelector('strong')?.textContent).toBe('Docs')
+    // Lean fenced code uses the shared highlighter class.
+    expect(body?.querySelector('pre code.chat-lean-code')).not.toBeNull()
   })
 
   it('converts CM6 position to 0-indexed line and character', async () => {
-    const fetchHover = vi.fn().mockResolvedValue({ contents: 'T' })
+    const fetchHover = vi.fn().mockResolvedValue({ contents: 'T', kind: 'plaintext' })
     const view = makeView('line 0\nline 1\nline 2\n')
     // Position 10: inside "line 1" — 0-indexed line=1, char=3
     await hoverTypeSource(view, 10, fetchHover)
@@ -46,7 +69,7 @@ describe('hoverTypeSource', () => {
   })
 
   it('returns null when the LSP responds with empty contents', async () => {
-    const fetchHover = vi.fn().mockResolvedValue({ contents: '   ' })
+    const fetchHover = vi.fn().mockResolvedValue({ contents: '   ', kind: 'plaintext' })
     const view = makeView('def foo : Nat := 42\n')
     const tooltip = await hoverTypeSource(view, 5, fetchHover)
     view.destroy()

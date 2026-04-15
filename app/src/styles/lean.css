@@ -150,7 +150,9 @@
   background-color: var(--selection-bg) !important;
 }
 
-/* Hover-type popup — mirrors .lean-diag-popup but without severity borders. */
+/* Hover-type popup — mirrors .lean-diag-popup but without severity borders.
+   Two body variants: a <pre> for plaintext (preserves Lean spacing) and a
+   <div class="lean-hover-popup-md"> for rendered markdown. */
 .lean-hover-popup {
   font-family: var(--font-mono);
   font-size: 12px;
@@ -158,19 +160,57 @@
   padding: 4px 8px;
   border-radius: 4px;
   max-width: 480px;
-  white-space: pre-wrap;
   word-break: break-word;
   background: var(--bg-secondary);
   border: 1px solid var(--border);
   color: var(--text-primary);
   z-index: 1000;
 }
-.lean-hover-popup-content {
+/* Plaintext branch: <pre> preserves Lean spacing exactly. */
+pre.lean-hover-popup-content {
   margin: 0;
   font-family: inherit;
   font-size: inherit;
   white-space: pre-wrap;
   word-break: break-word;
+}
+/* Markdown branch: rich rendering via renderContent(). Fenced Lean blocks
+   use the shared .chat-lean-code styling from app.css. */
+.lean-hover-popup-md {
+  font-family: var(--font-sans);
+}
+.lean-hover-popup-md > :first-child {
+  margin-top: 0;
+}
+.lean-hover-popup-md > :last-child {
+  margin-bottom: 0;
+}
+.lean-hover-popup-md p {
+  margin: 4px 0;
+}
+.lean-hover-popup-md pre {
+  margin: 4px 0;
+  padding: 4px 6px;
+  background: var(--bg-primary);
+  border-radius: 3px;
+  overflow-x: auto;
+}
+.lean-hover-popup-md pre code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.lean-hover-popup-md ul,
+.lean-hover-popup-md ol {
+  margin: 4px 0;
+  padding-left: 20px;
+}
+.lean-hover-popup-md h1,
+.lean-hover-popup-md h2,
+.lean-hover-popup-md h3,
+.lean-hover-popup-md h4 {
+  margin: 6px 0 4px;
+  font-size: inherit;
+  font-weight: 600;
 }
 
 /* Indent guides — themed via CSS variables so they track light/dark. */

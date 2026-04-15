@@ -2,14 +2,16 @@
  * CodeMirror hover-tooltip extension showing Lean type info at the cursor.
  *
  * Delegates to the Rust `lsp_hover` Tauri command (which calls
- * `textDocument/hover`). The returned markdown is stripped to the type
- * signature (no docstrings) in the backend; we render it as text here.
+ * `textDocument/hover`). The response includes the LSP `MarkupKind`; we
+ * render markdown contents through the shared `renderContent` pipeline
+ * (fenced Lean highlighting + LaTeX) and plaintext as preformatted text.
  */
 
 import { hoverTooltip, type Tooltip, type EditorView } from '@codemirror/view'
 import type { Extension } from '@codemirror/state'
 import { lspHover, type HoverInfo } from './lspRequests'
 import { cmPosToLsp } from './positionConvert'
+import { renderContent } from './renderContent'
 
 /** Hover delay in ms — matches VS Code. Exported for tests. */
 export const HOVER_TYPE_DELAY_MS = 300
@@ -38,7 +40,7 @@ export async function hoverTypeSource(
   }
   if (!hover || hover.contents.trim() === '') return null
 
-  const contents = hover.contents
+  const { contents, kind } = hover
 
   return {
     pos,
@@ -46,12 +48,20 @@ export async function hoverTypeSource(
     create() {
       const dom = document.createElement('div')
       dom.className = 'lean-hover-popup'
-      // Type signatures are short — render as preformatted text so Lean
-      // spacing is preserved and no HTML interpretation happens.
-      const pre = document.createElement('pre')
-      pre.className = 'lean-hover-popup-content'
-      pre.textContent = contents
-      dom.appendChild(pre)
+      if (kind === 'markdown') {
+        // Rich markdown: fenced Lean blocks highlighted, LaTeX rendered,
+        // docstrings formatted. `renderContent` escapes raw HTML.
+        const body = document.createElement('div')
+        body.className = 'lean-hover-popup-content lean-hover-popup-md'
+        body.innerHTML = renderContent(contents)
+        dom.appendChild(body)
+      } else {
+        // Plaintext: preserve spacing exactly, no HTML interpretation.
+        const pre = document.createElement('pre')
+        pre.className = 'lean-hover-popup-content'
+        pre.textContent = contents
+        dom.appendChild(pre)
+      }
       return { dom }
     },
   }
