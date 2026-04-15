@@ -41,8 +41,7 @@ test.describe('Proof View Toggle', () => {
     await mountApp()
 
     // The lower panel header shows "Goal State" in formal view and "Prose Proof" in prose view.
-    // Use .first() since ChatPanel also has an uppercase span.
-    const header = page.locator('.flex.flex-col.flex-1 span.uppercase').first()
+    const header = page.locator('[data-testid="lower-panel-header"]')
     await expect(header).toHaveText('Goal State')
 
     // Toggle to prose.

@@ -499,6 +499,18 @@
   <div class="flex h-full bg-bg-primary">
     <!-- Editor column (takes remaining space) -->
     <div class="flex flex-col flex-1 min-w-0">
+      <!-- Top header: vertically aligns with the Proof Assistant header in ChatPanel.
+           min-h-[28px] on the inner row matches the w-7 h-7 toggle button that sets
+           the height of the Proof Assistant header, so both header bottoms align. -->
+      <div class="flex items-center px-4 py-2 border-b border-border bg-bg-secondary shrink-0">
+        <div class="flex items-center min-h-[28px]">
+          <span
+            class="text-[13px] font-semibold text-text-primary tracking-wide uppercase opacity-70"
+          >
+            Formal Proof
+          </span>
+        </div>
+      </div>
       <div class="flex-1 min-h-0">
         <div class="flex flex-col h-full">
           <div class="min-h-0" style="flex: {100 - layoutState.goalPanelPct}">
@@ -558,6 +570,7 @@
                 ></div>
                 <span
                   class="text-[13px] font-semibold text-text-primary tracking-wide uppercase opacity-70"
+                  data-testid="lower-panel-header"
                 >
                   {sessionState.proofView === 'formal' ? 'Goal State' : 'Prose Proof'}
                 </span>
