@@ -4,6 +4,7 @@
   "ignoreDependencies": [
     "codemirror",
     "@lezer/highlight",
+    "@vitest/browser",
     "lint-staged",
     "tailwindcss"
   ]
