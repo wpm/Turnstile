@@ -7,31 +7,35 @@
  */
 
 import { invoke } from '../session/tauri'
-import type { ThemePreference } from './theme'
 
 /** Selectable font sizes offered in the Settings UI. */
 export const FONT_SIZE_OPTIONS = [10, 11, 12, 13, 14, 15, 16, 18, 20]
 
 /**
  * Factory defaults — also used by `resetToDefaults`.
- * `model: null` means "use the backend default" (first entry from `get_available_models`).
+ * `*Model: null` means "use the backend default" (first entry from `get_available_models`).
+ * `*Prompt: null` means "use the built-in default prompt baked into the binary".
  */
 export const DEFAULT_SETTINGS = {
   editorFontSize: 13,
-  proseFontSize: 13,
+  goalStateFontSize: 13,
+  proseProofFontSize: 13,
   assistantFontSize: 13,
-  model: null as string | null,
-  theme: 'auto' as ThemePreference,
-  customPrompt: '',
+  assistantModel: null as string | null,
+  translationModel: null as string | null,
+  assistantPrompt: null as string | null,
+  translationPrompt: null as string | null,
 }
 
 interface SettingsData {
   editorFontSize: number
-  proseFontSize: number
+  goalStateFontSize: number
+  proseProofFontSize: number
   assistantFontSize: number
-  model: string | null
-  theme: ThemePreference
-  customPrompt: string
+  assistantModel: string | null
+  translationModel: string | null
+  assistantPrompt: string | null
+  translationPrompt: string | null
 }
 
 export interface ModelInfo {
@@ -39,36 +43,38 @@ export interface ModelInfo {
   display_name: string
 }
 
+function numberOr(raw: Record<string, unknown>, key: string, fallback: number): number {
+  const v = raw[key]
+  return typeof v === 'number' ? v : fallback
+}
+
+function stringOrNull(raw: Record<string, unknown>, key: string): string | null {
+  const v = raw[key]
+  return typeof v === 'string' ? v : null
+}
+
 /**
  * Parse a raw settings object (from Tauri backend) into a settings object.
  * Missing or invalid keys fall back to `DEFAULT_SETTINGS`.
+ *
+ * Accepts legacy keys (`prose_font_size`, `model`) for one release so
+ * migrating from pre-reorg settings.json doesn't lose the user's values.
  */
 export function parseSettings(raw: Record<string, unknown> | null | undefined): SettingsData {
   if (!raw || typeof raw !== 'object') {
     return { ...DEFAULT_SETTINGS }
   }
+  const proseKey = 'prose_proof_font_size' in raw ? 'prose_proof_font_size' : 'prose_font_size'
+  const assistantModelKey = 'assistant_model' in raw ? 'assistant_model' : 'model'
   return {
-    editorFontSize:
-      typeof raw['editor_font_size'] === 'number'
-        ? raw['editor_font_size']
-        : DEFAULT_SETTINGS.editorFontSize,
-    proseFontSize:
-      typeof raw['prose_font_size'] === 'number'
-        ? raw['prose_font_size']
-        : DEFAULT_SETTINGS.proseFontSize,
-    assistantFontSize:
-      typeof raw['assistant_font_size'] === 'number'
-        ? raw['assistant_font_size']
-        : DEFAULT_SETTINGS.assistantFontSize,
-    model: typeof raw['model'] === 'string' ? raw['model'] : DEFAULT_SETTINGS.model,
-    theme:
-      raw['theme'] === 'dark' || raw['theme'] === 'light' || raw['theme'] === 'auto'
-        ? (raw['theme'] as ThemePreference)
-        : DEFAULT_SETTINGS.theme,
-    customPrompt:
-      typeof raw['custom_prompt'] === 'string'
-        ? raw['custom_prompt']
-        : DEFAULT_SETTINGS.customPrompt,
+    editorFontSize: numberOr(raw, 'editor_font_size', DEFAULT_SETTINGS.editorFontSize),
+    goalStateFontSize: numberOr(raw, 'goal_state_font_size', DEFAULT_SETTINGS.goalStateFontSize),
+    proseProofFontSize: numberOr(raw, proseKey, DEFAULT_SETTINGS.proseProofFontSize),
+    assistantFontSize: numberOr(raw, 'assistant_font_size', DEFAULT_SETTINGS.assistantFontSize),
+    assistantModel: stringOrNull(raw, assistantModelKey),
+    translationModel: stringOrNull(raw, 'translation_model'),
+    assistantPrompt: stringOrNull(raw, 'assistant_prompt'),
+    translationPrompt: stringOrNull(raw, 'translation_prompt'),
   }
 }
 
@@ -78,42 +84,52 @@ export function parseSettings(raw: Record<string, unknown> | null | undefined): 
 function serializeSettings(s: SettingsData): Record<string, unknown> {
   return {
     editor_font_size: s.editorFontSize,
-    prose_font_size: s.proseFontSize,
+    goal_state_font_size: s.goalStateFontSize,
+    prose_proof_font_size: s.proseProofFontSize,
     assistant_font_size: s.assistantFontSize,
-    model: s.model,
-    theme: s.theme,
-    custom_prompt: s.customPrompt,
+    assistant_model: s.assistantModel,
+    translation_model: s.translationModel,
+    assistant_prompt: s.assistantPrompt,
+    translation_prompt: s.translationPrompt,
   }
 }
 
 // ── Reactive singleton ────────────────────────────────────────────────
 
 let editorFontSize = $state(DEFAULT_SETTINGS.editorFontSize)
-let proseFontSize = $state(DEFAULT_SETTINGS.proseFontSize)
+let goalStateFontSize = $state(DEFAULT_SETTINGS.goalStateFontSize)
+let proseProofFontSize = $state(DEFAULT_SETTINGS.proseProofFontSize)
 let assistantFontSize = $state(DEFAULT_SETTINGS.assistantFontSize)
-let model = $state<string | null>(DEFAULT_SETTINGS.model)
-let themeValue = $state<ThemePreference>(DEFAULT_SETTINGS.theme)
-let customPrompt = $state(DEFAULT_SETTINGS.customPrompt)
+let assistantModel = $state<string | null>(DEFAULT_SETTINGS.assistantModel)
+let translationModel = $state<string | null>(DEFAULT_SETTINGS.translationModel)
+let assistantPrompt = $state<string | null>(DEFAULT_SETTINGS.assistantPrompt)
+let translationPrompt = $state<string | null>(DEFAULT_SETTINGS.translationPrompt)
 let availableModels = $state<ModelInfo[]>([])
 
 export const settings = {
   get editorFontSize() {
     return editorFontSize
   },
-  get proseFontSize() {
-    return proseFontSize
+  get goalStateFontSize() {
+    return goalStateFontSize
+  },
+  get proseProofFontSize() {
+    return proseProofFontSize
   },
   get assistantFontSize() {
     return assistantFontSize
   },
-  get model() {
-    return model
+  get assistantModel() {
+    return assistantModel
   },
-  get theme() {
-    return themeValue
+  get translationModel() {
+    return translationModel
   },
-  get customPrompt() {
-    return customPrompt
+  get assistantPrompt() {
+    return assistantPrompt
+  },
+  get translationPrompt() {
+    return translationPrompt
   },
   get availableModels() {
     return availableModels
@@ -130,42 +146,45 @@ export function setAvailableModels(models: ModelInfo[]): void {
  */
 export function applySettings(s: SettingsData): void {
   editorFontSize = s.editorFontSize
-  proseFontSize = s.proseFontSize
+  goalStateFontSize = s.goalStateFontSize
+  proseProofFontSize = s.proseProofFontSize
   assistantFontSize = s.assistantFontSize
-  model = s.model
-  themeValue = s.theme
-  customPrompt = s.customPrompt
+  assistantModel = s.assistantModel
+  translationModel = s.translationModel
+  assistantPrompt = s.assistantPrompt
+  translationPrompt = s.translationPrompt
 }
 
 function currentValues(): SettingsData {
   return {
     editorFontSize,
-    proseFontSize,
+    goalStateFontSize,
+    proseProofFontSize,
     assistantFontSize,
-    model,
-    theme: themeValue,
-    customPrompt,
+    assistantModel,
+    translationModel,
+    assistantPrompt,
+    translationPrompt,
   }
 }
 
-export async function updateSetting(
-  key: keyof SettingsData,
-  value: number | string | null,
-): Promise<void> {
+type SettingsKey = keyof SettingsData
+type SettingsValue = SettingsData[SettingsKey]
+
+function assignField(key: SettingsKey, value: SettingsValue): void {
+  if (key === 'editorFontSize' && typeof value === 'number') editorFontSize = value
+  else if (key === 'goalStateFontSize' && typeof value === 'number') goalStateFontSize = value
+  else if (key === 'proseProofFontSize' && typeof value === 'number') proseProofFontSize = value
+  else if (key === 'assistantFontSize' && typeof value === 'number') assistantFontSize = value
+  else if (key === 'assistantModel') assistantModel = typeof value === 'string' ? value : null
+  else if (key === 'translationModel') translationModel = typeof value === 'string' ? value : null
+  else if (key === 'assistantPrompt') assistantPrompt = typeof value === 'string' ? value : null
+  else if (key === 'translationPrompt') translationPrompt = typeof value === 'string' ? value : null
+}
+
+export async function updateSetting(key: SettingsKey, value: SettingsValue): Promise<void> {
   const previous = currentValues()
-  if (key === 'editorFontSize' && typeof value === 'number') {
-    editorFontSize = value
-  } else if (key === 'proseFontSize' && typeof value === 'number') {
-    proseFontSize = value
-  } else if (key === 'assistantFontSize' && typeof value === 'number') {
-    assistantFontSize = value
-  } else if (key === 'model') {
-    model = typeof value === 'string' ? value : null
-  } else if (key === 'theme') {
-    themeValue = value === 'light' ? 'light' : value === 'auto' ? 'auto' : 'dark'
-  } else if (key === 'customPrompt') {
-    customPrompt = typeof value === 'string' ? value : ''
-  }
+  assignField(key, value)
   try {
     const s = serializeSettings(currentValues())
     await invoke('save_settings', { settings: s })
@@ -187,9 +206,25 @@ export async function resetToDefaults(): Promise<void> {
   }
 }
 
-// ── Draft state for deferred Apply ───────────────────────────────────
+// ── Default prompt fetchers ──────────────────────────────────────────
 
-type SettingsKey = keyof SettingsData
+/**
+ * Fetch the baked-in default assistant prompt from the Rust backend.
+ * Used by the Settings UI to pre-fill the textarea when the user hasn't
+ * set their own prompt.
+ */
+export async function getDefaultAssistantPrompt(): Promise<string> {
+  return invoke<string>('get_default_assistant_prompt')
+}
+
+/**
+ * Fetch the baked-in default translation prompt from the Rust backend.
+ */
+export async function getDefaultTranslationPrompt(): Promise<string> {
+  return invoke<string>('get_default_translation_prompt')
+}
+
+// ── Draft state for deferred Apply ───────────────────────────────────
 
 interface DraftOptions {
   afterApply?: (values: SettingsData) => Promise<void>
@@ -209,11 +244,13 @@ class SettingsDraft {
   #afterApply: ((values: SettingsData) => Promise<void>) | null
 
   editorFontSize = $state(DEFAULT_SETTINGS.editorFontSize)
-  proseFontSize = $state(DEFAULT_SETTINGS.proseFontSize)
+  goalStateFontSize = $state(DEFAULT_SETTINGS.goalStateFontSize)
+  proseProofFontSize = $state(DEFAULT_SETTINGS.proseProofFontSize)
   assistantFontSize = $state(DEFAULT_SETTINGS.assistantFontSize)
-  model = $state<string | null>(DEFAULT_SETTINGS.model)
-  theme = $state<ThemePreference>(DEFAULT_SETTINGS.theme)
-  customPrompt = $state(DEFAULT_SETTINGS.customPrompt)
+  assistantModel = $state<string | null>(DEFAULT_SETTINGS.assistantModel)
+  translationModel = $state<string | null>(DEFAULT_SETTINGS.translationModel)
+  assistantPrompt = $state<string | null>(DEFAULT_SETTINGS.assistantPrompt)
+  translationPrompt = $state<string | null>(DEFAULT_SETTINGS.translationPrompt)
 
   constructor(keys: SettingsKey[], options?: DraftOptions) {
     this.#keys = keys
@@ -229,7 +266,7 @@ class SettingsDraft {
     return this.#keys.some((key) => (this as AnyRecord)[key] !== this.committed[key])
   }
 
-  set(key: SettingsKey, value: number | string | null): void {
+  set(key: SettingsKey, value: SettingsValue): void {
     ;(this as AnyRecord)[key] = value
   }
 
@@ -270,3 +307,5 @@ class SettingsDraft {
 export function createDraft(keys: SettingsKey[], options?: DraftOptions): SettingsDraft {
   return new SettingsDraft(keys, options)
 }
+
+export type { SettingsDraft }

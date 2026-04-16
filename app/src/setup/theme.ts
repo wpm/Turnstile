@@ -1,29 +1,11 @@
-import { writable } from 'svelte/store'
+/**
+ * Theme type shared across UI modules.
+ *
+ * Turnstile follows the OS light/dark preference automatically; there is no
+ * in-app toggle and no persisted theme setting. This module exists so CM6
+ * extensions and other consumers can type their `theme` prop without pulling
+ * in the (deleted) preference store.
+ */
 
-/** User's stored preference — may be explicit or follow the OS. */
-export type ThemePreference = 'dark' | 'light' | 'auto'
-
-/** The concrete theme applied to the UI (never 'auto'). */
+/** The concrete theme currently applied to the UI. */
 export type ResolvedTheme = 'dark' | 'light'
-
-/** The user's persisted theme preference. */
-export const theme = writable<ThemePreference>('auto')
-
-/**
- * Tracks the OS-level color scheme via `matchMedia`.
- * Updated by a listener initialised in App.svelte.
- */
-export const systemTheme = writable<ResolvedTheme>('dark')
-
-/** Flip a resolved theme to its opposite (for the two-state toggle button). */
-export function toggleTheme(current: ResolvedTheme): ResolvedTheme {
-  return current === 'dark' ? 'light' : 'dark'
-}
-
-/**
- * Turn a preference + the current system theme into a concrete dark/light value.
- */
-export function resolveTheme(pref: ThemePreference, system: ResolvedTheme): ResolvedTheme {
-  if (pref === 'auto') return system
-  return pref
-}

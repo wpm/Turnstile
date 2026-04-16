@@ -54,6 +54,11 @@ impl From<String> for LlmError {
 ///
 /// Backends emit [`STREAM_DELTA_EVENT`] Tauri events while streaming and a
 /// [`COMPLETE_EVENT`] event when the multi-turn loop finishes.
+///
+/// The `model` parameter on each call is the model ID (e.g. `"claude-opus-4-6"`)
+/// the caller wants to use.  Callers select the model from the appropriate
+/// settings field (`assistant_model` or `translation_model`) so different
+/// surfaces of the app can use different models.
 #[async_trait]
 pub trait Llm: Send + Sync {
     /// One-shot completion with an explicit system prompt.  Used by the
@@ -63,6 +68,7 @@ pub trait Llm: Send + Sync {
         &self,
         system_prompt: &str,
         user_content: &str,
+        model: &str,
         app: &AppHandle,
     ) -> Result<Turn, LlmError>;
 
@@ -76,6 +82,7 @@ pub trait Llm: Send + Sync {
         system_prompt: &str,
         transcript: &Transcript,
         tools: &[ToolDefinition],
+        model: &str,
         app: &AppHandle,
         user_content: &str,
     ) -> Result<Turn, LlmError>;
@@ -156,6 +163,7 @@ impl Llm for MockBackend {
         _system_prompt: &str,
         _transcript: &Transcript,
         _tools: &[ToolDefinition],
+        _model: &str,
         app: &AppHandle,
         user_content: &str,
     ) -> Result<Turn, LlmError> {
@@ -192,6 +200,7 @@ impl Llm for MockBackend {
         &self,
         _system_prompt: &str,
         user_content: &str,
+        _model: &str,
         app: &AppHandle,
     ) -> Result<Turn, LlmError> {
         let turn = Turn::assistant(format!("[echo] {user_content}"));
@@ -207,7 +216,6 @@ impl Llm for MockBackend {
 #[cfg(not(feature = "mock-llm"))]
 pub struct AnthropicBackend {
     api_key: String,
-    model: String,
     client: reqwest::Client,
 }
 
@@ -216,11 +224,8 @@ impl AnthropicBackend {
     pub fn from_env() -> Result<Self, String> {
         let api_key = std::env::var("ANTHROPIC_API_KEY")
             .map_err(|_| "ANTHROPIC_API_KEY environment variable not set".to_string())?;
-        let model = std::env::var("TURNSTILE_MODEL")
-            .unwrap_or_else(|_| "claude-sonnet-4-20250514".to_string());
         Ok(Self {
             api_key,
-            model,
             client: reqwest::Client::new(),
         })
     }
@@ -234,6 +239,7 @@ impl AnthropicBackend {
         system_prompt: &str,
         messages: &[serde_json::Value],
         tools: &[ToolDefinition],
+        model: &str,
         app: &AppHandle,
     ) -> Result<(String, String, Vec<(String, String, serde_json::Value)>), LlmError> {
         use futures_util::StreamExt;
@@ -250,7 +256,7 @@ impl AnthropicBackend {
             .collect();
 
         let mut body = serde_json::json!({
-            "model": self.model,
+            "model": model,
             "max_tokens": 8192,
             "stream": true,
             "system": system_prompt,
@@ -402,6 +408,7 @@ impl Llm for AnthropicBackend {
         system_prompt: &str,
         transcript: &Transcript,
         tools: &[ToolDefinition],
+        model: &str,
         app: &AppHandle,
         user_content: &str,
     ) -> Result<Turn, LlmError> {
@@ -439,7 +446,7 @@ impl Llm for AnthropicBackend {
 
         loop {
             let (stop_reason, text_chunk, tool_calls) = self
-                .stream_request(system_prompt, &messages, tools, app)
+                .stream_request(system_prompt, &messages, tools, model, app)
                 .await?;
 
             full_assistant_text.push_str(&text_chunk);
@@ -495,6 +502,7 @@ impl Llm for AnthropicBackend {
         &self,
         system_prompt: &str,
         user_content: &str,
+        model: &str,
         app: &AppHandle,
     ) -> Result<Turn, LlmError> {
         if self.api_key.is_empty() {
@@ -505,7 +513,7 @@ impl Llm for AnthropicBackend {
 
         let messages = vec![serde_json::json!({ "role": "user", "content": user_content })];
         let (_stop_reason, text, _tool_calls) = self
-            .stream_request(system_prompt, &messages, &[], app)
+            .stream_request(system_prompt, &messages, &[], model, app)
             .await?;
 
         Ok(Turn::assistant(text))
@@ -520,29 +528,6 @@ impl Llm for AnthropicBackend {
 #[tauri::command]
 pub fn get_available_models() -> Vec<models::ModelInfo> {
     models::MODELS.to_vec()
-}
-
-/// Update the selected model in settings and persist to disk.
-#[tauri::command]
-pub async fn set_model(app: AppHandle, model_id: String) -> Result<(), String> {
-    use tauri::Manager;
-
-    if !models::is_valid_model_id(&model_id) {
-        return Err(format!("Unknown model ID: {model_id}"));
-    }
-
-    let app_data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("Failed to resolve app data directory: {e}"))?;
-
-    let state = app.state::<crate::AppState>();
-    let mut lock = state.settings.lock().await;
-    lock.model = Some(model_id);
-    let updated = lock.clone();
-    drop(lock);
-
-    crate::settings::save_settings_to_disk(&updated, &app_data_dir)
 }
 
 // ---------------------------------------------------------------------------

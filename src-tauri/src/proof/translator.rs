@@ -10,13 +10,35 @@
 //! itself and the Tauri command that lets the user force an on-demand
 //! regeneration.
 
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 use super::{compute_source_hash, ProsePayload, PROSE_UPDATED_EVENT};
-use crate::llm::{Llm, LlmError};
+use crate::llm::{models, Llm, LlmError};
 
-/// Translator system prompt, loaded at compile time from prompts/translator.md.
-pub const TRANSLATOR_PROMPT: &str = include_str!("prompts/translator.md");
+/// Default translator prompt, loaded at compile time from prompts/translator.md.
+/// The user can override it via `Settings::translation_prompt`; when that
+/// override is `None` the value below is used verbatim.
+pub const DEFAULT_TRANSLATION_PROMPT: &str = include_str!("prompts/translator.md");
+
+/// Resolve the translator's system prompt: user override if set, else default.
+async fn effective_translation_prompt(app: &AppHandle) -> String {
+    let state = app.state::<crate::AppState>();
+    let settings = state.settings.lock().await;
+    settings
+        .translation_prompt
+        .clone()
+        .unwrap_or_else(|| DEFAULT_TRANSLATION_PROMPT.to_string())
+}
+
+/// Resolve the translator's model: user override if set, else backend default.
+async fn effective_translation_model(app: &AppHandle) -> String {
+    let state = app.state::<crate::AppState>();
+    let settings = state.settings.lock().await;
+    settings
+        .translation_model
+        .clone()
+        .unwrap_or_else(|| models::default_model_id().to_string())
+}
 
 /// Run the LLM translator on `source` and return the generated prose.
 ///
@@ -27,7 +49,9 @@ pub async fn run_translator(
     source: &str,
     app: &AppHandle,
 ) -> Result<String, LlmError> {
-    let turn = llm.complete(TRANSLATOR_PROMPT, source, app).await?;
+    let prompt = effective_translation_prompt(app).await;
+    let model = effective_translation_model(app).await;
+    let turn = llm.complete(&prompt, source, &model, app).await?;
     Ok(turn.content)
 }
 
@@ -83,7 +107,7 @@ mod tests {
 
     #[test]
     fn translator_prompt_is_non_empty() {
-        assert!(!TRANSLATOR_PROMPT.is_empty());
-        assert!(TRANSLATOR_PROMPT.contains("mathematical writing assistant"));
+        assert!(!DEFAULT_TRANSLATION_PROMPT.is_empty());
+        assert!(DEFAULT_TRANSLATION_PROMPT.contains("mathematical writing assistant"));
     }
 }
