@@ -188,7 +188,13 @@ describe('semanticTokenRange', () => {
   const doc = makeDoc('def foo := 42\ntheorem bar')
 
   it('maps a known token type to a range with CSS class', () => {
-    const token: SemanticToken = { line: 1, col: 0, length: 3, token_type: 'keyword' }
+    const token: SemanticToken = {
+      line: 1,
+      col: 0,
+      length: 3,
+      token_type: 'keyword',
+      token_modifiers: [],
+    }
     expect(semanticTokenRange(token, doc)).toEqual({
       from: 0,
       to: 3,
@@ -197,28 +203,57 @@ describe('semanticTokenRange', () => {
   })
 
   it('returns null for an unknown token type', () => {
-    const token: SemanticToken = { line: 1, col: 0, length: 3, token_type: 'unknownType' }
+    const token: SemanticToken = {
+      line: 1,
+      col: 0,
+      length: 3,
+      token_type: 'unknownType',
+      token_modifiers: [],
+    }
     expect(semanticTokenRange(token, doc)).toBeNull()
   })
 
   it('returns null when line is out of range (0)', () => {
-    const token: SemanticToken = { line: 0, col: 0, length: 3, token_type: 'keyword' }
+    const token: SemanticToken = {
+      line: 0,
+      col: 0,
+      length: 3,
+      token_type: 'keyword',
+      token_modifiers: [],
+    }
     expect(semanticTokenRange(token, doc)).toBeNull()
   })
 
   it('returns null when line exceeds document lines', () => {
-    const token: SemanticToken = { line: 99, col: 0, length: 3, token_type: 'keyword' }
+    const token: SemanticToken = {
+      line: 99,
+      col: 0,
+      length: 3,
+      token_type: 'keyword',
+      token_modifiers: [],
+    }
     expect(semanticTokenRange(token, doc)).toBeNull()
   })
 
   it('returns null when token extends beyond document length', () => {
-    const token: SemanticToken = { line: 2, col: 5, length: 500, token_type: 'function' }
+    const token: SemanticToken = {
+      line: 2,
+      col: 5,
+      length: 500,
+      token_type: 'function',
+      token_modifiers: [],
+    }
     expect(semanticTokenRange(token, doc)).toBeNull()
   })
 
   it('handles a zero-length token (from === to)', () => {
-    // from <= to is the condition, so from === to is valid
-    const token: SemanticToken = { line: 1, col: 3, length: 0, token_type: 'variable' }
+    const token: SemanticToken = {
+      line: 1,
+      col: 3,
+      length: 0,
+      token_type: 'variable',
+      token_modifiers: [],
+    }
     expect(semanticTokenRange(token, doc)).toEqual({
       from: 3,
       to: 3,
@@ -227,12 +262,32 @@ describe('semanticTokenRange', () => {
   })
 
   it('maps token on second line correctly', () => {
-    // "theorem" starts at col 0 of line 2 (offset 14)
-    const token: SemanticToken = { line: 2, col: 0, length: 7, token_type: 'keyword' }
+    const token: SemanticToken = {
+      line: 2,
+      col: 0,
+      length: 7,
+      token_type: 'keyword',
+      token_modifiers: [],
+    }
     expect(semanticTokenRange(token, doc)).toEqual({
       from: 14,
       to: 21,
       cssClass: 'cm-lean-keyword',
+    })
+  })
+
+  it('uses declaration modifier to promote variable to function', () => {
+    const token: SemanticToken = {
+      line: 1,
+      col: 4,
+      length: 3,
+      token_type: 'variable',
+      token_modifiers: ['declaration'],
+    }
+    expect(semanticTokenRange(token, doc)).toEqual({
+      from: 4,
+      to: 7,
+      cssClass: 'cm-lean-function',
     })
   })
 })
@@ -250,9 +305,9 @@ describe('buildSemanticTokenRanges', () => {
 
   it('filters out unknown token types and sorts by from', () => {
     const tokens: SemanticToken[] = [
-      { line: 1, col: 6, length: 5, token_type: 'variable' },
-      { line: 1, col: 0, length: 5, token_type: 'keyword' },
-      { line: 1, col: 3, length: 2, token_type: 'bogus' },
+      { line: 1, col: 6, length: 5, token_type: 'variable', token_modifiers: [] },
+      { line: 1, col: 0, length: 5, token_type: 'keyword', token_modifiers: [] },
+      { line: 1, col: 3, length: 2, token_type: 'bogus', token_modifiers: [] },
     ]
     const result = buildSemanticTokenRanges(tokens, doc)
     expect(result).toHaveLength(2)

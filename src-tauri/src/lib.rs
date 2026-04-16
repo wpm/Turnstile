@@ -149,6 +149,7 @@ async fn start_lsp(app: AppHandle) -> Result<(), String> {
     let stdout = client.take_stdout().ok_or("Failed to take LSP stdout")?;
 
     let token_types = client.token_types.clone();
+    let token_modifiers = client.token_modifiers.clone();
     let pending = client.pending.clone();
     let writer = client.writer.clone();
     let next_id = client.next_id.clone();
@@ -156,7 +157,14 @@ async fn start_lsp(app: AppHandle) -> Result<(), String> {
 
     std::thread::spawn(move || {
         LspClient::read_messages(stdout, &pending, |msg| {
-            handle_lsp_message(&app_handle, &token_types, &writer, &next_id, msg);
+            handle_lsp_message(
+                &app_handle,
+                &token_types,
+                &token_modifiers,
+                &writer,
+                &next_id,
+                msg,
+            );
         });
 
         app_handle
@@ -176,7 +184,7 @@ async fn start_lsp(app: AppHandle) -> Result<(), String> {
         .await
         .map_err(|e| format!("LSP initialize failed: {e}"))?;
 
-    handle_initialize_response(&app, &client.token_types, &init_result);
+    handle_initialize_response(&app, &client.token_types, &client.token_modifiers, &init_result);
 
     {
         let mut lock = state.lsp_client.lock().await;
@@ -748,15 +756,16 @@ async fn lsp_document_symbols(app: AppHandle) -> Result<Vec<DocumentSymbolInfo>,
 fn handle_lsp_message(
     app: &AppHandle,
     token_types: &Arc<Mutex<Vec<String>>>,
+    token_modifiers: &Arc<Mutex<Vec<String>>>,
     writer: &Arc<tokio::sync::Mutex<Box<dyn std::io::Write + Send>>>,
     next_id: &Arc<AtomicI64>,
     msg: &serde_json::Value,
 ) {
     if let Some(result) = msg.get("result") {
         if result.get("capabilities").is_some() {
-            handle_initialize_response(app, token_types, result);
+            handle_initialize_response(app, token_types, token_modifiers, result);
         } else if let Some(data) = result.get("data") {
-            handle_semantic_tokens_response(app, token_types, data);
+            handle_semantic_tokens_response(app, token_types, token_modifiers, data);
         }
         return;
     }
@@ -822,11 +831,19 @@ fn handle_lsp_message(
 fn handle_initialize_response(
     app: &AppHandle,
     token_types: &Arc<Mutex<Vec<String>>>,
+    token_modifiers: &Arc<Mutex<Vec<String>>>,
     result: &serde_json::Value,
 ) {
-    let legend = lsp::parse_token_legend(result);
+    let type_legend = lsp::parse_token_legend(result);
+    let modifier_legend = lsp::parse_modifier_legend(result);
+    log::info!(
+        "LSP semantic token legend: types={type_legend:?}, modifiers={modifier_legend:?}"
+    );
     if let Ok(mut types) = token_types.lock() {
-        *types = legend;
+        *types = type_legend;
+    }
+    if let Ok(mut mods) = token_modifiers.lock() {
+        *mods = modifier_legend;
     }
 
     app.emit(
@@ -844,6 +861,7 @@ fn handle_initialize_response(
 fn handle_semantic_tokens_response(
     app: &AppHandle,
     token_types: &Arc<Mutex<Vec<String>>>,
+    token_modifiers: &Arc<Mutex<Vec<String>>>,
     data: &serde_json::Value,
 ) {
     let Some(arr) = data.as_array() else { return };
@@ -852,11 +870,15 @@ fn handle_semantic_tokens_response(
         .filter_map(|v| v.as_u64().and_then(|n| u32::try_from(n).ok()))
         .collect();
 
-    let guard = token_types
+    let type_guard = token_types
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let tokens = lsp::decode_semantic_tokens(&data_u32, &guard);
-    drop(guard);
+    let mod_guard = token_modifiers
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let tokens = lsp::decode_semantic_tokens(&data_u32, &type_guard, &mod_guard);
+    drop(type_guard);
+    drop(mod_guard);
     app.emit("lsp-semantic-tokens", tokens).ok();
 }
 

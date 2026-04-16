@@ -39,6 +39,7 @@ pub struct SemanticToken {
     pub col: u32,
     pub length: u32,
     pub token_type: String,
+    pub token_modifiers: Vec<String>,
 }
 
 #[derive(Clone, Serialize)]
@@ -151,8 +152,10 @@ pub struct LspClient {
     pub next_id: Arc<AtomicI64>,
     /// Shared writer — clone the `Arc` to send messages from the reader thread via `send_raw`.
     pub writer: Arc<tokio::sync::Mutex<Box<dyn Write + Send>>>,
-    /// Semantic token legend, populated during initialize (accessed from sync reader thread)
+    /// Semantic token type legend, populated during initialize (accessed from sync reader thread)
     pub token_types: Arc<Mutex<Vec<String>>>,
+    /// Semantic token modifier legend, populated during initialize
+    pub token_modifiers: Arc<Mutex<Vec<String>>>,
     /// Pending request registry: `request_id` → oneshot sender for the response.
     pub pending: Arc<Mutex<HashMap<i64, mpsc::SyncSender<Value>>>>,
 }
@@ -187,6 +190,7 @@ impl LspClient {
             next_id: Arc::new(AtomicI64::new(1)),
             writer: Arc::new(tokio::sync::Mutex::new(Box::new(stdin))),
             token_types: Arc::new(Mutex::new(Vec::new())),
+            token_modifiers: Arc::new(Mutex::new(Vec::new())),
             pending: Arc::new(Mutex::new(HashMap::new())),
         })
     }
@@ -635,13 +639,29 @@ pub fn path_to_file_uri(path: &Path) -> String {
         .map_or_else(|()| format!("file://{}", path.display()), |u| u.to_string())
 }
 
-/// Parse the semantic token legend from an initialize response.
+/// Parse the semantic token type legend from an initialize response.
 pub fn parse_token_legend(result: &Value) -> Vec<String> {
     result
         .get("capabilities")
         .and_then(|c| c.get("semanticTokensProvider"))
         .and_then(|p| p.get("legend"))
         .and_then(|l| l.get("tokenTypes"))
+        .and_then(|t| t.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Parse the semantic token modifier legend from an initialize response.
+pub fn parse_modifier_legend(result: &Value) -> Vec<String> {
+    result
+        .get("capabilities")
+        .and_then(|c| c.get("semanticTokensProvider"))
+        .and_then(|p| p.get("legend"))
+        .and_then(|l| l.get("tokenModifiers"))
         .and_then(|t| t.as_array())
         .map(|arr| {
             arr.iter()
@@ -725,7 +745,11 @@ pub fn parse_diagnostics(params: &Value) -> Vec<DiagnosticInfo> {
 ///
 /// The LSP response is a flat array of 5-tuples:
 ///   [deltaLine, deltaStart, length, tokenTypeIndex, tokenModifiers]
-pub fn decode_semantic_tokens(data: &[u32], legend: &[String]) -> Vec<SemanticToken> {
+pub fn decode_semantic_tokens(
+    data: &[u32],
+    type_legend: &[String],
+    modifier_legend: &[String],
+) -> Vec<SemanticToken> {
     let mut tokens = Vec::new();
     let mut line: u32 = 1; // 1-indexed for frontend
     let mut col: u32 = 0;
@@ -735,6 +759,7 @@ pub fn decode_semantic_tokens(data: &[u32], legend: &[String]) -> Vec<SemanticTo
         let delta_start = chunk[1];
         let length = chunk[2];
         let token_type_idx = chunk[3] as usize;
+        let modifier_bits = chunk[4];
 
         if delta_line > 0 {
             line += delta_line;
@@ -743,16 +768,24 @@ pub fn decode_semantic_tokens(data: &[u32], legend: &[String]) -> Vec<SemanticTo
             col += delta_start;
         }
 
-        let token_type = legend
+        let token_type = type_legend
             .get(token_type_idx)
             .cloned()
             .unwrap_or_else(|| "variable".to_string());
+
+        let mut token_modifiers = Vec::new();
+        for (i, name) in modifier_legend.iter().enumerate() {
+            if modifier_bits & (1 << i) != 0 {
+                token_modifiers.push(name.clone());
+            }
+        }
 
         tokens.push(SemanticToken {
             line,
             col,
             length,
             token_type,
+            token_modifiers,
         });
     }
 
@@ -1071,6 +1104,27 @@ mod tests {
     }
 
     #[test]
+    fn parse_modifier_legend_returns_modifiers() {
+        let result = json!({
+            "capabilities": {
+                "semanticTokensProvider": {
+                    "legend": {
+                        "tokenTypes": ["keyword"],
+                        "tokenModifiers": ["declaration", "readonly"]
+                    }
+                }
+            }
+        });
+        let legend = parse_modifier_legend(&result);
+        assert_eq!(legend, vec!["declaration", "readonly"]);
+    }
+
+    #[test]
+    fn parse_modifier_legend_missing_returns_empty() {
+        assert!(parse_modifier_legend(&json!({})).is_empty());
+    }
+
+    #[test]
     fn parse_diagnostics_empty_returns_empty() {
         let params = json!({ "diagnostics": [] });
         assert!(parse_diagnostics(&params).is_empty());
@@ -1115,24 +1169,40 @@ mod tests {
 
     #[test]
     fn decode_semantic_tokens_single_token() {
-        let legend = vec!["keyword".to_string(), "type".to_string()];
+        let types = vec!["keyword".to_string(), "type".to_string()];
+        let modifiers = vec!["declaration".to_string()];
         let data = vec![0, 5, 3, 0, 0];
-        let tokens = decode_semantic_tokens(&data, &legend);
+        let tokens = decode_semantic_tokens(&data, &types, &modifiers);
         assert_eq!(tokens.len(), 1);
         assert_eq!(tokens[0].line, 1);
         assert_eq!(tokens[0].col, 5);
         assert_eq!(tokens[0].length, 3);
         assert_eq!(tokens[0].token_type, "keyword");
+        assert!(tokens[0].token_modifiers.is_empty());
+    }
+
+    #[test]
+    fn decode_semantic_tokens_with_modifiers() {
+        let types = vec!["keyword".to_string(), "variable".to_string()];
+        let modifiers = vec!["declaration".to_string(), "readonly".to_string()];
+        let data = vec![0, 0, 5, 1, 0b11]; // variable with declaration+readonly
+        let tokens = decode_semantic_tokens(&data, &types, &modifiers);
+        assert_eq!(tokens[0].token_type, "variable");
+        assert_eq!(
+            tokens[0].token_modifiers,
+            vec!["declaration", "readonly"]
+        );
     }
 
     #[test]
     fn decode_semantic_tokens_line_advance() {
-        let legend = vec!["keyword".to_string()];
+        let types = vec!["keyword".to_string()];
+        let modifiers: Vec<String> = vec![];
         let data = vec![
             0, 0, 1, 0, 0, // token at line 1, col 0
             2, 4, 1, 0, 0, // delta line +2, col 4 → line 3, col 4
         ];
-        let tokens = decode_semantic_tokens(&data, &legend);
+        let tokens = decode_semantic_tokens(&data, &types, &modifiers);
         assert_eq!(tokens[0].line, 1);
         assert_eq!(tokens[1].line, 3);
         assert_eq!(tokens[1].col, 4);
@@ -1154,19 +1224,21 @@ mod tests {
 
     #[test]
     fn decode_semantic_tokens_col_resets_on_new_line() {
-        let legend = vec!["keyword".to_string()];
+        let types = vec!["keyword".to_string()];
+        let modifiers: Vec<String> = vec![];
         // First token: line 1, col 10. Second token: delta_line=1 → line 2, delta_start=3 → col 3 (not 10+3).
         let data = vec![0, 10, 1, 0, 0, 1, 3, 1, 0, 0];
-        let tokens = decode_semantic_tokens(&data, &legend);
+        let tokens = decode_semantic_tokens(&data, &types, &modifiers);
         assert_eq!(tokens[1].line, 2);
         assert_eq!(tokens[1].col, 3);
     }
 
     #[test]
     fn decode_semantic_tokens_unknown_type_falls_back_to_variable() {
-        let legend = vec!["keyword".to_string()];
+        let types = vec!["keyword".to_string()];
+        let modifiers: Vec<String> = vec![];
         let data = vec![0, 0, 5, 99, 0]; // index 99 out of bounds
-        let tokens = decode_semantic_tokens(&data, &legend);
+        let tokens = decode_semantic_tokens(&data, &types, &modifiers);
         assert_eq!(tokens[0].token_type, "variable");
     }
 
@@ -1432,6 +1504,7 @@ mod tests {
             next_id: Arc::new(AtomicI64::new(1)),
             writer: Arc::new(tokio::sync::Mutex::new(Box::new(writer))),
             token_types: Arc::new(Mutex::new(Vec::new())),
+            token_modifiers: Arc::new(Mutex::new(Vec::new())),
             pending: Arc::new(Mutex::new(HashMap::new())),
         };
 

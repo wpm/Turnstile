@@ -91,7 +91,7 @@ interface TokenRange {
  * resulting span is out of document bounds.
  */
 export function semanticTokenRange(token: SemanticToken, doc: DocLike): TokenRange | null {
-  const cssClass = tokenTypeToCssClass(token.token_type)
+  const cssClass = tokenTypeToCssClass(token.token_type, token.token_modifiers)
   if (!cssClass) return null
 
   const lineNum = token.line

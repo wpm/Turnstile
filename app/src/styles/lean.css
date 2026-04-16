@@ -32,7 +32,10 @@
   color: var(--cm-function);
 }
 .cm-lean-variable {
-  color: var(--text-primary);
+  color: var(--cm-variable);
+}
+.cm-lean-property {
+  color: var(--cm-property);
 }
 .cm-lean-namespace {
   color: var(--cm-type);

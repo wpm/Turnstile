@@ -64,6 +64,7 @@ export interface SemanticTokenFixture {
   col: number
   length: number
   token_type: string
+  token_modifiers?: string[]
 }
 
 export interface CompletionItemFixture {

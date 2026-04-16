@@ -15,4 +15,17 @@ describe('tokenTypeToCssClass', () => {
   it('returns null for unknown token types', () => {
     expect(tokenTypeToCssClass('unknown_future_type')).toBeNull()
   })
+
+  it('maps variable with declaration modifier to cm-lean-function', () => {
+    expect(tokenTypeToCssClass('variable', ['declaration'])).toBe('cm-lean-function')
+  })
+
+  it('maps plain variable to cm-lean-variable', () => {
+    expect(tokenTypeToCssClass('variable', [])).toBe('cm-lean-variable')
+    expect(tokenTypeToCssClass('variable')).toBe('cm-lean-variable')
+  })
+
+  it('maps property to cm-lean-property', () => {
+    expect(tokenTypeToCssClass('property')).toBe('cm-lean-property')
+  })
 })

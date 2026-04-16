@@ -92,6 +92,8 @@
   --cm-keyword: #ff7b72; /* red.3 */
   --cm-type: #d2a8ff; /* purple.2 */
   --cm-function: #d2a8ff; /* purple.2 */
+  --cm-variable: #c9d1d9; /* neutral.3 — subtle lift from text-primary */
+  --cm-property: #79c0ff; /* blue.2 — dot-accessed names */
   --cm-string: #a5d6ff; /* blue.1 */
   --cm-number: #79c0ff; /* blue.2 */
   --cm-comment: #8b949e; /* neutral.8 */
@@ -128,6 +130,8 @@ html.light {
   --cm-keyword: #cf222e; /* red.5 */
   --cm-type: #6639ba; /* purple.6 */
   --cm-function: #6639ba; /* purple.6 */
+  --cm-variable: #24292f; /* neutral.9 — subtle lift from text-primary */
+  --cm-property: #0550ae; /* blue.6 — dot-accessed names */
   --cm-string: #0a3069; /* blue.8 */
   --cm-number: #0550ae; /* blue.6 */
   --cm-comment: #59636e; /* neutral.9 */
@@ -161,6 +165,8 @@ html.light {
     --cm-keyword: #cf222e;
     --cm-type: #6639ba;
     --cm-function: #6639ba;
+    --cm-variable: #24292f;
+    --cm-property: #0550ae;
     --cm-string: #0a3069;
     --cm-number: #0550ae;
     --cm-comment: #59636e;
