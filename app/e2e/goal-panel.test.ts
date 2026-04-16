@@ -57,17 +57,18 @@ test.describe('GoalPanel', () => {
 
     const goalBlock = page.locator('.goal-block')
 
-    // Cursor on source line 1 (after typing the first character) → first panel
-    // line that maps to source 1 is "case left" (GoalBlock line 0).
+    // Cursor on source line 1 → both panel lines mapping to source 1 highlight
+    // ("case left" and "hp : p").
     await page.keyboard.press('Home')
     await page.keyboard.press('ArrowUp')
-    await expect(goalBlock.locator('.goal-line-active')).toHaveCount(1)
-    await expect(goalBlock.locator('.goal-line-active')).toHaveText(/case left/)
+    await expect(goalBlock.locator('.goal-line-active')).toHaveCount(2)
+    await expect(goalBlock.locator('.goal-line-active').first()).toHaveText(/case left/)
 
-    // Move the cursor down to source line 2 → first panel line that maps to
-    // source 2 is "hq : q" (GoalBlock line 2).
+    // Move the cursor down to source line 2 → both panel lines mapping to
+    // source 2 highlight ("hq : q" and "⊢ p").
     await page.keyboard.press('ArrowDown')
-    await expect(goalBlock.locator('.goal-line-active')).toHaveText(/hq : q/)
+    await expect(goalBlock.locator('.goal-line-active')).toHaveCount(2)
+    await expect(goalBlock.locator('.goal-line-active').first()).toHaveText(/hq : q/)
 
     // Click into the goal panel — editor loses focus, highlight clears.
     await goalBlock.click()
