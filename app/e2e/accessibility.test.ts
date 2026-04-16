@@ -27,7 +27,7 @@ test.describe('Button focus states', () => {
 
   test('send button shows focus ring when focused via keyboard', async ({ page, mountApp }) => {
     await mountApp()
-    const textbox = page.locator('.chat-input')
+    const textbox = page.locator('.assistant-input')
     await textbox.click()
     await page.keyboard.type('hello')
     // Tab from the input to the send button to trigger :focus-visible.
@@ -198,7 +198,7 @@ test.describe('Settings modal keyboard navigation', () => {
 
     await page.keyboard.press('Tab')
     const fourth = await page.evaluate(() => document.activeElement?.getAttribute('data-testid'))
-    expect(fourth).toBe('chat-font-size-select')
+    expect(fourth).toBe('assistant-font-size-select')
   })
 
   test('Tab from tab button enters active Model panel when Model tab is selected', async ({
@@ -384,30 +384,30 @@ test.describe('Settings tablist ARIA', () => {
 // ---------------------------------------------------------------------------
 
 test.describe('Resize handle keyboard operation', () => {
-  test('chat input resize handle is focusable and adjusts height with arrow keys', async ({
+  test('assistant input resize handle is focusable and adjusts height with arrow keys', async ({
     page,
     mountApp,
   }) => {
     await mountApp()
-    const handle = page.locator('.chat-resize-handle')
+    const handle = page.locator('.assistant-resize-handle')
     await handle.focus()
 
     const before = await page
-      .locator('.chat-input-area')
+      .locator('.assistant-input-area')
       .evaluate((el) => (el as HTMLElement).offsetHeight)
 
     await page.keyboard.press('ArrowUp')
     await page.keyboard.press('ArrowUp')
 
     const after = await page
-      .locator('.chat-input-area')
+      .locator('.assistant-input-area')
       .evaluate((el) => (el as HTMLElement).offsetHeight)
     expect(after).toBeGreaterThan(before)
   })
 
-  test('chat input resize handle has correct ARIA attributes', async ({ page, mountApp }) => {
+  test('assistant input resize handle has correct ARIA attributes', async ({ page, mountApp }) => {
     await mountApp()
-    const handle = page.locator('.chat-resize-handle')
+    const handle = page.locator('.assistant-resize-handle')
     await expect(handle).toHaveAttribute('role', 'separator')
     await expect(handle).toHaveAttribute('aria-orientation', 'horizontal')
     await expect(handle).toHaveAttribute('aria-label', 'Resize input area')
@@ -421,11 +421,11 @@ test.describe('Resize handle keyboard operation', () => {
     mountApp,
   }) => {
     await mountApp()
-    const splitter = page.locator('[aria-label="Resize chat panel"]')
+    const splitter = page.locator('[aria-label="Resize assistant panel"]')
     await splitter.focus()
 
     const before = await page.evaluate(() => {
-      const panel = document.querySelector<HTMLElement>('[aria-label="Resize chat panel"]')
+      const panel = document.querySelector<HTMLElement>('[aria-label="Resize assistant panel"]')
       return panel ? parseInt(panel.getAttribute('aria-valuenow') ?? '0', 10) : 0
     })
 
@@ -433,7 +433,7 @@ test.describe('Resize handle keyboard operation', () => {
     await page.keyboard.press('ArrowLeft')
 
     const after = await page.evaluate(() => {
-      const panel = document.querySelector<HTMLElement>('[aria-label="Resize chat panel"]')
+      const panel = document.querySelector<HTMLElement>('[aria-label="Resize assistant panel"]')
       return panel ? parseInt(panel.getAttribute('aria-valuenow') ?? '0', 10) : 0
     })
 
@@ -445,15 +445,15 @@ test.describe('Resize handle keyboard operation', () => {
 // Textarea accessible label
 // ---------------------------------------------------------------------------
 
-test.describe('Chat input accessible label', () => {
-  test('chat input has an accessible label', async ({ page, mountApp }) => {
+test.describe('Assistant input accessible label', () => {
+  test('assistant input has an accessible label', async ({ page, mountApp }) => {
     await mountApp()
-    const textbox = page.locator('.chat-input')
+    const textbox = page.locator('.assistant-input')
     const ariaLabel = await textbox.getAttribute('aria-label')
     const ariaLabelledBy = await textbox.getAttribute('aria-labelledby')
     expect(
       ariaLabel ?? ariaLabelledBy,
-      'chat input must have aria-label or aria-labelledby',
+      'assistant input must have aria-label or aria-labelledby',
     ).not.toBeNull()
   })
 })

@@ -6,7 +6,7 @@
 //! * [`Llm::complete`] — one-shot completion with a system prompt.  Used by the
 //!   translator (prose proof generation).
 //! * [`Llm::send_with_tools`] — multi-turn streaming with tool use.  Used by the
-//!   proof assistant to carry on a conversation with the user.
+//!   assistant to carry on a conversation with the user.
 //!
 //! # Backend selection
 //!
@@ -23,7 +23,7 @@ use async_trait::async_trait;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 
-use crate::proof_assistant::{
+use crate::assistant::{
     ToolDefinition, Transcript, Turn, COMPLETE_EVENT, STREAM_DELTA_EVENT, STREAM_DONE_EVENT,
 };
 
@@ -425,9 +425,9 @@ impl Llm for AnthropicBackend {
 
         for turn in &transcript.turns {
             let role = match turn.role {
-                crate::proof_assistant::Role::User => "user",
-                crate::proof_assistant::Role::Assistant => "assistant",
-                crate::proof_assistant::Role::System => continue,
+                crate::assistant::Role::User => "user",
+                crate::assistant::Role::Assistant => "assistant",
+                crate::assistant::Role::System => continue,
             };
             messages.push(serde_json::json!({ "role": role, "content": turn.content }));
         }
@@ -469,7 +469,7 @@ impl Llm for AnthropicBackend {
                 // Execute each tool call and build tool_result blocks.
                 let mut tool_results: Vec<serde_json::Value> = Vec::new();
                 for (id, name, input) in &tool_calls {
-                    let result = crate::proof_assistant::dispatch_tool(name, input, app).await;
+                    let result = crate::assistant::dispatch_tool(name, input, app).await;
                     tool_results.push(serde_json::json!({
                         "type": "tool_result",
                         "tool_use_id": id,

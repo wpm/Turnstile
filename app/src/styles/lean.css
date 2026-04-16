@@ -170,7 +170,7 @@ pre.lean-hover-popup-content {
   word-break: break-word;
 }
 /* Markdown branch: rich rendering via renderContent(). Fenced Lean blocks
-   use the shared .chat-lean-code styling from app.css. */
+   use the shared .assistant-lean-code styling from app.css. */
 .lean-hover-popup-md {
   font-family: var(--font-sans);
 }

@@ -4,7 +4,7 @@
   import type { SetupProgressPayload } from './lib/tauri'
   import Editor from './components/Editor.svelte'
   import SetupOverlay from './components/SetupOverlay.svelte'
-  import ChatPanel from './components/ChatPanel.svelte'
+  import AssistantPanel from './components/AssistantPanel.svelte'
   import SettingsModal from './components/SettingsModal.svelte'
   import ProofViewToggle from './components/ProofViewToggle.svelte'
   import ProsePanel from './components/ProsePanel.svelte'
@@ -27,12 +27,12 @@
   import { lspState, setOutlineSymbols, setupLspListeners } from './lib/lspState.svelte'
   import {
     layoutState,
-    setChatWidthPct,
+    setAssistantWidthPct,
     setGoalPanelPct,
     toggleWordWrap,
     setOutlineOpen,
-    CHAT_WIDTH_MIN,
-    CHAT_WIDTH_MAX,
+    ASSISTANT_WIDTH_MIN,
+    ASSISTANT_WIDTH_MAX,
     GOAL_PANEL_MIN,
     GOAL_PANEL_MAX,
   } from './lib/layoutState.svelte'
@@ -120,7 +120,7 @@
     e.preventDefault()
     const onMove = (ev: MouseEvent): void => {
       const pct = ((window.innerWidth - ev.clientX) / window.innerWidth) * 100
-      setChatWidthPct(pct)
+      setAssistantWidthPct(pct)
     }
     const onUp = (): void => {
       window.removeEventListener('mousemove', onMove)
@@ -134,16 +134,16 @@
     const step = e.shiftKey ? 5 : 1
     if (e.key === 'ArrowLeft') {
       e.preventDefault()
-      setChatWidthPct(layoutState.chatWidthPct + step)
+      setAssistantWidthPct(layoutState.assistantWidthPct + step)
     } else if (e.key === 'ArrowRight') {
       e.preventDefault()
-      setChatWidthPct(layoutState.chatWidthPct - step)
+      setAssistantWidthPct(layoutState.assistantWidthPct - step)
     } else if (e.key === 'Home') {
       e.preventDefault()
-      setChatWidthPct(CHAT_WIDTH_MIN)
+      setAssistantWidthPct(ASSISTANT_WIDTH_MIN)
     } else if (e.key === 'End') {
       e.preventDefault()
-      setChatWidthPct(CHAT_WIDTH_MAX)
+      setAssistantWidthPct(ASSISTANT_WIDTH_MAX)
     }
   }
 
@@ -503,9 +503,9 @@
   <div class="flex h-full bg-bg-primary">
     <!-- Editor column (takes remaining space) -->
     <div class="flex flex-col flex-1 min-w-0">
-      <!-- Top header: vertically aligns with the Proof Assistant header in ChatPanel.
+      <!-- Top header: vertically aligns with the Assistant header in AssistantPanel.
            min-h-[28px] on the inner row matches the w-7 h-7 toggle button that sets
-           the height of the Proof Assistant header, so both header bottoms align. -->
+           the height of the Assistant header, so both header bottoms align. -->
       <div class="flex items-center px-4 py-2 border-b border-border bg-bg-secondary shrink-0">
         <div class="flex items-center min-h-[28px]">
           <span
@@ -646,10 +646,10 @@
     <div
       role="separator"
       aria-orientation="vertical"
-      aria-label="Resize chat panel"
-      aria-valuenow={layoutState.chatWidthPct}
-      aria-valuemin={CHAT_WIDTH_MIN}
-      aria-valuemax={CHAT_WIDTH_MAX}
+      aria-label="Resize assistant panel"
+      aria-valuenow={layoutState.assistantWidthPct}
+      aria-valuemin={ASSISTANT_WIDTH_MIN}
+      aria-valuemax={ASSISTANT_WIDTH_MAX}
       tabindex="0"
       class="splitter-grip cursor-col-resize flex-shrink-0 bg-bg-tertiary flex flex-col items-center justify-center gap-1
         focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
@@ -662,15 +662,15 @@
       <span class="w-1 h-1 rounded-full bg-text-secondary opacity-40"></span>
     </div>
 
-    <!-- Chat panel column (resizable width) -->
+    <!-- Assistant panel column (resizable width) -->
     <div
       class="flex flex-col flex-shrink-0 h-full border-l border-border"
-      style="width: {layoutState.chatWidthPct}%"
+      style="width: {layoutState.assistantWidthPct}%"
     >
-      <ChatPanel
+      <AssistantPanel
         theme={resolved}
         sessionDirty={sessionState.sessionDirty}
-        fontSize={settings.chatFontSize}
+        fontSize={settings.assistantFontSize}
         onToggleTheme={() => {
           const next = toggleTheme(resolved)
           theme.set(next)

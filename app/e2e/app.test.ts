@@ -55,7 +55,7 @@ test.describe('SetupOverlay', () => {
               return Promise.resolve({
                 editor_font_size: 13,
                 prose_font_size: 13,
-                chat_font_size: 13,
+                assistant_font_size: 13,
                 model: null,
               })
             if (cmd === 'get_available_models') return Promise.resolve([])

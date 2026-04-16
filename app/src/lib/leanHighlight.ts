@@ -2,7 +2,7 @@
  * Lightweight regex-based Lean syntax highlighter for read-only display.
  *
  * Applies the same ``cm-lean-*`` CSS classes used by the CodeMirror editor,
- * so chat messages share the editor's color scheme without spinning up a
+ * so assistant messages share the editor's color scheme without spinning up a
  * full CM6 instance.
  *
  * Coverage: keywords, strings, comments, numbers, operators.  Identifiers

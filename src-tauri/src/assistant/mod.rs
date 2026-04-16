@@ -1,4 +1,4 @@
-//! The Proof Assistant: a conversational agent that helps the user develop a
+//! The Assistant: a conversational agent that helps the user develop a
 //! [`Proof`](crate::proof::Proof) by reading the formal source, the tactic
 //! state, and the prose draft, and by proposing edits to them.
 //!
@@ -55,19 +55,19 @@ impl Turn {
     }
 }
 
-/// The system prompt delivered to the proof-assistant LLM.
+/// The system prompt delivered to the assistant LLM.
 pub const SYSTEM_PROMPT: &str = include_str!("prompts/system.md");
 
 /// Emitted for every assistant text-delta chunk while streaming.  Payload: `String`.
-pub const STREAM_DELTA_EVENT: &str = "proof-assistant-delta";
+pub const STREAM_DELTA_EVENT: &str = "assistant-delta";
 
 /// Emitted once when the stream ends (whether the turn completed normally
 /// or via tool-use cycles).  Payload: `()`.
-pub const STREAM_DONE_EVENT: &str = "proof-assistant-stream-done";
+pub const STREAM_DONE_EVENT: &str = "assistant-stream-done";
 
 /// Emitted once the full assistant turn (including any tool-use cycles) is
 /// complete.  Payload: [`Turn`].
-pub const COMPLETE_EVENT: &str = "proof-assistant-complete";
+pub const COMPLETE_EVENT: &str = "assistant-complete";
 
 /// Serializable snapshot of the conversation — the unit stored in `.turn` files.
 ///
@@ -105,7 +105,7 @@ impl Default for Transcript {
 // Tool names & definitions
 // ---------------------------------------------------------------------------
 
-/// Tools the proof assistant may call to inspect or modify editor state.
+/// Tools the assistant may call to inspect or modify editor state.
 ///
 /// Each variant maps to a unique wire-level string used in the LLM protocol
 /// and system prompt.  The [`ToolName::as_str`] method and [`TryFrom<&str>`]

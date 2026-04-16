@@ -8,8 +8,8 @@ describe('createMathElement', () => {
     expect(el.getAttribute('contenteditable')).toBe('false')
     expect(el.getAttribute('data-source')).toBe('$x^2$')
     expect(el.getAttribute('aria-label')).toBe('$x^2$')
-    expect(el.className).toContain('chat-rendered-inline')
-    expect(el.className).toContain('chat-rendered-math')
+    expect(el.className).toContain('assistant-rendered-inline')
+    expect(el.className).toContain('assistant-rendered-math')
     expect(el.innerHTML).toContain('katex')
   })
 
@@ -27,9 +27,9 @@ describe('createCodeElement', () => {
     expect(el.getAttribute('contenteditable')).toBe('false')
     expect(el.getAttribute('data-source')).toBe('`theorem`')
     expect(el.getAttribute('aria-label')).toBe('`theorem`')
-    expect(el.className).toContain('chat-rendered-inline')
-    expect(el.className).toContain('chat-rendered-code')
-    expect(el.className).toContain('chat-lean-code')
+    expect(el.className).toContain('assistant-rendered-inline')
+    expect(el.className).toContain('assistant-rendered-code')
+    expect(el.className).toContain('assistant-lean-code')
     // 'theorem' is a Lean keyword, so it should be highlighted
     expect(el.innerHTML).toContain('cm-lean-keyword')
   })

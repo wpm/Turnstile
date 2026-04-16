@@ -10,10 +10,10 @@ test('header bottom edges are vertically aligned', async ({ page, mountApp }) =>
     return header?.getBoundingClientRect().bottom ?? null
   })
 
-  const assistantHeaderBottom = await page.evaluate(() => {
-    const chatHeader = document.querySelector('.chat-panel > div')
-    return chatHeader?.getBoundingClientRect().bottom ?? null
+  const assistantPanelHeaderBottom = await page.evaluate(() => {
+    const assistantHeader = document.querySelector('.assistant-panel > div')
+    return assistantHeader?.getBoundingClientRect().bottom ?? null
   })
 
-  expect(proofHeaderBottom).toBeCloseTo(assistantHeaderBottom ?? 0, 0)
+  expect(proofHeaderBottom).toBeCloseTo(assistantPanelHeaderBottom ?? 0, 0)
 })

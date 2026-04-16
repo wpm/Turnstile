@@ -33,7 +33,7 @@ export interface FileProgressRange {
   end_line: number // 1-indexed
 }
 
-export interface ChatTurn {
+export interface AssistantTurn {
   role: 'user' | 'assistant'
   content: string
   timestamp: number
@@ -46,7 +46,7 @@ export interface SessionMeta {
   cursor_line: number
   cursor_col: number
   editor_scroll_top: number
-  chat_width_pct: number
+  assistant_width_pct: number
   proof_view?: string
   goal_panel_pct?: number
   word_wrap?: boolean
@@ -56,7 +56,7 @@ export interface SessionState {
   meta: SessionMeta
   proof_lean: string
   prose: { text: string; tactic_state_hash: string | null }
-  turns: ChatTurn[]
+  turns: AssistantTurn[]
   summary: string | null
 }
 

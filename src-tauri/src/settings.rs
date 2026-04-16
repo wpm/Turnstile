@@ -21,8 +21,9 @@ pub struct Settings {
     pub editor_font_size: u8,
     /// Font size for the prose / goal-state panel (pt).
     pub prose_font_size: u8,
-    /// Font size for the chat panel (pt).
-    pub chat_font_size: u8,
+    /// Font size for the assistant panel (pt).
+    #[serde(alias = "chat_font_size")]
+    pub assistant_font_size: u8,
     /// Selected model ID.  `None` means "use the backend default".
     pub model: Option<String>,
     /// UI theme: `"dark"` or `"light"`.
@@ -39,7 +40,7 @@ impl Default for Settings {
         Self {
             editor_font_size: 13,
             prose_font_size: 13,
-            chat_font_size: 13,
+            assistant_font_size: 13,
             model: None,
             theme: default_theme(),
             custom_prompt: String::new(),
@@ -116,7 +117,7 @@ mod tests {
         let s = Settings::default();
         assert_eq!(s.editor_font_size, 13);
         assert_eq!(s.prose_font_size, 13);
-        assert_eq!(s.chat_font_size, 13);
+        assert_eq!(s.assistant_font_size, 13);
         assert_eq!(s.model, None);
     }
 
@@ -141,7 +142,7 @@ mod tests {
         let original = Settings {
             editor_font_size: 16,
             prose_font_size: 14,
-            chat_font_size: 12,
+            assistant_font_size: 12,
             model: Some("claude-sonnet-4-6".to_string()),
             theme: "light".to_string(),
             custom_prompt: "Prefer tactic-mode proofs.".to_string(),
@@ -234,7 +235,7 @@ mod tests {
         let s = load_settings(dir.path());
         assert_eq!(s.editor_font_size, 20);
         assert_eq!(s.prose_font_size, 13);
-        assert_eq!(s.chat_font_size, 13);
+        assert_eq!(s.assistant_font_size, 13);
         assert_eq!(s.model, None);
     }
 

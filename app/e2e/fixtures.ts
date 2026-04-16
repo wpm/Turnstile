@@ -46,7 +46,7 @@ export interface TauriMockOptions {
   semanticTokens?: SemanticTokenFixture[]
   /** Items returned by get_completions (default []) */
   completionItems?: CompletionItemFixture[]
-  /** When true, send_message does NOT auto-fire proof-assistant-complete (default false) */
+  /** When true, send_message does NOT auto-fire assistant-complete (default false) */
   noAutoReply?: boolean
 }
 
@@ -111,7 +111,7 @@ export async function injectTauriMock(page: Page, opts: TauriMockOptions = {}): 
               return Promise.resolve({
                 editor_font_size: 13,
                 prose_font_size: 13,
-                chat_font_size: 13,
+                assistant_font_size: 13,
                 model: null,
                 theme: 'dark',
               })
@@ -139,7 +139,7 @@ export async function injectTauriMock(page: Page, opts: TauriMockOptions = {}): 
                         cursor_line: 0,
                         cursor_col: 0,
                         editor_scroll_top: 0,
-                        chat_width_pct: 25,
+                        assistant_width_pct: 25,
                         proof_view: 'formal',
                         goal_panel_pct: 30,
                         word_wrap: false,
@@ -202,8 +202,8 @@ export async function injectTauriMock(page: Page, opts: TauriMockOptions = {}): 
         },
       }
 
-      // Patch invoke to handle proof-assistant commands and auto-fire
-      // proof-assistant-complete.
+      // Patch invoke to handle assistant commands and auto-fire
+      // assistant-complete.
       type TauriInvoke = (cmd: string, args?: unknown) => Promise<unknown>
       const tauri = window.__TAURI__ as { core: { invoke: TauriInvoke } }
       const originalInvoke: TauriInvoke = tauri.core.invoke.bind(tauri.core)
@@ -211,9 +211,9 @@ export async function injectTauriMock(page: Page, opts: TauriMockOptions = {}): 
         if (cmd === 'send_message') {
           if (!noAutoReply) {
             const content = (args as { content?: string } | undefined)?.content ?? ''
-            // Fire proof-assistant-complete on the next tick (echo mock)
+            // Fire assistant-complete on the next tick (echo mock)
             void Promise.resolve().then(() => {
-              for (const cb of listeners.get('proof-assistant-complete') ?? []) {
+              for (const cb of listeners.get('assistant-complete') ?? []) {
                 cb({
                   payload: {
                     role: 'assistant',

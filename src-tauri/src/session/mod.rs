@@ -6,7 +6,7 @@
 //! - `meta.json`       — format version, timestamps, UI state
 //! - `proof.lean`      — Lean source from the editor buffer
 //! - `prose.json`      — prose text and tactic state hash for staleness detection
-//! - `transcript.json` — recent window of chat dialog turns
+//! - `transcript.json` — recent window of assistant dialog turns
 //! - `summary.txt`     — optional LLM-generated conversation summary
 //!
 //! # Format version
@@ -55,8 +55,9 @@ pub struct Meta {
     pub cursor_col: u32,
     /// Editor scroll offset in pixels.
     pub editor_scroll_top: f64,
-    /// Chat/code split: chat panel width as a percentage (0–100).
-    pub chat_width_pct: f64,
+    /// Assistant/code split: assistant panel width as a percentage (0–100).
+    #[serde(alias = "chat_width_pct")]
+    pub assistant_width_pct: f64,
     /// Which proof view was active: `"formal"` or `"prose"`. Absent in older files.
     #[serde(default)]
     pub proof_view: Option<String>,
@@ -77,10 +78,10 @@ pub struct ProseData {
     pub tactic_state_hash: Option<String>,
 }
 
-/// One turn in the chat transcript as serialized in the session file.
+/// One turn in the assistant transcript as serialized in the session file.
 ///
 /// Uses string roles (as opposed to the `Role` enum in
-/// [`crate::proof_assistant`]) so older session files remain parseable even
+/// [`crate::assistant`]) so older session files remain parseable even
 /// as the enum evolves.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct TranscriptTurn {
@@ -100,7 +101,7 @@ pub struct SessionState {
     pub proof_lean: String,
     /// Prose annotation data.
     pub prose: ProseData,
-    /// Chat turns in the current transcript window (may be empty).
+    /// Assistant turns in the current transcript window (may be empty).
     pub turns: Vec<TranscriptTurn>,
     /// LLM-generated summary of earlier conversation history, if present.
     pub summary: Option<String>,
@@ -337,7 +338,7 @@ pub async fn new_session(app: AppHandle, state: tauri::State<'_, AppState>) -> R
     state.session_dirty.store(false, Ordering::SeqCst);
 
     // Reset transcript and proof.
-    *state.transcript.lock().await = crate::proof_assistant::Transcript::default();
+    *state.transcript.lock().await = crate::assistant::Transcript::default();
     *state.proof.lock().await = crate::proof::Proof::default();
 
     // Emit event so frontend can clear editor / prose.
@@ -364,11 +365,11 @@ async fn apply_loaded_session(
         transcript.turns = session
             .turns
             .iter()
-            .map(|t| crate::proof_assistant::Turn {
+            .map(|t| crate::assistant::Turn {
                 role: match t.role.as_str() {
-                    "assistant" => crate::proof_assistant::Role::Assistant,
-                    "system" => crate::proof_assistant::Role::System,
-                    _ => crate::proof_assistant::Role::User,
+                    "assistant" => crate::assistant::Role::Assistant,
+                    "system" => crate::assistant::Role::System,
+                    _ => crate::assistant::Role::User,
                 },
                 content: t.content.clone(),
                 timestamp: t.timestamp,
@@ -559,9 +560,9 @@ async fn do_save(
         .iter()
         .map(|t| TranscriptTurn {
             role: match t.role {
-                crate::proof_assistant::Role::User => "user".to_string(),
-                crate::proof_assistant::Role::Assistant => "assistant".to_string(),
-                crate::proof_assistant::Role::System => "system".to_string(),
+                crate::assistant::Role::User => "user".to_string(),
+                crate::assistant::Role::Assistant => "assistant".to_string(),
+                crate::assistant::Role::System => "system".to_string(),
             },
             content: t.content.clone(),
             timestamp: t.timestamp,
@@ -672,7 +673,7 @@ mod tests {
                 cursor_line: 3,
                 cursor_col: 7,
                 editor_scroll_top: 120.5,
-                chat_width_pct: 40.0,
+                assistant_width_pct: 40.0,
                 proof_view: None,
                 goal_panel_pct: None,
                 word_wrap: None,
@@ -867,7 +868,7 @@ mod tests {
             "cursor_line": 0,
             "cursor_col": 0,
             "editor_scroll_top": 0.0,
-            "chat_width_pct": 25.0
+            "assistant_width_pct": 25.0
         }"#;
         let meta: Meta = serde_json::from_str(json)?;
         assert!(meta.proof_view.is_none());
@@ -907,7 +908,7 @@ mod tests {
             "cursor_line": 0,
             "cursor_col": 0,
             "editor_scroll_top": 0.0,
-            "chat_width_pct": 25.0
+            "assistant_width_pct": 25.0
         }"#;
         let meta: Meta = serde_json::from_str(json)?;
         assert!(meta.word_wrap.is_none());
@@ -932,7 +933,7 @@ mod tests {
         assert_eq!(loaded.meta.cursor_line, 3);
         assert_eq!(loaded.meta.cursor_col, 7);
         assert!((loaded.meta.editor_scroll_top - 120.5).abs() < f64::EPSILON);
-        assert!((loaded.meta.chat_width_pct - 40.0).abs() < f64::EPSILON);
+        assert!((loaded.meta.assistant_width_pct - 40.0).abs() < f64::EPSILON);
         Ok(())
     }
 

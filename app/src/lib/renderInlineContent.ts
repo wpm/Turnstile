@@ -1,6 +1,6 @@
 /**
  * Create rendered DOM elements for inline insertion into the
- * contenteditable chat input.
+ * contenteditable assistant input.
  *
  * Each element is ``contenteditable="false"`` (atomic — cannot be partially
  * edited) and carries a ``data-source`` attribute preserving the original
@@ -23,7 +23,7 @@ export function createMathElement(
   sourceText: string,
 ): HTMLElement {
   const el = document.createElement('span')
-  el.className = 'chat-rendered-inline chat-rendered-math'
+  el.className = 'assistant-rendered-inline assistant-rendered-math'
   el.setAttribute('contenteditable', 'false')
   el.setAttribute('data-source', sourceText)
   el.setAttribute('aria-label', sourceText)
@@ -39,7 +39,7 @@ export function createMathElement(
  */
 export function createCodeElement(code: string, sourceText: string): HTMLElement {
   const el = document.createElement('code')
-  el.className = 'chat-rendered-inline chat-rendered-code chat-lean-code'
+  el.className = 'assistant-rendered-inline assistant-rendered-code assistant-lean-code'
   el.setAttribute('contenteditable', 'false')
   el.setAttribute('data-source', sourceText)
   el.setAttribute('aria-label', sourceText)

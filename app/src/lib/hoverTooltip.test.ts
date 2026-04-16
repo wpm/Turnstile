@@ -47,7 +47,7 @@ describe('hoverTypeSource', () => {
     // Bold emphasis from **Docs**.
     expect(body?.querySelector('strong')?.textContent).toBe('Docs')
     // Lean fenced code uses the shared highlighter class.
-    expect(body?.querySelector('pre code.chat-lean-code')).not.toBeNull()
+    expect(body?.querySelector('pre code.assistant-lean-code')).not.toBeNull()
   })
 
   it('converts CM6 position to 0-indexed line and character', async () => {

@@ -16,7 +16,7 @@ import type { SessionState } from './tauri'
 import { renderContent } from './renderContent'
 import { getTheoremTitle, titleToFilename } from './theoremName'
 import { showError } from './errorNotification.svelte'
-import { setChatWidthPct, setGoalPanelPct, setWordWrap } from './layoutState.svelte'
+import { setAssistantWidthPct, setGoalPanelPct, setWordWrap } from './layoutState.svelte'
 import { layoutState } from './layoutState.svelte'
 
 let editorContent = $state('')
@@ -96,7 +96,7 @@ function applySessionLoaded(session: SessionState): void {
   deps?.setEditorText(session.proof_lean)
   proseText = session.prose.text
   proseHash = session.prose.tactic_state_hash
-  setChatWidthPct(session.meta.chat_width_pct || 25)
+  setAssistantWidthPct(session.meta.assistant_width_pct || 25)
   setGoalPanelPct(session.meta.goal_panel_pct ?? 30)
   proofView = session.meta.proof_view === 'prose' ? 'prose' : 'formal'
   setWordWrap(session.meta.word_wrap ?? false)
@@ -112,7 +112,7 @@ interface SessionMetaShape {
   cursor_line: number
   cursor_col: number
   editor_scroll_top: number
-  chat_width_pct: number
+  assistant_width_pct: number
   proof_view: string
   goal_panel_pct: number
   word_wrap: boolean
@@ -126,7 +126,7 @@ function buildSessionMeta(): SessionMetaShape {
     cursor_line: 0,
     cursor_col: 0,
     editor_scroll_top: 0,
-    chat_width_pct: layoutState.chatWidthPct,
+    assistant_width_pct: layoutState.assistantWidthPct,
     proof_view: proofView,
     goal_panel_pct: layoutState.goalPanelPct,
     word_wrap: layoutState.wordWrap,

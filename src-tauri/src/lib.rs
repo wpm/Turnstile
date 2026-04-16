@@ -12,11 +12,11 @@
 //! debounces 150 ms, then issues `$/lean/plainGoal` at end-of-doc and at every
 //! line-end → `goal-state-updated` Tauri event → frontend goal panel.
 
+pub mod assistant;
 pub mod llm;
 pub mod lsp;
 pub mod menu;
 pub mod proof;
-pub mod proof_assistant;
 pub mod session;
 pub mod settings;
 mod setup;
@@ -43,8 +43,8 @@ pub struct AppState {
     setup_running: Arc<AtomicBool>,
     /// The proof currently being developed — formal + prose + goal state.
     pub proof: Arc<tokio::sync::Mutex<proof::Proof>>,
-    /// Proof-assistant conversation state.
-    pub transcript: Arc<tokio::sync::Mutex<proof_assistant::Transcript>>,
+    /// Assistant conversation state.
+    pub transcript: Arc<tokio::sync::Mutex<assistant::Transcript>>,
     /// LLM backend (mock or real Anthropic).
     pub llm: Arc<dyn llm::Llm>,
     /// Persisted user settings.
@@ -895,9 +895,7 @@ pub fn run() {
                 doc_version: AtomicI64::new(2),
                 setup_running: Arc::new(AtomicBool::new(false)),
                 proof: Arc::new(tokio::sync::Mutex::new(proof::Proof::default())),
-                transcript: Arc::new(tokio::sync::Mutex::new(
-                    proof_assistant::Transcript::default(),
-                )),
+                transcript: Arc::new(tokio::sync::Mutex::new(assistant::Transcript::default())),
                 llm: llm_backend,
                 settings: Arc::new(tokio::sync::Mutex::new(initial_settings)),
                 current_session_path: Arc::new(tokio::sync::Mutex::new(None)),
@@ -936,9 +934,9 @@ pub fn run() {
             lsp_code_actions,
             lsp_resolve_code_action,
             lsp_document_symbols,
-            proof_assistant::send_message,
-            proof_assistant::get_transcript,
-            proof_assistant::load_transcript,
+            assistant::send_message,
+            assistant::get_transcript,
+            assistant::load_transcript,
             proof::translator::generate_prose,
             settings::get_settings,
             settings::save_settings,
@@ -968,8 +966,8 @@ mod tests {
     use std::sync::Mutex;
 
     use super::{
-        end_of_document_position, llm, lsp, proof, proof_assistant,
-        resolve_goal_panel_hover_position, should_generate_prose, AppState, ShouldGenerate,
+        assistant, end_of_document_position, llm, lsp, proof, resolve_goal_panel_hover_position,
+        should_generate_prose, AppState, ShouldGenerate,
     };
     use std::sync::Arc;
 
@@ -1034,9 +1032,7 @@ mod tests {
             doc_version: AtomicI64::new(1),
             setup_running: Arc::new(AtomicBool::new(false)),
             proof: Arc::new(tokio::sync::Mutex::new(proof::Proof::default())),
-            transcript: Arc::new(tokio::sync::Mutex::new(
-                proof_assistant::Transcript::default(),
-            )),
+            transcript: Arc::new(tokio::sync::Mutex::new(assistant::Transcript::default())),
             llm: Arc::new(llm::MockBackend::echo()),
             settings: Arc::new(tokio::sync::Mutex::new(crate::settings::Settings::default())),
             current_session_path: Arc::new(tokio::sync::Mutex::new(None)),

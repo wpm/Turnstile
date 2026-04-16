@@ -29,7 +29,10 @@ test.describe('Visual audit', () => {
     await expect(page.locator('.animate-pulse')).toBeVisible()
   })
 
-  test('02-dark-main: theme toggle is inside chat panel header', async ({ page, mountApp }) => {
+  test('02-dark-main: theme toggle is inside assistant panel header', async ({
+    page,
+    mountApp,
+  }) => {
     await mountApp()
     await page.screenshot({ path: path.join(SCREENSHOT_DIR, '02-dark-main.png'), fullPage: true })
 
@@ -40,7 +43,7 @@ test.describe('Visual audit', () => {
     expect(btnBox).not.toBeNull()
     expect(btnBox!.x).toBeGreaterThan(page.viewportSize()!.width * 0.4)
 
-    await expect(page.locator('.chat-history')).toBeVisible()
+    await expect(page.locator('.assistant-history')).toBeVisible()
   })
 
   test('03-light-main: light mode applies to entire app', async ({ page, mountApp }) => {
@@ -59,34 +62,34 @@ test.describe('Visual audit', () => {
     await page.screenshot({ path: path.join(SCREENSHOT_DIR, '03-light-main.png'), fullPage: true })
   })
 
-  test('04-chat-messages: user and assistant bubbles are visually distinct', async ({
+  test('04-assistant-messages: user and assistant bubbles are visually distinct', async ({
     page,
     mountApp,
   }) => {
     await mountApp()
 
-    const textbox = page.locator('.chat-input')
+    const textbox = page.locator('.assistant-input')
     await textbox.click()
     await page.keyboard.type('Hello, can you help me with my Lean proof?')
     await page.keyboard.press('Enter')
 
     await Promise.all([
-      page.locator('.chat-message-user').first().waitFor({ state: 'visible' }),
-      page.locator('.chat-message-assistant').first().waitFor({ state: 'visible' }),
+      page.locator('.assistant-message-user').first().waitFor({ state: 'visible' }),
+      page.locator('.assistant-message-assistant').first().waitFor({ state: 'visible' }),
     ])
 
     await page.screenshot({
-      path: path.join(SCREENSHOT_DIR, '04-chat-messages.png'),
+      path: path.join(SCREENSHOT_DIR, '04-assistant-messages.png'),
       fullPage: true,
     })
 
     const [userBg, assistantBg] = await Promise.all([
       page
-        .locator('.chat-message-user')
+        .locator('.assistant-message-user')
         .first()
         .evaluate((el) => getComputedStyle(el).backgroundColor),
       page
-        .locator('.chat-message-assistant')
+        .locator('.assistant-message-assistant')
         .first()
         .evaluate((el) => getComputedStyle(el).backgroundColor),
     ])
@@ -150,20 +153,18 @@ test.describe('Visual audit', () => {
       fullPage: true,
     })
 
-    await expect(
-      page.locator('text=The selected model is used for all proof assistant'),
-    ).toBeVisible()
+    await expect(page.locator('text=The selected model is used for all assistant')).toBeVisible()
     await expect(page.locator('text=Language Model')).toBeVisible()
   })
 
-  test('08-chat-input-empty: send button is muted gray when input is empty', async ({
+  test('08-assistant-input-empty: send button is muted gray when input is empty', async ({
     page,
     mountApp,
   }) => {
     await mountApp()
-    await page.locator('.chat-input').click()
+    await page.locator('.assistant-input').click()
     await page.screenshot({
-      path: path.join(SCREENSHOT_DIR, '08-chat-input-empty.png'),
+      path: path.join(SCREENSHOT_DIR, '08-assistant-input-empty.png'),
       fullPage: false,
       clip: {
         x: page.viewportSize()!.width * 0.6,
@@ -179,16 +180,16 @@ test.describe('Visual audit', () => {
     await expect(sendBtn).toBeDisabled()
   })
 
-  test('09-chat-input-filled: send button is accent blue when input has text', async ({
+  test('09-assistant-input-filled: send button is accent blue when input has text', async ({
     page,
     mountApp,
   }) => {
     await mountApp()
-    const textbox = page.locator('.chat-input')
+    const textbox = page.locator('.assistant-input')
     await textbox.click()
     await page.keyboard.type('test message')
     await page.screenshot({
-      path: path.join(SCREENSHOT_DIR, '09-chat-input-filled.png'),
+      path: path.join(SCREENSHOT_DIR, '09-assistant-input-filled.png'),
       fullPage: false,
       clip: {
         x: page.viewportSize()!.width * 0.6,
@@ -253,9 +254,9 @@ test.describe('Visual audit', () => {
     expect(parseFloat(opacity)).toBeGreaterThan(0.3)
   })
 
-  test('chat resize handle is 10px tall with three grip dots', async ({ page, mountApp }) => {
+  test('assistant resize handle is 10px tall with three grip dots', async ({ page, mountApp }) => {
     await mountApp()
-    const handle = page.locator('.chat-resize-handle')
+    const handle = page.locator('.assistant-resize-handle')
     await expect(handle).toBeVisible()
 
     const handleBox = await handle.boundingBox()
@@ -281,12 +282,12 @@ test.describe('Visual audit', () => {
     }
   })
 
-  test('theme toggle is inside chat panel bounds', async ({ page, mountApp }) => {
+  test('theme toggle is inside assistant panel bounds', async ({ page, mountApp }) => {
     await mountApp()
 
     const [toggleBox, chatPanelBox] = await Promise.all([
       page.getByLabel('Toggle theme').boundingBox(),
-      page.locator('.chat-panel').boundingBox(),
+      page.locator('.assistant-panel').boundingBox(),
     ])
 
     expect(toggleBox).not.toBeNull()

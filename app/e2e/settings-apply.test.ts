@@ -64,34 +64,34 @@ test.describe('Settings — Optimistic Appearance', () => {
     await expect(page.getByTestId('settings-modal')).toBeVisible()
   })
 
-  test('Chat font size applies immediately on select', async ({ page, mountApp }) => {
+  test('Assistant font size applies immediately on select', async ({ page, mountApp }) => {
     await mountApp()
 
     // Post a message so a user bubble exists in the DOM. The fixture's
     // Tauri echo mock also produces an assistant bubble.
-    const chatInput = page.locator('.chat-input')
-    await chatInput.click()
+    const assistantInput = page.locator('.assistant-input')
+    await assistantInput.click()
     await page.keyboard.type('scale me')
     await page.keyboard.press('Enter')
-    const userBubble = page.locator('.chat-message-user').first()
-    const assistantBubble = page.locator('.chat-message-assistant').first()
+    const userBubble = page.locator('.assistant-message-user').first()
+    const assistantBubble = page.locator('.assistant-message-assistant').first()
     await expect(userBubble).toBeVisible()
     await expect(assistantBubble).toBeVisible()
 
     await openSettings(page)
 
-    // Regression guard for #127: asserting the `.chat-panel` wrapper alone
+    // Regression guard for #127: asserting the `.assistant-panel` wrapper alone
     // is not enough. If a child pins its own `text-[Npx]`, the wrapper's
     // inline `font-size` updates but the user sees no change — so assert
     // on the elements that actually render conversational text too.
-    const chatPanel = page.locator('.chat-panel')
-    const scalable = [chatInput, userBubble, assistantBubble]
-    await expect(chatPanel).toHaveCSS('font-size', '13px')
+    const assistantPanel = page.locator('.assistant-panel')
+    const scalable = [assistantInput, userBubble, assistantBubble]
+    await expect(assistantPanel).toHaveCSS('font-size', '13px')
     await expectFontSize(scalable, '13px')
 
-    await pickSelectFieldOption(page, 'chat-font-size-select', '18px')
+    await pickSelectFieldOption(page, 'assistant-font-size-select', '18px')
 
-    await expect(chatPanel).toHaveCSS('font-size', '18px')
+    await expect(assistantPanel).toHaveCSS('font-size', '18px')
     await expectFontSize(scalable, '18px')
   })
 
@@ -119,16 +119,16 @@ test.describe('Settings — Optimistic Appearance', () => {
     // Change all three font sizes away from the default.
     await pickSelectFieldOption(page, 'editor-font-size-select', '20px')
     await pickSelectFieldOption(page, 'prose-font-size-select', '18px')
-    await pickSelectFieldOption(page, 'chat-font-size-select', '16px')
+    await pickSelectFieldOption(page, 'assistant-font-size-select', '16px')
 
     await expect(editor).toHaveCSS('font-size', '20px')
-    await expect(page.locator('.chat-panel')).toHaveCSS('font-size', '16px')
+    await expect(page.locator('.assistant-panel')).toHaveCSS('font-size', '16px')
 
     // Click Restore Defaults — all three should snap back to 13px.
     await page.getByTestId('restore-defaults-button').click()
 
     await expect(editor).toHaveCSS('font-size', '13px')
-    await expect(page.locator('.chat-panel')).toHaveCSS('font-size', '13px')
+    await expect(page.locator('.assistant-panel')).toHaveCSS('font-size', '13px')
   })
 
   test('Multiple font changes each apply independently', async ({ page, mountApp }) => {
@@ -136,9 +136,9 @@ test.describe('Settings — Optimistic Appearance', () => {
     await openSettings(page)
 
     await pickSelectFieldOption(page, 'editor-font-size-select', '16px')
-    await pickSelectFieldOption(page, 'chat-font-size-select', '20px')
+    await pickSelectFieldOption(page, 'assistant-font-size-select', '20px')
 
     await expect(page.locator('.cm-editor').first()).toHaveCSS('font-size', '16px')
-    await expect(page.locator('.chat-panel')).toHaveCSS('font-size', '20px')
+    await expect(page.locator('.assistant-panel')).toHaveCSS('font-size', '20px')
   })
 })

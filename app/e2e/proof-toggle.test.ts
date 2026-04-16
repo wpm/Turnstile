@@ -106,7 +106,7 @@ test.describe('Proof View Toggle', () => {
         cursor_line: 0,
         cursor_col: 0,
         editor_scroll_top: 0,
-        chat_width_pct: 25,
+        assistant_width_pct: 25,
         proof_view: 'prose',
       },
       proof_lean: 'theorem foo : True := by trivial',

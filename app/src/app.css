@@ -385,9 +385,9 @@ html.light {
   background-color: var(--text-secondary);
 }
 
-/* ── Chat inline code ─────────────────────────────────────────────────── */
+/* ── Assistant inline code ────────────────────────────────────────────── */
 
-.chat-lean-code {
+.assistant-lean-code {
   font-family: var(--font-mono);
   font-size: 0.9em;
   padding: 1px 4px;
@@ -395,11 +395,11 @@ html.light {
   background: var(--bg-tertiary);
 }
 
-/* ── Chat markdown content ───────────────────────────────────────────── */
+/* ── Assistant markdown content ──────────────────────────────────────── */
 
-.chat-message-user,
-.chat-message-assistant,
-.chat-message-streaming {
+.assistant-message-user,
+.assistant-message-assistant,
+.assistant-message-streaming {
   p {
     margin: 0.25em 0;
   }
@@ -552,7 +552,7 @@ html.light {
   animation: lspBlink 0.3s ease-out;
 }
 
-/* ── Chat message animation ───────────────────────────────────────────── */
+/* ── Assistant message animation ─────────────────────────────────────── */
 
 @keyframes slideIn {
   from {

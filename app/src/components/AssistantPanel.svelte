@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy, tick } from 'svelte'
   import { invoke, listen } from '../lib/tauri'
-  import type { ChatTurn, SessionState } from '../lib/tauri'
+  import type { AssistantTurn, SessionState } from '../lib/tauri'
   import type { ResolvedTheme } from '../lib/theme'
   import { renderContent } from '../lib/renderContent'
   import { showError } from '../lib/errorNotification.svelte'
@@ -35,7 +35,7 @@
   // State
   // ---------------------------------------------------------------------------
 
-  type MessageItem = ChatTurn & { id: number }
+  type MessageItem = AssistantTurn & { id: number }
 
   let messages = $state<MessageItem[]>([])
   let nextId = 0
@@ -63,7 +63,7 @@
   // ---------------------------------------------------------------------------
 
   onMount(() => {
-    void listen<ChatTurn>('proof-assistant-complete', (turn) => {
+    void listen<AssistantTurn>('assistant-complete', (turn) => {
       streaming = false
       streamingContent = ''
       messages = [...messages, { ...turn, id: nextId++ }]
@@ -71,13 +71,13 @@
       unlistenComplete = fn
     })
 
-    void listen<string>('proof-assistant-delta', (text) => {
+    void listen<string>('assistant-delta', (text) => {
       streamingContent += text
     }).then((fn) => {
       unlistenDelta = fn
     })
 
-    void listen<unknown>('proof-assistant-stream-done', () => {
+    void listen<unknown>('assistant-stream-done', () => {
       streaming = false
       streamingContent = ''
     }).then((fn) => {
@@ -301,7 +301,7 @@
 </script>
 
 <div
-  class="chat-panel flex flex-col h-full bg-bg-primary text-text-primary"
+  class="assistant-panel flex flex-col h-full bg-bg-primary text-text-primary"
   style="font-size: {fontSize}px"
 >
   <!-- Panel header -->
@@ -315,7 +315,7 @@
         class:opacity-0={!sessionDirty}
       ></div>
       <span class="text-[13px] font-semibold text-text-primary tracking-wide uppercase opacity-70">
-        Proof Assistant
+        Assistant
       </span>
     </div>
     <!-- Theme toggle lives here so it's discoverable and doesn't float over content -->
@@ -364,7 +364,7 @@
 
   <!-- Message history — aria-live so screen readers announce incoming messages -->
   <div
-    class="chat-history flex-1 overflow-y-auto flex flex-col gap-3 pt-4 px-4 min-h-0"
+    class="assistant-history flex-1 overflow-y-auto flex flex-col gap-3 pt-4 px-4 min-h-0"
     aria-live="polite"
     aria-relevant="additions"
     aria-label="Conversation history"
@@ -374,7 +374,7 @@
         <!-- User: right-aligned, accent-tinted background -->
         <div class="flex justify-end">
           <div
-            class="chat-message-user rounded-xl rounded-tr-sm px-3.5 py-2.5 leading-relaxed
+            class="assistant-message-user rounded-xl rounded-tr-sm px-3.5 py-2.5 leading-relaxed
               max-w-[85%] break-words bg-accent/15 border border-accent/25 text-text-primary"
           >
             <!-- eslint-disable-next-line svelte/no-at-html-tags -->
@@ -385,7 +385,7 @@
         <!-- Assistant: left-aligned, secondary background -->
         <div class="flex justify-start">
           <div
-            class="chat-message-assistant rounded-xl rounded-tl-sm px-3.5 py-2.5 leading-relaxed
+            class="assistant-message-assistant rounded-xl rounded-tl-sm px-3.5 py-2.5 leading-relaxed
               max-w-[85%] break-words bg-bg-secondary border border-border text-text-primary"
           >
             <!-- eslint-disable-next-line svelte/no-at-html-tags -->
@@ -398,7 +398,7 @@
       <div class="flex justify-start">
         {#if streamingContent}
           <div
-            class="chat-message-streaming rounded-xl rounded-tl-sm px-3.5 py-2.5 leading-relaxed
+            class="assistant-message-streaming rounded-xl rounded-tl-sm px-3.5 py-2.5 leading-relaxed
               max-w-[85%] break-words bg-bg-secondary border border-border text-text-primary"
           >
             <!-- eslint-disable-next-line svelte/no-at-html-tags -->
@@ -406,7 +406,7 @@
           </div>
         {:else}
           <div
-            class="chat-thinking-indicator rounded-xl rounded-tl-sm px-4 py-3
+            class="assistant-thinking-indicator rounded-xl rounded-tl-sm px-4 py-3
               bg-bg-secondary border border-border"
             aria-label="Assistant is thinking"
           >
@@ -420,7 +420,7 @@
       </div>
     {/if}
     <div class="shrink-0 h-4"></div>
-    <div bind:this={scrollAnchor} class="chat-scroll-anchor h-0"></div>
+    <div bind:this={scrollAnchor} class="assistant-scroll-anchor h-0"></div>
   </div>
 
   <!-- Resize handle — visible grip with dots.
@@ -428,7 +428,7 @@
   <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
   <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
   <div
-    class="chat-resize-handle cursor-row-resize select-none shrink-0 flex items-center justify-center
+    class="assistant-resize-handle cursor-row-resize select-none shrink-0 flex items-center justify-center
       bg-bg-secondary border-t border-border hover:bg-bg-tertiary transition-colors
       focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-inset"
     style="height: 10px"
@@ -454,7 +454,7 @@
 
   <!-- Input area -->
   <div
-    class="chat-input-area flex flex-col gap-2 p-3 bg-bg-secondary shrink-0"
+    class="assistant-input-area flex flex-col gap-2 p-3 bg-bg-secondary shrink-0"
     style="height: {inputHeight}px; min-height: 60px"
   >
     <div
@@ -462,9 +462,9 @@
       contenteditable="true"
       role="textbox"
       tabindex="0"
-      aria-label="Message to proof assistant"
+      aria-label="Message to assistant"
       aria-multiline="true"
-      class="chat-input flex-1 min-h-0 w-full overflow-y-auto rounded border border-border p-2
+      class="assistant-input flex-1 min-h-0 w-full overflow-y-auto rounded border border-border p-2
         font-mono outline-none bg-bg-primary text-text-primary
         focus:border-accent transition-colors"
       oninput={onInput}
@@ -522,30 +522,30 @@
   }
 
   /* Contenteditable placeholder */
-  .chat-input[contenteditable]:empty::before {
+  .assistant-input[contenteditable]:empty::before {
     content: 'Ask about your Lean proof\2026';
     color: var(--text-secondary, #6c7086);
     pointer-events: none;
   }
 
   /* Rendered inline elements (math, code) inside the input */
-  :global(.chat-rendered-inline) {
+  :global(.assistant-rendered-inline) {
     display: inline;
     border-radius: 3px;
     padding: 0 2px;
     user-select: all;
     cursor: default;
   }
-  :global(.chat-rendered-math) {
+  :global(.assistant-rendered-math) {
     background: var(--bg-tertiary, rgba(127, 127, 127, 0.1));
   }
-  :global(.chat-rendered-code) {
+  :global(.assistant-rendered-code) {
     background: var(--bg-tertiary, rgba(127, 127, 127, 0.1));
     font-family: inherit;
   }
 
   /* Prevent contenteditable whitespace-pre issues */
-  .chat-input[contenteditable] {
+  .assistant-input[contenteditable] {
     white-space: pre-wrap;
     word-wrap: break-word;
   }

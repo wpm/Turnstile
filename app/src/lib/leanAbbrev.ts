@@ -1,5 +1,5 @@
 /**
- * Lean 4 unicode abbreviation engine for the chat input.
+ * Lean 4 unicode abbreviation engine for the assistant input.
  *
  * Wraps {@link @leanprover/unicode-input}'s {@link AbbreviationProvider} to
  * detect and replace backslash-prefixed abbreviations (e.g. ``\to`` → ``→``)

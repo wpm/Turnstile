@@ -19,7 +19,7 @@ export const FONT_SIZE_OPTIONS = [10, 11, 12, 13, 14, 15, 16, 18, 20]
 export const DEFAULT_SETTINGS = {
   editorFontSize: 13,
   proseFontSize: 13,
-  chatFontSize: 13,
+  assistantFontSize: 13,
   model: null as string | null,
   theme: 'auto' as ThemePreference,
   customPrompt: '',
@@ -28,7 +28,7 @@ export const DEFAULT_SETTINGS = {
 interface SettingsData {
   editorFontSize: number
   proseFontSize: number
-  chatFontSize: number
+  assistantFontSize: number
   model: string | null
   theme: ThemePreference
   customPrompt: string
@@ -56,10 +56,10 @@ export function parseSettings(raw: Record<string, unknown> | null | undefined): 
       typeof raw['prose_font_size'] === 'number'
         ? raw['prose_font_size']
         : DEFAULT_SETTINGS.proseFontSize,
-    chatFontSize:
-      typeof raw['chat_font_size'] === 'number'
-        ? raw['chat_font_size']
-        : DEFAULT_SETTINGS.chatFontSize,
+    assistantFontSize:
+      typeof raw['assistant_font_size'] === 'number'
+        ? raw['assistant_font_size']
+        : DEFAULT_SETTINGS.assistantFontSize,
     model: typeof raw['model'] === 'string' ? raw['model'] : DEFAULT_SETTINGS.model,
     theme:
       raw['theme'] === 'dark' || raw['theme'] === 'light' || raw['theme'] === 'auto'
@@ -79,7 +79,7 @@ function serializeSettings(s: SettingsData): Record<string, unknown> {
   return {
     editor_font_size: s.editorFontSize,
     prose_font_size: s.proseFontSize,
-    chat_font_size: s.chatFontSize,
+    assistant_font_size: s.assistantFontSize,
     model: s.model,
     theme: s.theme,
     custom_prompt: s.customPrompt,
@@ -90,7 +90,7 @@ function serializeSettings(s: SettingsData): Record<string, unknown> {
 
 let editorFontSize = $state(DEFAULT_SETTINGS.editorFontSize)
 let proseFontSize = $state(DEFAULT_SETTINGS.proseFontSize)
-let chatFontSize = $state(DEFAULT_SETTINGS.chatFontSize)
+let assistantFontSize = $state(DEFAULT_SETTINGS.assistantFontSize)
 let model = $state<string | null>(DEFAULT_SETTINGS.model)
 let themeValue = $state<ThemePreference>(DEFAULT_SETTINGS.theme)
 let customPrompt = $state(DEFAULT_SETTINGS.customPrompt)
@@ -103,8 +103,8 @@ export const settings = {
   get proseFontSize() {
     return proseFontSize
   },
-  get chatFontSize() {
-    return chatFontSize
+  get assistantFontSize() {
+    return assistantFontSize
   },
   get model() {
     return model
@@ -131,7 +131,7 @@ export function setAvailableModels(models: ModelInfo[]): void {
 export function applySettings(s: SettingsData): void {
   editorFontSize = s.editorFontSize
   proseFontSize = s.proseFontSize
-  chatFontSize = s.chatFontSize
+  assistantFontSize = s.assistantFontSize
   model = s.model
   themeValue = s.theme
   customPrompt = s.customPrompt
@@ -141,7 +141,7 @@ function currentValues(): SettingsData {
   return {
     editorFontSize,
     proseFontSize,
-    chatFontSize,
+    assistantFontSize,
     model,
     theme: themeValue,
     customPrompt,
@@ -157,8 +157,8 @@ export async function updateSetting(
     editorFontSize = value
   } else if (key === 'proseFontSize' && typeof value === 'number') {
     proseFontSize = value
-  } else if (key === 'chatFontSize' && typeof value === 'number') {
-    chatFontSize = value
+  } else if (key === 'assistantFontSize' && typeof value === 'number') {
+    assistantFontSize = value
   } else if (key === 'model') {
     model = typeof value === 'string' ? value : null
   } else if (key === 'theme') {
@@ -210,7 +210,7 @@ class SettingsDraft {
 
   editorFontSize = $state(DEFAULT_SETTINGS.editorFontSize)
   proseFontSize = $state(DEFAULT_SETTINGS.proseFontSize)
-  chatFontSize = $state(DEFAULT_SETTINGS.chatFontSize)
+  assistantFontSize = $state(DEFAULT_SETTINGS.assistantFontSize)
   model = $state<string | null>(DEFAULT_SETTINGS.model)
   theme = $state<ThemePreference>(DEFAULT_SETTINGS.theme)
   customPrompt = $state(DEFAULT_SETTINGS.customPrompt)

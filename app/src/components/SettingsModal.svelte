@@ -30,7 +30,7 @@
   const FONT_FIELDS = [
     { id: 'editor', label: 'Editor', key: 'editorFontSize' as const },
     { id: 'prose', label: 'Prose', key: 'proseFontSize' as const },
-    { id: 'chat', label: 'Chat', key: 'chatFontSize' as const },
+    { id: 'assistant', label: 'Assistant', key: 'assistantFontSize' as const },
   ]
 
   function saveSetting(
@@ -391,7 +391,7 @@
             </div>
 
             <p class="text-[12px] text-text-secondary leading-relaxed">
-              The selected model is used for all proof assistant conversations. More capable models
+              The selected model is used for all assistant conversations. More capable models
               produce better proofs but may respond more slowly.
             </p>
 
@@ -420,8 +420,8 @@
             </h3>
 
             <p class="text-[12px] text-text-secondary leading-relaxed">
-              Markdown appended to the built-in system prompt on every chat turn. Leave empty to use
-              only the built-in prompt.
+              Markdown appended to the built-in system prompt on every assistant turn. Leave empty
+              to use only the built-in prompt.
             </p>
 
             <textarea

@@ -164,6 +164,10 @@ jobs:
         working-directory: app
         run: npx playwright install webkit --with-deps
 
+      - name: Install Playwright system deps (on cache hit)
+        if: steps.cache-playwright.outputs.cache-hit == 'true'
+        run: npx playwright install-deps webkit
+
       - name: Vitest (frontend unit tests with coverage)
         working-directory: app
         run: npx vitest run --coverage
@@ -581,6 +585,10 @@ jobs:
         if: steps.cache-playwright.outputs.cache-hit != 'true'
         working-directory: app
         run: npx playwright install webkit --with-deps
+
+      - name: Install Playwright system deps (on cache hit)
+        if: steps.cache-playwright.outputs.cache-hit == 'true'
+        run: npx playwright install-deps webkit
 
       - name: Run Playwright e2e tests
         working-directory: app

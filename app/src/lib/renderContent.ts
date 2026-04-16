@@ -1,5 +1,5 @@
 /**
- * Rich content rendering pipeline for chat messages.
+ * Rich content rendering pipeline for assistant messages.
  *
  * Supports full Markdown (via ``marked``), fenced Lean code blocks with
  * syntax highlighting, inline code, and LaTeX math (``$...$`` / ``$$...$$``
@@ -141,12 +141,12 @@ const marked = new Marked({
     code({ text, lang }: { text: string; lang?: string }): string {
       const isLean = !lang || lang === 'lean'
       if (isLean) {
-        return `<pre><code class="chat-lean-code">${highlightLean(text)}</code></pre>`
+        return `<pre><code class="assistant-lean-code">${highlightLean(text)}</code></pre>`
       }
       return `<pre><code>${escapeHtml(text)}</code></pre>`
     },
     codespan({ text }: { text: string }): string {
-      return `<code class="chat-lean-code">${highlightLean(text)}</code>`
+      return `<code class="assistant-lean-code">${highlightLean(text)}</code>`
     },
     html({ text }: { text: string }): string {
       return escapeHtml(text)

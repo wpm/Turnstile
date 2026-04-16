@@ -65,7 +65,7 @@ describe('renderContent', () => {
     it('highlights lean code with cm-lean-* classes', () => {
       const html = renderContent('```lean\ndef x := 1\n```')
       expect(html).toContain('<pre>')
-      expect(html).toContain('chat-lean-code')
+      expect(html).toContain('assistant-lean-code')
       expect(html).toContain('cm-lean-keyword')
     })
 
@@ -89,7 +89,7 @@ describe('renderContent', () => {
     it('highlights lean keywords in inline code', () => {
       const html = renderContent('use `theorem` here')
       expect(html).toContain('<code')
-      expect(html).toContain('chat-lean-code')
+      expect(html).toContain('assistant-lean-code')
       expect(html).toContain('cm-lean-keyword')
     })
   })
@@ -214,7 +214,7 @@ describe('renderContent', () => {
     it('handles inline code containing dollar signs without math', () => {
       const html = renderContent('`$x$`')
       // The $ should be treated as code, not math
-      expect(html).toContain('chat-lean-code')
+      expect(html).toContain('assistant-lean-code')
       expect(html).not.toContain('katex')
     })
   })

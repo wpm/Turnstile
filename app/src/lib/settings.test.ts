@@ -102,7 +102,7 @@ describe('resetToDefaults', () => {
     applySettings({
       editorFontSize: 20,
       proseFontSize: 20,
-      chatFontSize: 20,
+      assistantFontSize: 20,
       model: 'gpt-4',
       theme: 'light',
       customPrompt: 'noise',
