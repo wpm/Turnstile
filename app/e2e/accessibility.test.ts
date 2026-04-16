@@ -298,14 +298,15 @@ test.describe('Settings tablist ARIA', () => {
     await mountApp()
     await page.keyboard.press('Meta+,')
     await page.locator('[data-testid="settings-modal"]').waitFor({ state: 'visible' })
-    await expect(page.locator('[role="tablist"]')).toBeVisible()
+    await expect(page.getByRole('tablist', { name: 'Settings sections' })).toBeVisible()
   })
 
   test('each tab button has role=tab', async ({ page, mountApp }) => {
     await mountApp()
     await page.keyboard.press('Meta+,')
     await page.locator('[data-testid="settings-modal"]').waitFor({ state: 'visible' })
-    const tabs = page.locator('[role="tab"]')
+    const tablist = page.getByRole('tablist', { name: 'Settings sections' })
+    const tabs = tablist.getByRole('tab')
     await expect(tabs).toHaveCount(2)
   })
 

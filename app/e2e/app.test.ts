@@ -545,19 +545,24 @@ test.describe('Diagnostic underlines', () => {
     await expect(page.locator('.cm-diag-error')).toHaveCount(0)
   })
 
-  test('error underline has wavy red text-decoration in dark theme', async ({
-    page,
-    mountApp,
-    emitEvent,
-  }) => {
+  test('error underline has wavy red text-decoration', async ({ page, mountApp, emitEvent }) => {
     await setupErrorDiag(page, { mountApp, emitEvent })
 
     const underlined = page.locator('.cm-diag-error').first()
     await expect(underlined).toBeVisible()
     const decoration = await underlined.evaluate((el) => getComputedStyle(el).textDecoration)
     expect(decoration).toContain('wavy')
-    // GitHub Dark danger red #f85149 → rgb(248, 81, 73)
-    expect(decoration).toContain('rgb(248, 81, 73)')
+    // The error color is the --error CSS variable (theme-dependent red).
+    // Verify against the resolved value rather than a hardcoded constant.
+    const errorColor = await page.evaluate(() =>
+      getComputedStyle(document.documentElement).getPropertyValue('--error').trim(),
+    )
+    // Convert hex to rgb for comparison with computed style output.
+    const hex = errorColor.replace('#', '')
+    const r = parseInt(hex.substring(0, 2), 16)
+    const g = parseInt(hex.substring(2, 4), 16)
+    const b = parseInt(hex.substring(4, 6), 16)
+    expect(decoration).toContain(`rgb(${String(r)}, ${String(g)}, ${String(b)})`)
   })
 
   test('multiple diagnostics produce multiple underlined spans', async ({
