@@ -3,6 +3,10 @@ import { svelte } from '@sveltejs/vite-plugin-svelte'
 import { playwright } from '@vitest/browser-playwright'
 import tailwindcss from '@tailwindcss/vite'
 
+// Tauri uses WebKit on macOS (WKWebView) and Linux (WebKitGTK), but
+// Chromium-based WebView2 on Windows. Match the test browser to the runtime.
+const tauriBrowser = process.platform === 'win32' ? 'chromium' : 'webkit'
+
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [tailwindcss(), svelte()],
@@ -20,13 +24,13 @@ export default defineConfig({
   },
   test: {
     coverage: {
-      provider: 'v8',
+      provider: 'istanbul',
       reporter: ['text', 'lcov'],
       reportsDirectory: './coverage',
     },
     // Split unit tests (jsdom, fast) from component tests (real browser via
-    // Playwright). Browser tests exercise Svelte 5 components end-to-end and
-    // require a Chromium install; unit tests run in jsdom with no browser.
+    // Playwright). Browser tests exercise Svelte 5 components in the same
+    // engine Tauri uses; unit tests run in jsdom with no browser.
     projects: [
       {
         extends: true,
@@ -46,7 +50,7 @@ export default defineConfig({
             enabled: true,
             provider: playwright(),
             headless: true,
-            instances: [{ browser: 'chromium' }],
+            instances: [{ browser: tauriBrowser }],
           },
         },
       },

@@ -30,8 +30,10 @@ test.describe('Button focus states', () => {
     const textbox = page.locator('.chat-input')
     await textbox.click()
     await page.keyboard.type('hello')
+    // Tab from the input to the send button to trigger :focus-visible.
+    await page.keyboard.press('Tab')
     const btn = page.locator('button[aria-label="Send message"]')
-    await btn.focus()
+    await expect(btn).toBeFocused()
     expect(await focusRing(btn)).not.toBe('none')
   })
 

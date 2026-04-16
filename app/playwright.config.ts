@@ -1,5 +1,11 @@
 import { defineConfig, devices } from '@playwright/test'
 
+// Tauri uses WebKit on macOS (WKWebView) and Linux (WebKitGTK), but
+// Chromium-based WebView2 on Windows. Match the test browser to the runtime.
+const isWindows = process.platform === 'win32'
+const projectName = isWindows ? 'chromium' : 'webkit'
+const deviceProfile = isWindows ? devices['Desktop Chrome'] : devices['Desktop Safari']
+
 export default defineConfig({
   testDir: './e2e',
   fullyParallel: true,
@@ -13,8 +19,8 @@ export default defineConfig({
   },
   projects: [
     {
-      name: 'chromium',
-      use: { ...devices['Desktop Chrome'] },
+      name: projectName,
+      use: { ...deviceProfile },
     },
   ],
   webServer: {

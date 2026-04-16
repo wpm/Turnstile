@@ -16,7 +16,7 @@ import { test, expect } from './fixtures'
 /** Open the Settings modal via the Cmd/Ctrl-, keyboard shortcut. */
 async function openSettings(page: Page): Promise<void> {
   // The app listens for Meta+, on both macOS and Linux/Windows (meta || ctrl).
-  await page.keyboard.press('ControlOrMeta+Comma')
+  await page.keyboard.press('ControlOrMeta+,')
   await page.getByTestId('settings-modal').waitFor({ state: 'visible' })
   // Appearance is the default active tab; make sure font selects are visible.
   await expect(page.getByTestId('editor-font-size-select')).toBeVisible()

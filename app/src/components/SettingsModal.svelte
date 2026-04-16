@@ -50,6 +50,14 @@
   })
   const customPromptDraft = createDraft(['customPrompt'])
 
+  // Svelte 5 + WebKit: ternary expressions inside class attribute strings can
+  // prevent the element from rendering. Extract to a plain function instead.
+  const APPLY_DIRTY = 'bg-accent text-white hover:bg-accent/90'
+  const APPLY_CLEAN = 'bg-bg-secondary text-text-secondary/50 cursor-default'
+  function applyBtnClass(dirty: boolean): string {
+    return dirty ? APPLY_DIRTY : APPLY_CLEAN
+  }
+
   let activeTab = $state('appearance')
 
   function tabClass(id: string): string {
@@ -394,9 +402,7 @@
                 disabled={!modelDraft.dirty}
                 class="rounded px-3 py-1.5 text-[12px]
                   focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent
-                  {modelDraft.dirty
-                  ? 'bg-accent text-white hover:bg-accent/90'
-                  : 'bg-bg-secondary text-text-secondary/50 cursor-default'}"
+                  {applyBtnClass(modelDraft.dirty)}"
                 onclick={() => {
                   void modelDraft.apply().catch((err: unknown) => {
                     const msg = err instanceof Error ? err.message : String(err)
@@ -442,9 +448,7 @@
                 disabled={!customPromptDraft.dirty}
                 class="rounded px-3 py-1.5 text-[12px]
                   focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent
-                  {customPromptDraft.dirty
-                  ? 'bg-accent text-white hover:bg-accent/90'
-                  : 'bg-bg-secondary text-text-secondary/50 cursor-default'}"
+                  {applyBtnClass(customPromptDraft.dirty)}"
                 onclick={() => {
                   void customPromptDraft.apply().catch((err: unknown) => {
                     const msg = err instanceof Error ? err.message : String(err)

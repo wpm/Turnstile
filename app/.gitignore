@@ -11,6 +11,11 @@ node_modules
 dist
 dist-ssr
 *.local
+coverage
+
+# Vitest browser-mode artifacts
+.vitest-attachments
+src/**/__screenshots__
 
 # Editor directories and files
 .vscode/*
