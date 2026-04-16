@@ -9,41 +9,52 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 use tauri::Manager;
 
-fn default_theme() -> String {
-    "auto".to_string()
-}
-
 /// Persisted application settings.
+///
+/// Each `*_model` field is `None` when the user has not chosen an override;
+/// callers fall back to `crate::llm::models::default_model_id()`. Each
+/// `*_prompt` field is `None` when the user has not written their own prompt;
+/// callers fall back to the baked-in default constant
+/// (`DEFAULT_ASSISTANT_PROMPT`, `DEFAULT_TRANSLATION_PROMPT`).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct Settings {
     /// Font size for the code editor panel (pt).
     pub editor_font_size: u8,
-    /// Font size for the prose / goal-state panel (pt).
-    pub prose_font_size: u8,
+    /// Font size for the Goal State panel (pt).
+    pub goal_state_font_size: u8,
+    /// Font size for the Prose Proof panel (pt).
+    #[serde(alias = "prose_font_size")]
+    pub prose_proof_font_size: u8,
     /// Font size for the assistant panel (pt).
     #[serde(alias = "chat_font_size")]
     pub assistant_font_size: u8,
-    /// Selected model ID.  `None` means "use the backend default".
-    pub model: Option<String>,
-    /// UI theme: `"dark"` or `"light"`.
-    #[serde(default = "default_theme")]
-    pub theme: String,
-    /// Optional user-supplied Markdown appended to the system prompt.
-    /// Empty string means "no custom prompt".
-    #[serde(default)]
-    pub custom_prompt: String,
+    /// Selected model ID for the assistant conversation.  `None` means "use
+    /// the backend default".
+    #[serde(alias = "model")]
+    pub assistant_model: Option<String>,
+    /// Selected model ID for the Proof translator.  `None` means "use the
+    /// backend default".
+    pub translation_model: Option<String>,
+    /// User override for the assistant system prompt.  `None` means "use the
+    /// built-in `DEFAULT_ASSISTANT_PROMPT`".
+    pub assistant_prompt: Option<String>,
+    /// User override for the translation system prompt.  `None` means "use
+    /// the built-in `DEFAULT_TRANSLATION_PROMPT`".
+    pub translation_prompt: Option<String>,
 }
 
 impl Default for Settings {
     fn default() -> Self {
         Self {
             editor_font_size: 13,
-            prose_font_size: 13,
+            goal_state_font_size: 13,
+            prose_proof_font_size: 13,
             assistant_font_size: 13,
-            model: None,
-            theme: default_theme(),
-            custom_prompt: String::new(),
+            assistant_model: None,
+            translation_model: None,
+            assistant_prompt: None,
+            translation_prompt: None,
         }
     }
 }
@@ -106,6 +117,20 @@ pub async fn save_settings(app: tauri::AppHandle, settings: Settings) -> Result<
     Ok(())
 }
 
+/// Return the baked-in default assistant prompt so the Settings UI can show
+/// it when the user hasn't set their own.
+#[tauri::command]
+pub fn get_default_assistant_prompt() -> &'static str {
+    crate::assistant::DEFAULT_ASSISTANT_PROMPT
+}
+
+/// Return the baked-in default translation prompt so the Settings UI can show
+/// it when the user hasn't set their own.
+#[tauri::command]
+pub fn get_default_translation_prompt() -> &'static str {
+    crate::proof::translator::DEFAULT_TRANSLATION_PROMPT
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -116,9 +141,13 @@ mod tests {
     fn default_values_are_correct() {
         let s = Settings::default();
         assert_eq!(s.editor_font_size, 13);
-        assert_eq!(s.prose_font_size, 13);
+        assert_eq!(s.goal_state_font_size, 13);
+        assert_eq!(s.prose_proof_font_size, 13);
         assert_eq!(s.assistant_font_size, 13);
-        assert_eq!(s.model, None);
+        assert_eq!(s.assistant_model, None);
+        assert_eq!(s.translation_model, None);
+        assert_eq!(s.assistant_prompt, None);
+        assert_eq!(s.translation_prompt, None);
     }
 
     #[test]
@@ -141,29 +170,18 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let original = Settings {
             editor_font_size: 16,
-            prose_font_size: 14,
+            goal_state_font_size: 12,
+            prose_proof_font_size: 14,
             assistant_font_size: 12,
-            model: Some("claude-sonnet-4-6".to_string()),
-            theme: "light".to_string(),
-            custom_prompt: "Prefer tactic-mode proofs.".to_string(),
+            assistant_model: Some("claude-sonnet-4-6".to_string()),
+            translation_model: Some("claude-haiku-4-5-20251001".to_string()),
+            assistant_prompt: Some("Prefer tactic-mode proofs.".to_string()),
+            translation_prompt: Some("Translate concisely.".to_string()),
         };
 
         save_settings_to_disk(&original, dir.path()).expect("save should succeed");
         let loaded = load_settings(dir.path());
         assert_eq!(loaded, original);
-    }
-
-    #[test]
-    fn custom_prompt_defaults_empty() {
-        assert_eq!(Settings::default().custom_prompt, "");
-    }
-
-    #[test]
-    fn custom_prompt_absent_in_json() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("settings.json"), b"{}").unwrap();
-        let s = load_settings(dir.path());
-        assert_eq!(s.custom_prompt, "");
     }
 
     #[test]
@@ -184,47 +202,6 @@ mod tests {
     }
 
     #[test]
-    fn theme_defaults_to_auto() {
-        assert_eq!(Settings::default().theme, "auto");
-    }
-
-    #[test]
-    fn theme_round_trip_light() {
-        let dir = tempfile::tempdir().unwrap();
-        let original = Settings {
-            theme: "light".to_string(),
-            ..Settings::default()
-        };
-        save_settings_to_disk(&original, dir.path()).unwrap();
-        let loaded = load_settings(dir.path());
-        assert_eq!(loaded.theme, "light");
-    }
-
-    #[test]
-    fn theme_round_trip_auto() {
-        let dir = tempfile::tempdir().unwrap();
-        let original = Settings {
-            theme: "auto".to_string(),
-            ..Settings::default()
-        };
-        save_settings_to_disk(&original, dir.path()).unwrap();
-        let loaded = load_settings(dir.path());
-        assert_eq!(loaded.theme, "auto");
-    }
-
-    #[test]
-    fn theme_falls_back_on_missing_key() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(
-            dir.path().join("settings.json"),
-            br#"{"editor_font_size": 14}"#,
-        )
-        .unwrap();
-        let s = load_settings(dir.path());
-        assert_eq!(s.theme, "auto");
-    }
-
-    #[test]
     fn partial_json_loads_specified_fields_defaults_rest() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(
@@ -234,9 +211,10 @@ mod tests {
         .unwrap();
         let s = load_settings(dir.path());
         assert_eq!(s.editor_font_size, 20);
-        assert_eq!(s.prose_font_size, 13);
+        assert_eq!(s.goal_state_font_size, 13);
+        assert_eq!(s.prose_proof_font_size, 13);
         assert_eq!(s.assistant_font_size, 13);
-        assert_eq!(s.model, None);
+        assert_eq!(s.assistant_model, None);
     }
 
     #[test]
@@ -244,10 +222,69 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(
             dir.path().join("settings.json"),
-            br#"{"editor_font_size": 15, "unknown_future_field": true}"#,
+            br#"{"editor_font_size": 15, "unknown_future_field": true, "theme": "light", "custom_prompt": "legacy"}"#,
         )
         .unwrap();
         let s = load_settings(dir.path());
         assert_eq!(s.editor_font_size, 15);
+    }
+
+    #[test]
+    fn legacy_prose_font_size_alias_is_accepted() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("settings.json"),
+            br#"{"prose_font_size": 17}"#,
+        )
+        .unwrap();
+        let s = load_settings(dir.path());
+        assert_eq!(s.prose_proof_font_size, 17);
+    }
+
+    #[test]
+    fn legacy_model_alias_is_accepted() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("settings.json"),
+            br#"{"model": "claude-haiku-4-5-20251001"}"#,
+        )
+        .unwrap();
+        let s = load_settings(dir.path());
+        assert_eq!(
+            s.assistant_model.as_deref(),
+            Some("claude-haiku-4-5-20251001")
+        );
+    }
+
+    #[test]
+    fn translation_model_round_trips() {
+        let dir = tempfile::tempdir().unwrap();
+        let original = Settings {
+            translation_model: Some("claude-opus-4-6".to_string()),
+            ..Settings::default()
+        };
+        save_settings_to_disk(&original, dir.path()).unwrap();
+        let loaded = load_settings(dir.path());
+        assert_eq!(loaded.translation_model.as_deref(), Some("claude-opus-4-6"));
+    }
+
+    #[test]
+    fn assistant_prompt_none_means_use_default() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("settings.json"), b"{}").unwrap();
+        let s = load_settings(dir.path());
+        assert!(s.assistant_prompt.is_none());
+    }
+
+    #[test]
+    fn assistant_prompt_round_trips() {
+        let dir = tempfile::tempdir().unwrap();
+        let original = Settings {
+            assistant_prompt: Some("be terse".to_string()),
+            ..Settings::default()
+        };
+        save_settings_to_disk(&original, dir.path()).unwrap();
+        let loaded = load_settings(dir.path());
+        assert_eq!(loaded.assistant_prompt.as_deref(), Some("be terse"));
     }
 }

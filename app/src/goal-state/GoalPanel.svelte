@@ -16,9 +16,11 @@
     cursorLine: number | null
     /** True when the Formal Proof editor has focus. */
     editorFocused: boolean
+    /** Font size in px, driven from the Settings UI. */
+    fontSize: number
   }
 
-  let { goalText, goalLineToProofLine, cursorLine, editorFocused }: Props = $props()
+  let { goalText, goalLineToProofLine, cursorLine, editorFocused, fontSize }: Props = $props()
 
   let blocks = $derived(parseBlocks(goalText))
 
@@ -63,16 +65,16 @@
   })
 </script>
 
-<div class="flex flex-col h-full">
+<div class="flex flex-col h-full" style="font-size: {fontSize}px">
   <div class="flex-1 min-h-0 overflow-y-auto p-3">
     {#if !goalText}
       <div class="flex items-center justify-center h-full">
-        <span class="text-[13px] text-text-secondary opacity-60">No goal state yet</span>
+        <span class="text-text-secondary opacity-60">No goal state yet</span>
       </div>
     {:else}
       {#each blocks as block, blockIdx (blockIdx)}
         {#if block.type === 'text'}
-          <p class="text-text-secondary text-[13px] mb-2 font-mono whitespace-pre-wrap">
+          <p class="text-text-secondary mb-2 font-mono whitespace-pre-wrap">
             {block.content}
           </p>
         {:else}

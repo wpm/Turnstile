@@ -14,57 +14,78 @@ vi.mock('../session/tauri', () => ({
   invoke: vi.fn(),
 }))
 
-describe('parseSettings theme field', () => {
-  it('parses theme "light" from raw settings', () => {
-    const s = parseSettings({ theme: 'light' })
-    expect(s.theme).toBe('light')
+describe('parseSettings basic shape', () => {
+  it('returns defaults when raw is null', () => {
+    expect(parseSettings(null)).toEqual(DEFAULT_SETTINGS)
   })
 
-  it('parses theme "dark" from raw settings', () => {
-    const s = parseSettings({ theme: 'dark' })
-    expect(s.theme).toBe('dark')
+  it('returns defaults when raw is undefined', () => {
+    expect(parseSettings(undefined)).toEqual(DEFAULT_SETTINGS)
   })
 
-  it('parses theme "auto" from raw settings', () => {
-    const s = parseSettings({ theme: 'auto' })
-    expect(s.theme).toBe('auto')
+  it('parses all font size fields', () => {
+    const s = parseSettings({
+      editor_font_size: 15,
+      goal_state_font_size: 14,
+      prose_proof_font_size: 16,
+      assistant_font_size: 18,
+    })
+    expect(s.editorFontSize).toBe(15)
+    expect(s.goalStateFontSize).toBe(14)
+    expect(s.proseProofFontSize).toBe(16)
+    expect(s.assistantFontSize).toBe(18)
   })
 
-  it('defaults theme to auto when missing', () => {
+  it('parses model fields', () => {
+    const s = parseSettings({
+      assistant_model: 'claude-opus-4-6',
+      translation_model: 'claude-haiku-4-5-20251001',
+    })
+    expect(s.assistantModel).toBe('claude-opus-4-6')
+    expect(s.translationModel).toBe('claude-haiku-4-5-20251001')
+  })
+
+  it('parses prompt fields', () => {
+    const s = parseSettings({
+      assistant_prompt: 'be terse',
+      translation_prompt: 'translate precisely',
+    })
+    expect(s.assistantPrompt).toBe('be terse')
+    expect(s.translationPrompt).toBe('translate precisely')
+  })
+
+  it('defaults prompt fields to null when missing', () => {
     const s = parseSettings({})
-    expect(s.theme).toBe('auto')
+    expect(s.assistantPrompt).toBeNull()
+    expect(s.translationPrompt).toBeNull()
   })
 
-  it('defaults theme to auto when invalid type', () => {
-    const s = parseSettings({ theme: 123 })
-    expect(s.theme).toBe('auto')
-  })
-
-  it('defaults theme to auto when unrecognized value', () => {
-    const s = parseSettings({ theme: 'purple' })
-    expect(s.theme).toBe('auto')
+  it('defaults prompt fields to null when non-string', () => {
+    const s = parseSettings({ assistant_prompt: 42, translation_prompt: true })
+    expect(s.assistantPrompt).toBeNull()
+    expect(s.translationPrompt).toBeNull()
   })
 })
 
-describe('parseSettings customPrompt field', () => {
-  it('parses custom_prompt string from raw settings', () => {
-    const s = parseSettings({ custom_prompt: 'Prefer tactic mode.' })
-    expect(s.customPrompt).toBe('Prefer tactic mode.')
+describe('parseSettings legacy aliases', () => {
+  it('falls back to prose_font_size when prose_proof_font_size is absent', () => {
+    const s = parseSettings({ prose_font_size: 17 })
+    expect(s.proseProofFontSize).toBe(17)
   })
 
-  it('defaults customPrompt to empty string when missing', () => {
-    const s = parseSettings({})
-    expect(s.customPrompt).toBe('')
+  it('prefers prose_proof_font_size when both are present', () => {
+    const s = parseSettings({ prose_font_size: 17, prose_proof_font_size: 19 })
+    expect(s.proseProofFontSize).toBe(19)
   })
 
-  it('defaults customPrompt to empty string when non-string', () => {
-    const s = parseSettings({ custom_prompt: 42 })
-    expect(s.customPrompt).toBe('')
+  it('falls back to model when assistant_model is absent', () => {
+    const s = parseSettings({ model: 'claude-sonnet-4-6' })
+    expect(s.assistantModel).toBe('claude-sonnet-4-6')
   })
 
-  it('round-trips customPrompt through applySettings', () => {
-    applySettings(parseSettings({ custom_prompt: 'Be terse.' }))
-    expect(settings.customPrompt).toBe('Be terse.')
+  it('prefers assistant_model when both are present', () => {
+    const s = parseSettings({ model: 'claude-sonnet-4-6', assistant_model: 'claude-opus-4-6' })
+    expect(s.assistantModel).toBe('claude-opus-4-6')
   })
 })
 
@@ -95,17 +116,36 @@ describe('updateSetting', () => {
     await expect(updateSetting('editorFontSize', 20)).rejects.toThrow('disk full')
     expect(settings.editorFontSize).toBe(originalSize)
   })
+
+  it('serializes the new key shape', async () => {
+    const { invoke } = await import('../session/tauri')
+    vi.mocked(invoke).mockResolvedValueOnce(undefined)
+
+    await updateSetting('goalStateFontSize', 15)
+    expect(invoke).toHaveBeenCalledWith('save_settings', {
+      settings: expect.objectContaining({
+        goal_state_font_size: 15,
+        prose_proof_font_size: expect.any(Number) as unknown,
+        assistant_model: null,
+        translation_model: null,
+        assistant_prompt: null,
+        translation_prompt: null,
+      }) as unknown,
+    })
+  })
 })
 
 describe('resetToDefaults', () => {
   beforeEach(async () => {
     applySettings({
       editorFontSize: 20,
-      proseFontSize: 20,
+      goalStateFontSize: 18,
+      proseProofFontSize: 20,
       assistantFontSize: 20,
-      model: 'gpt-4',
-      theme: 'light',
-      customPrompt: 'noise',
+      assistantModel: 'claude-opus-4-6',
+      translationModel: 'claude-sonnet-4-6',
+      assistantPrompt: 'be terse',
+      translationPrompt: 'translate loosely',
     })
     const { invoke } = await import('../session/tauri')
     vi.mocked(invoke).mockReset()
@@ -117,9 +157,13 @@ describe('resetToDefaults', () => {
 
     await resetToDefaults()
     expect(settings.editorFontSize).toBe(13)
-    expect(settings.model).toBeNull()
-    expect(settings.theme).toBe('auto')
-    expect(settings.customPrompt).toBe('')
+    expect(settings.goalStateFontSize).toBe(13)
+    expect(settings.proseProofFontSize).toBe(13)
+    expect(settings.assistantFontSize).toBe(13)
+    expect(settings.assistantModel).toBeNull()
+    expect(settings.translationModel).toBeNull()
+    expect(settings.assistantPrompt).toBeNull()
+    expect(settings.translationPrompt).toBeNull()
   })
 
   it('rolls back when backend save fails', async () => {
@@ -129,9 +173,8 @@ describe('resetToDefaults', () => {
     await expect(resetToDefaults()).rejects.toThrow('save error')
     // Should have rolled back to the values set in beforeEach
     expect(settings.editorFontSize).toBe(20)
-    expect(settings.model).toBe('gpt-4')
-    expect(settings.theme).toBe('light')
-    expect(settings.customPrompt).toBe('noise')
+    expect(settings.assistantModel).toBe('claude-opus-4-6')
+    expect(settings.assistantPrompt).toBe('be terse')
   })
 })
 
@@ -144,9 +187,9 @@ describe('SettingsDraft', () => {
 
   it('snapshots current committed values on creation', () => {
     applySettings({ ...DEFAULT_SETTINGS, editorFontSize: 16 })
-    const draft = createDraft(['editorFontSize', 'proseFontSize'])
+    const draft = createDraft(['editorFontSize', 'goalStateFontSize'])
     expect(draft.editorFontSize).toBe(16)
-    expect(draft.proseFontSize).toBe(DEFAULT_SETTINGS.proseFontSize)
+    expect(draft.goalStateFontSize).toBe(DEFAULT_SETTINGS.goalStateFontSize)
   })
 
   it('set() updates a draft field', () => {
@@ -210,13 +253,13 @@ describe('SettingsDraft', () => {
   })
 
   it('fillDefaults() sets fields to defaults and marks dirty', () => {
-    applySettings({ ...DEFAULT_SETTINGS, editorFontSize: 20, proseFontSize: 18 })
-    const draft = createDraft(['editorFontSize', 'proseFontSize'])
+    applySettings({ ...DEFAULT_SETTINGS, editorFontSize: 20, goalStateFontSize: 18 })
+    const draft = createDraft(['editorFontSize', 'goalStateFontSize'])
     expect(draft.dirty).toBe(false)
 
     draft.fillDefaults()
     expect(draft.editorFontSize).toBe(DEFAULT_SETTINGS.editorFontSize)
-    expect(draft.proseFontSize).toBe(DEFAULT_SETTINGS.proseFontSize)
+    expect(draft.goalStateFontSize).toBe(DEFAULT_SETTINGS.goalStateFontSize)
     expect(draft.dirty).toBe(true)
   })
 
@@ -225,11 +268,13 @@ describe('SettingsDraft', () => {
     vi.mocked(invoke).mockResolvedValueOnce(undefined)
 
     const afterApply = vi.fn()
-    const draft = createDraft(['model'], { afterApply })
-    draft.set('model', 'gpt-4')
+    const draft = createDraft(['assistantModel'], { afterApply })
+    draft.set('assistantModel', 'claude-opus-4-6')
     await draft.apply()
 
-    expect(afterApply).toHaveBeenCalledWith(expect.objectContaining({ model: 'gpt-4' }) as unknown)
+    expect(afterApply).toHaveBeenCalledWith(
+      expect.objectContaining({ assistantModel: 'claude-opus-4-6' }) as unknown,
+    )
   })
 
   it('afterApply hook does NOT run on failure', async () => {
@@ -237,8 +282,8 @@ describe('SettingsDraft', () => {
     vi.mocked(invoke).mockRejectedValueOnce(new Error('fail'))
 
     const afterApply = vi.fn()
-    const draft = createDraft(['model'], { afterApply })
-    draft.set('model', 'gpt-4')
+    const draft = createDraft(['assistantModel'], { afterApply })
+    draft.set('assistantModel', 'claude-opus-4-6')
     await expect(draft.apply()).rejects.toThrow('fail')
 
     expect(afterApply).not.toHaveBeenCalled()
@@ -248,12 +293,22 @@ describe('SettingsDraft', () => {
     const { invoke } = await import('../session/tauri')
     vi.mocked(invoke).mockResolvedValueOnce(undefined)
 
-    applySettings({ ...DEFAULT_SETTINGS, editorFontSize: 16, proseFontSize: 18 })
+    applySettings({ ...DEFAULT_SETTINGS, editorFontSize: 16, goalStateFontSize: 18 })
     const draft = createDraft(['editorFontSize'])
     draft.set('editorFontSize', 20)
     await draft.apply()
 
     expect(settings.editorFontSize).toBe(20)
-    expect(settings.proseFontSize).toBe(18) // unchanged
+    expect(settings.goalStateFontSize).toBe(18) // unchanged
+  })
+
+  it('supports prompt draft with null round trip', () => {
+    applySettings({ ...DEFAULT_SETTINGS, assistantPrompt: null })
+    const draft = createDraft(['assistantPrompt'])
+    expect(draft.assistantPrompt).toBeNull()
+    draft.set('assistantPrompt', 'custom')
+    expect(draft.dirty).toBe(true)
+    draft.set('assistantPrompt', null)
+    expect(draft.dirty).toBe(false)
   })
 })

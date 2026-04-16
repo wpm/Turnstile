@@ -17,49 +17,26 @@ test.describe('Visual audit', () => {
     await ensureScreenshotDir()
   })
 
-  test('01-dark-initial: setup overlay visible on load with pulse indicator', async ({ page }) => {
+  test('01-initial: setup overlay visible on load with pulse indicator', async ({ page }) => {
     await injectTauriMock(page, { setupComplete: false })
     await page.goto('/')
     await page.waitForTimeout(500)
     await page.screenshot({
-      path: path.join(SCREENSHOT_DIR, '01-dark-initial.png'),
+      path: path.join(SCREENSHOT_DIR, '01-initial.png'),
       fullPage: true,
     })
 
     await expect(page.locator('.animate-pulse')).toBeVisible()
   })
 
-  test('02-dark-main: theme toggle is inside assistant panel header', async ({
-    page,
-    mountApp,
-  }) => {
+  test('02-main: assistant panel renders without theme toggle', async ({ page, mountApp }) => {
     await mountApp()
-    await page.screenshot({ path: path.join(SCREENSHOT_DIR, '02-dark-main.png'), fullPage: true })
+    await page.screenshot({ path: path.join(SCREENSHOT_DIR, '02-main.png'), fullPage: true })
 
-    const toggleBtn = page.getByLabel('Toggle theme')
-    await expect(toggleBtn).toBeVisible()
-
-    const btnBox = await toggleBtn.boundingBox()
-    expect(btnBox).not.toBeNull()
-    expect(btnBox!.x).toBeGreaterThan(page.viewportSize()!.width * 0.4)
+    // Theme toggle was removed — theme now follows the OS automatically.
+    await expect(page.getByLabel('Toggle theme')).toHaveCount(0)
 
     await expect(page.locator('.assistant-history')).toBeVisible()
-  })
-
-  test('03-light-main: light mode applies to entire app', async ({ page, mountApp }) => {
-    await mountApp()
-    await expect(page.locator('html')).not.toHaveClass(/light/)
-
-    await page.getByLabel('Toggle theme').click()
-    await expect(page.locator('html')).toHaveClass(/light/)
-
-    // --bg-primary: #ffffff (GitHub Light canvas) in light theme
-    const editorBg = await page
-      .locator('.cm-editor')
-      .evaluate((el) => getComputedStyle(el).backgroundColor)
-    expect(editorBg).toBe('rgb(255, 255, 255)')
-
-    await page.screenshot({ path: path.join(SCREENSHOT_DIR, '03-light-main.png'), fullPage: true })
   })
 
   test('04-assistant-messages: user and assistant bubbles are visually distinct', async ({
@@ -101,60 +78,37 @@ test.describe('Visual audit', () => {
     expect(userBg).not.toBe(assistantBg)
   })
 
-  test('05-settings-dark: settings modal section headers are readable', async ({
-    page,
-    mountApp,
-  }) => {
+  test('05-settings: Assistant tab headers are readable', async ({ page, mountApp }) => {
     await mountApp()
     await page.keyboard.press('Meta+,')
     await page.locator('[data-testid="settings-modal"]').waitFor({ state: 'visible' })
     await page.screenshot({
-      path: path.join(SCREENSHOT_DIR, '05-settings-dark.png'),
+      path: path.join(SCREENSHOT_DIR, '05-settings.png'),
       fullPage: true,
     })
 
-    const fontSizesHeader = page.locator('text=Font Sizes')
-    await expect(fontSizesHeader).toBeVisible()
-    const headerColor = await fontSizesHeader.evaluate((el) => getComputedStyle(el).color)
+    const fontSizeLabel = page.locator('#assistant-font-size-label')
+    await expect(fontSizeLabel).toBeVisible()
+    const headerColor = await fontSizeLabel.evaluate((el) => getComputedStyle(el).color)
     expect(headerColor).not.toBe('rgba(0, 0, 0, 0)')
     expect(headerColor).not.toBe('transparent')
   })
 
-  test('06-settings-light: settings modal adapts to light mode', async ({ page, mountApp }) => {
-    await mountApp()
-    await page.getByLabel('Toggle theme').click()
-    await expect(page.locator('html')).toHaveClass(/light/)
-
-    await page.keyboard.press('Meta+,')
-    await page.locator('[data-testid="settings-modal"]').waitFor({ state: 'visible' })
-    await page.screenshot({
-      path: path.join(SCREENSHOT_DIR, '06-settings-light.png'),
-      fullPage: true,
-    })
-
-    const headerColor = await page
-      .locator('text=Font Sizes')
-      .evaluate((el) => getComputedStyle(el).color)
-    // light text-secondary: rgb(85, 85, 85) — not white, not transparent
-    expect(headerColor).not.toBe('rgb(255, 255, 255)')
-    expect(headerColor).not.toBe('rgba(0, 0, 0, 0)')
-  })
-
-  test('07-settings-model-tab: model tab has description and readable header', async ({
+  test('07-settings-proof-tab: Proof tab renders model and prompt', async ({
     page,
     mountApp,
   }) => {
     await mountApp()
     await page.keyboard.press('Meta+,')
     await page.locator('[data-testid="settings-modal"]').waitFor({ state: 'visible' })
-    await page.locator('[data-testid="settings-tab-model"]').click()
+    await page.locator('[data-testid="settings-tab-proof"]').click()
     await page.screenshot({
-      path: path.join(SCREENSHOT_DIR, '07-settings-model-tab.png'),
+      path: path.join(SCREENSHOT_DIR, '07-settings-proof-tab.png'),
       fullPage: true,
     })
 
-    await expect(page.locator('text=The selected model is used for all assistant')).toBeVisible()
-    await expect(page.locator('text=Language Model')).toBeVisible()
+    await expect(page.locator('[data-testid="translation-model-select"]')).toBeVisible()
+    await expect(page.locator('[data-testid="translation-prompt-textarea"]')).toBeVisible()
   })
 
   test('08-assistant-input-empty: send button is muted gray when input is empty', async ({
@@ -210,10 +164,7 @@ test.describe('Visual audit', () => {
     expect(Number(b)).toBeGreaterThan(Number(r)) // blue > red → accent blue
   })
 
-  test('10-gutter: CM gutter has visible right border in dark and light modes', async ({
-    page,
-    mountApp,
-  }) => {
+  test('10-gutter: CM gutter has visible right border', async ({ page, mountApp }) => {
     await mountApp()
     await page.screenshot({
       path: path.join(SCREENSHOT_DIR, '10-gutter.png'),
@@ -221,29 +172,17 @@ test.describe('Visual audit', () => {
       clip: { x: 0, y: 0, width: 120, height: 200 },
     })
 
-    async function getGutterBorder(): Promise<{ width: string; style: string; color: string }> {
-      return page.locator('.cm-gutters').evaluate((el) => {
-        const s = getComputedStyle(el)
-        return {
-          width: s.borderRightWidth,
-          style: s.borderRightStyle,
-          color: s.borderRightColor,
-        }
-      })
-    }
-
-    const darkBorder = await getGutterBorder()
-    expect(darkBorder.width).not.toBe('0px')
-    expect(darkBorder.style).toBe('solid')
-    expect(darkBorder.color).not.toBe('rgba(0, 0, 0, 0)')
-
-    await page.getByLabel('Toggle theme').click()
-    await expect(page.locator('html')).toHaveClass(/light/)
-
-    const lightBorder = await getGutterBorder()
-    expect(lightBorder.width).not.toBe('0px')
-    expect(lightBorder.style).toBe('solid')
-    expect(lightBorder.color).not.toBe('rgba(0, 0, 0, 0)')
+    const border = await page.locator('.cm-gutters').evaluate((el) => {
+      const s = getComputedStyle(el)
+      return {
+        width: s.borderRightWidth,
+        style: s.borderRightStyle,
+        color: s.borderRightColor,
+      }
+    })
+    expect(border.width).not.toBe('0px')
+    expect(border.style).toBe('solid')
+    expect(border.color).not.toBe('rgba(0, 0, 0, 0)')
   })
 
   test('keyboard hint text is readable', async ({ page, mountApp }) => {
@@ -280,21 +219,5 @@ test.describe('Visual audit', () => {
       expect(widthPct).toBeGreaterThan(20)
       expect(widthPct).toBeLessThan(40)
     }
-  })
-
-  test('theme toggle is inside assistant panel bounds', async ({ page, mountApp }) => {
-    await mountApp()
-
-    const [toggleBox, chatPanelBox] = await Promise.all([
-      page.getByLabel('Toggle theme').boundingBox(),
-      page.locator('.assistant-panel').boundingBox(),
-    ])
-
-    expect(toggleBox).not.toBeNull()
-    expect(chatPanelBox).not.toBeNull()
-    expect(toggleBox!.x).toBeGreaterThanOrEqual(chatPanelBox!.x)
-    expect(toggleBox!.x + toggleBox!.width).toBeLessThanOrEqual(
-      chatPanelBox!.x + chatPanelBox!.width + 5,
-    )
   })
 })

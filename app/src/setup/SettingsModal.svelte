@@ -6,31 +6,29 @@
     settings,
     createDraft,
     updateSetting,
+    getDefaultAssistantPrompt,
+    getDefaultTranslationPrompt,
   } from './settings.svelte'
-  import { invoke } from '../session/tauri'
+  import type { SettingsDraft } from './settings.svelte'
   import { showError } from '../session/errorNotification.svelte'
-  import { theme } from './theme'
-  import type { ThemePreference } from './theme'
   import SelectField from './SelectField.svelte'
-
-  const THEME_OPTIONS: { value: ThemePreference; label: string }[] = [
-    { value: 'auto', label: 'Auto (follow system)' },
-    { value: 'light', label: 'Light' },
-    { value: 'dark', label: 'Dark' },
-  ]
 
   const { onClose }: { onClose: () => void } = $props()
 
-  const TABS = [
-    { id: 'appearance', label: 'Appearance' },
-    { id: 'model', label: 'Model' },
-    { id: 'customPrompt', label: 'Custom Prompt' },
+  type TabId = 'assistant' | 'proof'
+  const TABS: { id: TabId; label: string }[] = [
+    { id: 'assistant', label: 'Assistant' },
+    { id: 'proof', label: 'Proof' },
   ]
 
-  const FONT_FIELDS = [
-    { id: 'editor', label: 'Editor', key: 'editorFontSize' as const },
-    { id: 'prose', label: 'Prose', key: 'proseFontSize' as const },
-    { id: 'assistant', label: 'Assistant', key: 'assistantFontSize' as const },
+  // Each tab has one or more font-size rows (applied optimistically) plus a
+  // model select and prompt textarea backed by draft state so Apply is deferred.
+  const ASSISTANT_FONT_FIELDS = [
+    { id: 'assistant', label: 'Font Size', key: 'assistantFontSize' as const },
+  ]
+  const PROOF_FONT_FIELDS = [
+    { id: 'goal-state', label: 'Goal State Font Size', key: 'goalStateFontSize' as const },
+    { id: 'prose-proof', label: 'Prose Proof Font Size', key: 'proseProofFontSize' as const },
   ]
 
   function saveSetting(
@@ -43,12 +41,116 @@
     })
   }
 
-  const modelDraft = createDraft(['model'], {
-    afterApply: async (values) => {
-      if (values.model) await invoke('set_model', { modelId: values.model })
-    },
-  })
-  const customPromptDraft = createDraft(['customPrompt'])
+  // Drafts scoped per tab so Apply on one tab doesn't leak dirty state into the other.
+  const assistantDraft = createDraft(['assistantModel', 'assistantPrompt'])
+  const translationDraft = createDraft(['translationModel', 'translationPrompt'])
+
+  // The defaults are fetched lazily from the Rust backend the first time a
+  // textarea needs to render an "unset" value.
+  let defaultAssistantPrompt = $state<string | null>(null)
+  let defaultTranslationPrompt = $state<string | null>(null)
+
+  async function loadDefaultAssistantPrompt(): Promise<void> {
+    if (defaultAssistantPrompt !== null) return
+    try {
+      defaultAssistantPrompt = await getDefaultAssistantPrompt()
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      showError(`Could not load default prompt: ${msg}`)
+    }
+  }
+
+  async function loadDefaultTranslationPrompt(): Promise<void> {
+    if (defaultTranslationPrompt !== null) return
+    try {
+      defaultTranslationPrompt = await getDefaultTranslationPrompt()
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      showError(`Could not load default prompt: ${msg}`)
+    }
+  }
+
+  void loadDefaultAssistantPrompt()
+  void loadDefaultTranslationPrompt()
+
+  // Bind the textarea to a derived value that falls back to the default when
+  // the draft field is null. A pure getter/setter on the draft makes `dirty`
+  // track edits naturally: any typed content flips the draft value to a non-null
+  // string different from the committed value.
+  const assistantPromptValue = $derived(
+    assistantDraft.assistantPrompt ?? defaultAssistantPrompt ?? '',
+  )
+  const translationPromptValue = $derived(
+    translationDraft.translationPrompt ?? defaultTranslationPrompt ?? '',
+  )
+
+  function onAssistantPromptInput(e: Event): void {
+    const text = (e.target as HTMLTextAreaElement).value
+    // Collapse "same as default" back to null so the draft stays clean when the
+    // user reverts edits manually.
+    if (text === defaultAssistantPrompt && assistantDraft.committed.assistantPrompt === null) {
+      assistantDraft.set('assistantPrompt', null)
+    } else {
+      assistantDraft.set('assistantPrompt', text)
+    }
+  }
+
+  function onTranslationPromptInput(e: Event): void {
+    const text = (e.target as HTMLTextAreaElement).value
+    if (
+      text === defaultTranslationPrompt &&
+      translationDraft.committed.translationPrompt === null
+    ) {
+      translationDraft.set('translationPrompt', null)
+    } else {
+      translationDraft.set('translationPrompt', text)
+    }
+  }
+
+  /**
+   * Per-tab Restore Default: reset every field that tab owns to its factory
+   * default and persist immediately (bypassing the draft Apply button).
+   *
+   * Model and prompt fields go back to `null` (meaning "use backend default"),
+   * font-size fields go back to 13. After a successful save the draft's
+   * `committed` snapshot is updated so the Apply button disables.
+   */
+  async function restoreDefaults(tab: TabId): Promise<void> {
+    const keys: (keyof typeof DEFAULT_SETTINGS)[] =
+      tab === 'assistant'
+        ? ['assistantFontSize', 'assistantModel', 'assistantPrompt']
+        : [
+            'goalStateFontSize',
+            'proseProofFontSize',
+            'translationModel',
+            'translationPrompt',
+          ]
+
+    // Optimistic font-size rows first (they have no draft).
+    for (const key of keys) {
+      if (key.endsWith('FontSize')) {
+        saveSetting(key, DEFAULT_SETTINGS[key])
+      }
+    }
+
+    // Reset the draft fields to their defaults and mirror into the committed
+    // snapshot so the UI shows the reset state immediately.
+    const draft: SettingsDraft = tab === 'assistant' ? assistantDraft : translationDraft
+    for (const key of keys) {
+      if (!key.endsWith('FontSize')) {
+        draft.set(key, DEFAULT_SETTINGS[key])
+      }
+    }
+
+    try {
+      // Persist the model/prompt resets via the draft's apply() which writes
+      // the merged snapshot through save_settings and resets dirty to false.
+      await draft.apply()
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      showError(`Failed to restore defaults: ${msg}`)
+    }
+  }
 
   // Svelte 5 + WebKit: ternary expressions inside class attribute strings can
   // prevent the element from rendering. Extract to a plain function instead.
@@ -58,9 +160,9 @@
     return dirty ? APPLY_DIRTY : APPLY_CLEAN
   }
 
-  let activeTab = $state('appearance')
+  let activeTab = $state<TabId>('assistant')
 
-  function tabClass(id: string): string {
+  function tabClass(id: TabId): string {
     return activeTab === id
       ? 'bg-accent text-white'
       : 'text-text-secondary hover:bg-bg-tertiary hover:text-text-primary'
@@ -122,8 +224,12 @@
     }
   })
 
-  const selectedModelId = $derived(
-    modelDraft.model ??
+  const selectedAssistantModelId = $derived(
+    assistantDraft.assistantModel ??
+      (settings.availableModels.length > 0 ? (settings.availableModels[0]?.id ?? '') : ''),
+  )
+  const selectedTranslationModelId = $derived(
+    translationDraft.translationModel ??
       (settings.availableModels.length > 0 ? (settings.availableModels[0]?.id ?? '') : ''),
   )
 
@@ -232,6 +338,17 @@
     window.addEventListener('mousemove', onMousemove)
     window.addEventListener('mouseup', onMouseup)
   }
+
+  function modelOptions(): { value: string; label: string }[] {
+    return settings.availableModels.map((m) => ({ value: m.id, label: m.display_name }))
+  }
+
+  function applyDraft(draft: SettingsDraft): void {
+    void draft.apply().catch((err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err)
+      showError(`Failed to save settings: ${msg}`)
+    })
+  }
 </script>
 
 <!-- Backdrop -->
@@ -250,7 +367,7 @@
   <!-- Modal window -->
   <div
     bind:this={windowEl}
-    style="width: 660px; height: 460px; min-width: 420px; min-height: 300px;
+    style="width: 660px; height: 520px; min-width: 420px; min-height: 300px;
       resize: both; overflow: hidden; {windowStyle}"
     class="flex flex-col rounded-lg border border-border bg-bg-primary shadow-2xl"
     onclick={(e) => {
@@ -309,33 +426,10 @@
           id="settings-panel-{tab.id}"
           aria-labelledby="settings-tab-{tab.id}"
           hidden={activeTab !== tab.id}
-          class="settings-tab-panel flex flex-1 flex-col overflow-y-auto p-5 gap-5"
+          class="settings-tab-panel flex flex-1 flex-col overflow-y-auto p-5 gap-4"
         >
-          {#if tab.id === 'appearance'}
-            <h3 class="text-[11px] font-semibold uppercase tracking-widest text-text-secondary">
-              Theme
-            </h3>
-
-            <div class="flex items-center justify-between">
-              <span id="theme-select-label" class="text-[13px] text-text-primary">Appearance</span>
-              <SelectField
-                id="theme-select"
-                value={settings.theme}
-                options={THEME_OPTIONS}
-                onchange={(v) => {
-                  const pref = v as ThemePreference
-                  theme.set(pref)
-                  saveSetting('theme', pref)
-                }}
-                data-testid="theme-select"
-              />
-            </div>
-
-            <h3 class="text-[11px] font-semibold uppercase tracking-widest text-text-secondary">
-              Font Sizes
-            </h3>
-
-            {#each FONT_FIELDS as field (field.id)}
+          {#if tab.id === 'assistant'}
+            {#each ASSISTANT_FONT_FIELDS as field (field.id)}
               <div class="flex items-center justify-between">
                 <span id="{field.id}-font-size-label" class="text-[13px] text-text-primary">
                   {field.label}
@@ -352,110 +446,130 @@
               </div>
             {/each}
 
-            <div class="flex-1"></div>
+            <div class="flex items-center justify-between">
+              <span id="assistant-model-label" class="text-[13px] text-text-primary">
+                Assistant Model
+              </span>
+              <SelectField
+                id="assistant-model-select"
+                value={selectedAssistantModelId}
+                options={modelOptions()}
+                onchange={(v) => {
+                  assistantDraft.set('assistantModel', String(v))
+                }}
+                data-testid="assistant-model-select"
+              />
+            </div>
 
-            <div class="flex items-center border-t border-border pt-4">
+            <div class="flex flex-col gap-1 flex-1 min-h-0">
+              <span id="assistant-prompt-label" class="text-[13px] text-text-primary">
+                Assistant Prompt
+              </span>
+              <textarea
+                aria-labelledby="assistant-prompt-label"
+                value={assistantPromptValue}
+                oninput={onAssistantPromptInput}
+                class="flex-1 min-h-[8rem] w-full rounded border border-border bg-bg-secondary
+                  px-3 py-2 text-[12px] text-text-primary font-mono resize-none
+                  focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                data-testid="assistant-prompt-textarea"
+              ></textarea>
+            </div>
+
+            <div class="flex items-center justify-between border-t border-border pt-3">
               <button
                 class="rounded border border-border bg-bg-secondary px-3 py-1.5
                   text-[12px] text-text-secondary hover:bg-bg-tertiary hover:text-text-primary
                   focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
                 onclick={() => {
-                  for (const field of FONT_FIELDS) {
-                    saveSetting(field.key, DEFAULT_SETTINGS[field.key])
-                  }
+                  void restoreDefaults('assistant')
                 }}
-                data-testid="restore-defaults-button"
+                data-testid="restore-defaults-assistant-button"
               >
-                Restore Defaults
+                Restore Default
               </button>
-            </div>
-          {:else if tab.id === 'model'}
-            <h3 class="text-[11px] font-semibold uppercase tracking-widest text-text-secondary">
-              Language Model
-            </h3>
-
-            <div class="flex items-center justify-between">
-              <span id="model-select-label" class="text-[13px] text-text-primary">Model</span>
-              <SelectField
-                id="model-select"
-                value={selectedModelId}
-                options={settings.availableModels.map((m) => ({
-                  value: m.id,
-                  label: m.display_name,
-                }))}
-                onchange={(v) => {
-                  modelDraft.set('model', String(v))
-                }}
-                data-testid="model-select"
-              />
-            </div>
-
-            <p class="text-[12px] text-text-secondary leading-relaxed">
-              The selected model is used for all assistant conversations. More capable models
-              produce better proofs but may respond more slowly.
-            </p>
-
-            <div class="flex-1"></div>
-
-            <div class="flex items-center justify-end border-t border-border pt-4">
               <button
-                disabled={!modelDraft.dirty}
+                disabled={!assistantDraft.dirty}
                 class="rounded px-3 py-1.5 text-[12px]
                   focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent
-                  {applyBtnClass(modelDraft.dirty)}"
+                  {applyBtnClass(assistantDraft.dirty)}"
                 onclick={() => {
-                  void modelDraft.apply().catch((err: unknown) => {
-                    const msg = err instanceof Error ? err.message : String(err)
-                    showError(`Failed to save settings: ${msg}`)
-                  })
+                  applyDraft(assistantDraft)
                 }}
-                data-testid="apply-model-button"
+                data-testid="apply-assistant-button"
               >
                 Apply
               </button>
             </div>
-          {:else if tab.id === 'customPrompt'}
-            <h3 class="text-[11px] font-semibold uppercase tracking-widest text-text-secondary">
-              Custom Prompt
-            </h3>
+          {:else if tab.id === 'proof'}
+            {#each PROOF_FONT_FIELDS as field (field.id)}
+              <div class="flex items-center justify-between">
+                <span id="{field.id}-font-size-label" class="text-[13px] text-text-primary">
+                  {field.label}
+                </span>
+                <SelectField
+                  id="{field.id}-font-size"
+                  value={settings[field.key]}
+                  options={FONT_SIZE_OPTIONS.map((s) => ({ value: s, label: `${String(s)}px` }))}
+                  onchange={(v) => {
+                    saveSetting(field.key, Number(v))
+                  }}
+                  data-testid="{field.id}-font-size-select"
+                />
+              </div>
+            {/each}
 
-            <p class="text-[12px] text-text-secondary leading-relaxed">
-              Markdown appended to the built-in system prompt on every assistant turn. Leave empty
-              to use only the built-in prompt.
-            </p>
+            <div class="flex items-center justify-between">
+              <span id="translation-model-label" class="text-[13px] text-text-primary">
+                Translation Model
+              </span>
+              <SelectField
+                id="translation-model-select"
+                value={selectedTranslationModelId}
+                options={modelOptions()}
+                onchange={(v) => {
+                  translationDraft.set('translationModel', String(v))
+                }}
+                data-testid="translation-model-select"
+              />
+            </div>
 
-            <textarea
-              bind:value={customPromptDraft.customPrompt}
-              class="flex-1 min-h-[10rem] w-full rounded border border-border bg-bg-secondary
-                px-3 py-2 text-[13px] text-text-primary font-mono resize-none
-                focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-              data-testid="custom-prompt-textarea"
-            ></textarea>
+            <div class="flex flex-col gap-1 flex-1 min-h-0">
+              <span id="translation-prompt-label" class="text-[13px] text-text-primary">
+                Translation Prompt
+              </span>
+              <textarea
+                aria-labelledby="translation-prompt-label"
+                value={translationPromptValue}
+                oninput={onTranslationPromptInput}
+                class="flex-1 min-h-[8rem] w-full rounded border border-border bg-bg-secondary
+                  px-3 py-2 text-[12px] text-text-primary font-mono resize-none
+                  focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                data-testid="translation-prompt-textarea"
+              ></textarea>
+            </div>
 
-            <div class="flex items-center justify-between border-t border-border pt-4">
+            <div class="flex items-center justify-between border-t border-border pt-3">
               <button
                 class="rounded border border-border bg-bg-secondary px-3 py-1.5
                   text-[12px] text-text-secondary hover:bg-bg-tertiary hover:text-text-primary
                   focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
                 onclick={() => {
-                  customPromptDraft.fillDefaults()
+                  void restoreDefaults('proof')
                 }}
-                data-testid="restore-defaults-custom-prompt-button"
+                data-testid="restore-defaults-proof-button"
               >
-                Restore Defaults
+                Restore Default
               </button>
               <button
-                disabled={!customPromptDraft.dirty}
+                disabled={!translationDraft.dirty}
                 class="rounded px-3 py-1.5 text-[12px]
                   focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent
-                  {applyBtnClass(customPromptDraft.dirty)}"
+                  {applyBtnClass(translationDraft.dirty)}"
                 onclick={() => {
-                  void customPromptDraft.apply().catch((err: unknown) => {
-                    const msg = err instanceof Error ? err.message : String(err)
-                    showError(`Failed to save settings: ${msg}`)
-                  })
+                  applyDraft(translationDraft)
                 }}
-                data-testid="apply-custom-prompt-button"
+                data-testid="apply-proof-button"
               >
                 Apply
               </button>

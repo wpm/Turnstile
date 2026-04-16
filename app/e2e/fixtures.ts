@@ -111,10 +111,13 @@ export async function injectTauriMock(page: Page, opts: TauriMockOptions = {}): 
             if (cmd === 'get_settings')
               return Promise.resolve({
                 editor_font_size: 13,
-                prose_font_size: 13,
+                goal_state_font_size: 13,
+                prose_proof_font_size: 13,
                 assistant_font_size: 13,
-                model: null,
-                theme: 'dark',
+                assistant_model: null,
+                translation_model: null,
+                assistant_prompt: null,
+                translation_prompt: null,
               })
             if (cmd === 'get_available_models')
               return Promise.resolve([
@@ -123,7 +126,10 @@ export async function injectTauriMock(page: Page, opts: TauriMockOptions = {}): 
                 { id: 'claude-haiku-4-5-20251001', display_name: 'Claude Haiku 4.5' },
               ])
             if (cmd === 'save_settings') return Promise.resolve(null)
-            if (cmd === 'set_model') return Promise.resolve(null)
+            if (cmd === 'get_default_assistant_prompt')
+              return Promise.resolve('You are a mock assistant prompt.')
+            if (cmd === 'get_default_translation_prompt')
+              return Promise.resolve('You are a mock translation prompt.')
             if (cmd === 'check_auto_save') return Promise.resolve(hasAutoSave)
             if (cmd === 'delete_auto_save') return Promise.resolve(null)
             if (cmd === 'restore_auto_save') {

@@ -18,13 +18,6 @@ async function editorHasFocus(page: Page): Promise<boolean> {
 // ---------------------------------------------------------------------------
 
 test.describe('Button focus states', () => {
-  test('theme toggle shows focus ring when focused via keyboard', async ({ page, mountApp }) => {
-    await mountApp()
-    const btn = page.getByLabel('Toggle theme')
-    await btn.focus()
-    expect(await focusRing(btn)).not.toBe('none')
-  })
-
   test('send button shows focus ring when focused via keyboard', async ({ page, mountApp }) => {
     await mountApp()
     const textbox = page.locator('.assistant-input')
@@ -57,7 +50,7 @@ test.describe('Button focus states', () => {
     await page.keyboard.press('Meta+,')
     await page.locator('[data-testid="settings-modal"]').waitFor({ state: 'visible' })
 
-    for (const tabId of ['appearance', 'model', 'customPrompt']) {
+    for (const tabId of ['assistant', 'proof']) {
       const btn = page.locator(`[data-testid="settings-tab-${tabId}"]`)
       await btn.focus()
       expect(await focusRing(btn), `settings-tab-${tabId} should have a focus ring`).not.toBe(
@@ -66,14 +59,14 @@ test.describe('Button focus states', () => {
     }
   })
 
-  test('Restore Defaults button shows focus ring when focused via keyboard', async ({
+  test('Restore Default button shows focus ring when focused via keyboard', async ({
     page,
     mountApp,
   }) => {
     await mountApp()
     await page.keyboard.press('Meta+,')
     await page.locator('[data-testid="settings-modal"]').waitFor({ state: 'visible' })
-    const btn = page.locator('[data-testid="restore-defaults-button"]')
+    const btn = page.locator('[data-testid="restore-defaults-assistant-button"]')
     await btn.focus()
     expect(await focusRing(btn)).not.toBe('none')
   })
@@ -159,13 +152,13 @@ test.describe('Settings modal keyboard navigation', () => {
     await page.keyboard.press('Meta+,')
     await page.locator('[data-testid="settings-modal"]').waitFor({ state: 'visible' })
 
-    await page.locator('[data-testid="settings-tab-appearance"]').focus()
+    await page.locator('[data-testid="settings-tab-assistant"]').focus()
     await page.keyboard.press('Tab')
 
     // Focus should now be inside the panel, not on a tab button.
     const focused = await page.evaluate(() => document.activeElement?.getAttribute('data-testid'))
-    expect(focused).not.toBe('settings-tab-appearance')
-    expect(focused).not.toBe('settings-tab-model')
+    expect(focused).not.toBe('settings-tab-assistant')
+    expect(focused).not.toBe('settings-tab-proof')
     // And still inside the modal.
     const isInsideModal = await page.evaluate(
       () =>
@@ -181,27 +174,19 @@ test.describe('Settings modal keyboard navigation', () => {
     await page.keyboard.press('Meta+,')
     await page.locator('[data-testid="settings-modal"]').waitFor({ state: 'visible' })
 
-    // Start from the Appearance tab button and Tab into the panel.
-    await page.locator('[data-testid="settings-tab-appearance"]').focus()
+    // Start from the Assistant tab button and Tab into the panel.
+    await page.locator('[data-testid="settings-tab-assistant"]').focus()
     await page.keyboard.press('Tab')
-    // First focusable in Appearance panel is the Theme select.
+    // First focusable in Assistant panel is the font-size select.
     const first = await page.evaluate(() => document.activeElement?.getAttribute('data-testid'))
-    expect(first).toBe('theme-select')
+    expect(first).toBe('assistant-font-size-select')
 
     await page.keyboard.press('Tab')
     const second = await page.evaluate(() => document.activeElement?.getAttribute('data-testid'))
-    expect(second).toBe('editor-font-size-select')
-
-    await page.keyboard.press('Tab')
-    const third = await page.evaluate(() => document.activeElement?.getAttribute('data-testid'))
-    expect(third).toBe('prose-font-size-select')
-
-    await page.keyboard.press('Tab')
-    const fourth = await page.evaluate(() => document.activeElement?.getAttribute('data-testid'))
-    expect(fourth).toBe('assistant-font-size-select')
+    expect(second).toBe('assistant-model-select')
   })
 
-  test('Tab from tab button enters active Model panel when Model tab is selected', async ({
+  test('Tab from tab button enters active Proof panel when Proof tab is selected', async ({
     page,
     mountApp,
   }) => {
@@ -209,14 +194,14 @@ test.describe('Settings modal keyboard navigation', () => {
     await page.keyboard.press('Meta+,')
     await page.locator('[data-testid="settings-modal"]').waitFor({ state: 'visible' })
 
-    // Switch to Model tab and Tab into the panel.
-    await page.locator('[data-testid="settings-tab-model"]').click()
-    await page.locator('[data-testid="settings-tab-model"]').focus()
+    // Switch to Proof tab and Tab into the panel.
+    await page.locator('[data-testid="settings-tab-proof"]').click()
+    await page.locator('[data-testid="settings-tab-proof"]').focus()
     await page.keyboard.press('Tab')
 
-    // First focusable in Model panel is the model select.
+    // First focusable in Proof panel is the goal-state font-size select.
     const focused = await page.evaluate(() => document.activeElement?.getAttribute('data-testid'))
-    expect(focused).toBe('model-select')
+    expect(focused).toBe('goal-state-font-size-select')
   })
 
   test('ArrowDown on a tab button switches to the next tab', async ({ page, mountApp }) => {
@@ -224,12 +209,12 @@ test.describe('Settings modal keyboard navigation', () => {
     await page.keyboard.press('Meta+,')
     await page.locator('[data-testid="settings-modal"]').waitFor({ state: 'visible' })
 
-    await page.locator('[data-testid="settings-tab-appearance"]').focus()
+    await page.locator('[data-testid="settings-tab-assistant"]').focus()
     await page.keyboard.press('ArrowDown')
 
-    await expect(page.locator('[data-testid="model-select"]')).toBeVisible()
+    await expect(page.locator('[data-testid="translation-model-select"]')).toBeVisible()
     const focused = await page.evaluate(() => document.activeElement?.getAttribute('data-testid'))
-    expect(focused).toBe('settings-tab-model')
+    expect(focused).toBe('settings-tab-proof')
   })
 
   test('ArrowUp on a tab button switches to the previous tab', async ({ page, mountApp }) => {
@@ -237,13 +222,13 @@ test.describe('Settings modal keyboard navigation', () => {
     await page.keyboard.press('Meta+,')
     await page.locator('[data-testid="settings-modal"]').waitFor({ state: 'visible' })
 
-    await page.locator('[data-testid="settings-tab-model"]').click()
-    await page.locator('[data-testid="settings-tab-model"]').focus()
+    await page.locator('[data-testid="settings-tab-proof"]').click()
+    await page.locator('[data-testid="settings-tab-proof"]').focus()
     await page.keyboard.press('ArrowUp')
 
-    await expect(page.locator('[data-testid="editor-font-size-select"]')).toBeVisible()
+    await expect(page.locator('[data-testid="assistant-font-size-select"]')).toBeVisible()
     const focused = await page.evaluate(() => document.activeElement?.getAttribute('data-testid'))
-    expect(focused).toBe('settings-tab-appearance')
+    expect(focused).toBe('settings-tab-assistant')
   })
 
   test('ArrowRight and ArrowLeft do not switch tabs (vertical tab list)', async ({
@@ -254,13 +239,13 @@ test.describe('Settings modal keyboard navigation', () => {
     await page.keyboard.press('Meta+,')
     await page.locator('[data-testid="settings-modal"]').waitFor({ state: 'visible' })
 
-    await page.locator('[data-testid="settings-tab-appearance"]').focus()
+    await page.locator('[data-testid="settings-tab-assistant"]').focus()
     await page.keyboard.press('ArrowRight')
 
-    // Should still be on Appearance — ArrowRight has no effect in a vertical list.
-    await expect(page.locator('[data-testid="editor-font-size-select"]')).toBeVisible()
+    // Should still be on Assistant — ArrowRight has no effect in a vertical list.
+    await expect(page.locator('[data-testid="assistant-font-size-select"]')).toBeVisible()
     const focused = await page.evaluate(() => document.activeElement?.getAttribute('data-testid'))
-    expect(focused).toBe('settings-tab-appearance')
+    expect(focused).toBe('settings-tab-assistant')
   })
 
   test('focus returns to trigger element when modal closes via Escape', async ({
@@ -268,8 +253,8 @@ test.describe('Settings modal keyboard navigation', () => {
     mountApp,
   }) => {
     await mountApp()
-    // Open modal from the theme toggle button (the natural trigger).
-    const trigger = page.getByLabel('Toggle theme')
+    // Open modal from the assistant input (a natural focusable trigger).
+    const trigger = page.locator('.assistant-input')
     await trigger.focus()
     await page.keyboard.press('Meta+,')
     await page.locator('[data-testid="settings-modal"]').waitFor({ state: 'visible' })
@@ -278,8 +263,10 @@ test.describe('Settings modal keyboard navigation', () => {
     await page.locator('[data-testid="settings-modal"]').waitFor({ state: 'hidden' })
 
     // Focus should be back on the element that had it before the modal opened.
-    const focused = await page.evaluate(() => document.activeElement?.getAttribute('aria-label'))
-    expect(focused).toBe('Toggle theme')
+    const hasFocus = await page.evaluate(
+      () => document.activeElement?.classList.contains('assistant-input') ?? false,
+    )
+    expect(hasFocus).toBe(true)
   })
 
   test('focus returns to trigger element when modal closes via close button', async ({
@@ -287,7 +274,7 @@ test.describe('Settings modal keyboard navigation', () => {
     mountApp,
   }) => {
     await mountApp()
-    const trigger = page.getByLabel('Toggle theme')
+    const trigger = page.locator('.assistant-input')
     await trigger.focus()
     await page.keyboard.press('Meta+,')
     await page.locator('[data-testid="settings-modal"]').waitFor({ state: 'visible' })
@@ -295,8 +282,10 @@ test.describe('Settings modal keyboard navigation', () => {
     await page.getByLabel('Close settings').click()
     await page.locator('[data-testid="settings-modal"]').waitFor({ state: 'hidden' })
 
-    const focused = await page.evaluate(() => document.activeElement?.getAttribute('aria-label'))
-    expect(focused).toBe('Toggle theme')
+    const hasFocus = await page.evaluate(
+      () => document.activeElement?.classList.contains('assistant-input') ?? false,
+    )
+    expect(hasFocus).toBe(true)
   })
 })
 
@@ -317,7 +306,7 @@ test.describe('Settings tablist ARIA', () => {
     await page.keyboard.press('Meta+,')
     await page.locator('[data-testid="settings-modal"]').waitFor({ state: 'visible' })
     const tabs = page.locator('[role="tab"]')
-    await expect(tabs).toHaveCount(3)
+    await expect(tabs).toHaveCount(2)
   })
 
   test('active tab has aria-selected=true, inactive has aria-selected=false', async ({
@@ -328,15 +317,15 @@ test.describe('Settings tablist ARIA', () => {
     await page.keyboard.press('Meta+,')
     await page.locator('[data-testid="settings-modal"]').waitFor({ state: 'visible' })
 
-    const appearanceTab = page.locator('[data-testid="settings-tab-appearance"]')
-    const modelTab = page.locator('[data-testid="settings-tab-model"]')
+    const assistantTab = page.locator('[data-testid="settings-tab-assistant"]')
+    const proofTab = page.locator('[data-testid="settings-tab-proof"]')
 
-    await expect(appearanceTab).toHaveAttribute('aria-selected', 'true')
-    await expect(modelTab).toHaveAttribute('aria-selected', 'false')
+    await expect(assistantTab).toHaveAttribute('aria-selected', 'true')
+    await expect(proofTab).toHaveAttribute('aria-selected', 'false')
 
-    await modelTab.click()
-    await expect(modelTab).toHaveAttribute('aria-selected', 'true')
-    await expect(appearanceTab).toHaveAttribute('aria-selected', 'false')
+    await proofTab.click()
+    await expect(proofTab).toHaveAttribute('aria-selected', 'true')
+    await expect(assistantTab).toHaveAttribute('aria-selected', 'false')
   })
 
   test('tab panel has role=tabpanel and is labelled by its tab', async ({ page, mountApp }) => {
@@ -348,7 +337,7 @@ test.describe('Settings tablist ARIA', () => {
     const visiblePanel = page.locator('[role="tabpanel"]:not([hidden])')
     await expect(visiblePanel).toBeVisible()
     const labelledBy = await visiblePanel.getAttribute('aria-labelledby')
-    expect(labelledBy).toBe('settings-tab-appearance')
+    expect(labelledBy).toBe('settings-tab-assistant')
 
     // The tab it points to must exist.
     await expect(page.locator(`#${String(labelledBy)}`)).toBeVisible()
@@ -359,8 +348,8 @@ test.describe('Settings tablist ARIA', () => {
     await page.keyboard.press('Meta+,')
     await page.locator('[data-testid="settings-modal"]').waitFor({ state: 'visible' })
 
-    const modelPanel = page.locator('#settings-panel-model')
-    await expect(modelPanel).toHaveAttribute('hidden', '')
+    const proofPanel = page.locator('#settings-panel-proof')
+    await expect(proofPanel).toHaveAttribute('hidden', '')
   })
 
   test('settings dialog uses aria-labelledby referencing visible title', async ({

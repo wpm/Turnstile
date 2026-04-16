@@ -55,8 +55,10 @@ impl Turn {
     }
 }
 
-/// The system prompt delivered to the assistant LLM.
-pub const SYSTEM_PROMPT: &str = include_str!("prompts/system.md");
+/// Default system prompt delivered to the assistant LLM. The user can override
+/// this via `Settings::assistant_prompt`; when that override is `None` the
+/// value below is used verbatim.
+pub const DEFAULT_ASSISTANT_PROMPT: &str = include_str!("prompts/assistant.md");
 
 /// Emitted for every assistant text-delta chunk while streaming.  Payload: `String`.
 pub const STREAM_DELTA_EVENT: &str = "assistant-delta";
@@ -391,23 +393,32 @@ pub async fn summarize_oldest(
 
     // Use `complete` (not `send_with_tools`) — summarization is a one-shot call
     // with no tool use, and `complete` does not emit COMPLETE_EVENT to the UI.
-    let summary_turn = llm.complete(SYSTEM_PROMPT, &history, app).await?;
+    let system_prompt = effective_system_prompt(app).await;
+    let model = effective_assistant_model(app).await;
+    let summary_turn = llm.complete(&system_prompt, &history, &model, app).await?;
 
     transcript.summary = Some(summary_turn.content);
     Ok(())
 }
 
-/// Compose the effective system prompt: the built-in PA prompt, plus the
-/// user's optional custom prompt (from settings) separated by a blank line.
-async fn effective_system_prompt(app: &AppHandle) -> String {
+/// The user's assistant prompt from settings, or the built-in default when not set.
+pub(crate) async fn effective_system_prompt(app: &AppHandle) -> String {
     let app_state = app.state::<crate::AppState>();
     let settings = app_state.settings.lock().await;
-    let custom = settings.custom_prompt.trim();
-    if custom.is_empty() {
-        SYSTEM_PROMPT.to_string()
-    } else {
-        format!("{SYSTEM_PROMPT}\n\n{custom}")
-    }
+    settings
+        .assistant_prompt
+        .clone()
+        .unwrap_or_else(|| DEFAULT_ASSISTANT_PROMPT.to_string())
+}
+
+/// The user's assistant model from settings, or the default when not set.
+pub(crate) async fn effective_assistant_model(app: &AppHandle) -> String {
+    let app_state = app.state::<crate::AppState>();
+    let settings = app_state.settings.lock().await;
+    settings
+        .assistant_model
+        .clone()
+        .unwrap_or_else(|| crate::llm::models::default_model_id().to_string())
 }
 
 // ---------------------------------------------------------------------------
@@ -445,8 +456,9 @@ pub async fn send_message(
         transcript.clone()
     };
     let system_prompt = effective_system_prompt(&app).await;
+    let model = effective_assistant_model(&app).await;
     let assistant_turn = backend
-        .send_with_tools(&system_prompt, &snapshot, &tools, &app, &content)
+        .send_with_tools(&system_prompt, &snapshot, &tools, &model, &app, &content)
         .await
         .map_err(|e| e.0)?;
 
