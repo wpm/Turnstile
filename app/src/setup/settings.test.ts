@@ -10,7 +10,7 @@ import {
 } from './settings.svelte'
 
 // Mock the tauri invoke function
-vi.mock('./tauri', () => ({
+vi.mock('../session/tauri', () => ({
   invoke: vi.fn(),
 }))
 
@@ -72,12 +72,12 @@ describe('updateSetting', () => {
   beforeEach(async () => {
     // Reset to known state
     applySettings(parseSettings({}))
-    const { invoke } = await import('./tauri')
+    const { invoke } = await import('../session/tauri')
     vi.mocked(invoke).mockReset()
   })
 
   it('persists a setting to the backend on success', async () => {
-    const { invoke } = await import('./tauri')
+    const { invoke } = await import('../session/tauri')
     vi.mocked(invoke).mockResolvedValueOnce(undefined)
 
     await updateSetting('editorFontSize', 18)
@@ -88,7 +88,7 @@ describe('updateSetting', () => {
   })
 
   it('rolls back local state when backend save fails', async () => {
-    const { invoke } = await import('./tauri')
+    const { invoke } = await import('../session/tauri')
     vi.mocked(invoke).mockRejectedValueOnce(new Error('disk full'))
 
     const originalSize = settings.editorFontSize
@@ -107,12 +107,12 @@ describe('resetToDefaults', () => {
       theme: 'light',
       customPrompt: 'noise',
     })
-    const { invoke } = await import('./tauri')
+    const { invoke } = await import('../session/tauri')
     vi.mocked(invoke).mockReset()
   })
 
   it('resets all settings and persists to backend', async () => {
-    const { invoke } = await import('./tauri')
+    const { invoke } = await import('../session/tauri')
     vi.mocked(invoke).mockResolvedValueOnce(undefined)
 
     await resetToDefaults()
@@ -123,7 +123,7 @@ describe('resetToDefaults', () => {
   })
 
   it('rolls back when backend save fails', async () => {
-    const { invoke } = await import('./tauri')
+    const { invoke } = await import('../session/tauri')
     vi.mocked(invoke).mockRejectedValueOnce(new Error('save error'))
 
     await expect(resetToDefaults()).rejects.toThrow('save error')
@@ -138,7 +138,7 @@ describe('resetToDefaults', () => {
 describe('SettingsDraft', () => {
   beforeEach(async () => {
     applySettings(parseSettings({}))
-    const { invoke } = await import('./tauri')
+    const { invoke } = await import('../session/tauri')
     vi.mocked(invoke).mockReset()
   })
 
@@ -175,7 +175,7 @@ describe('SettingsDraft', () => {
   })
 
   it('apply() persists to backend and updates singleton', async () => {
-    const { invoke } = await import('./tauri')
+    const { invoke } = await import('../session/tauri')
     vi.mocked(invoke).mockResolvedValueOnce(undefined)
 
     const draft = createDraft(['editorFontSize'])
@@ -189,7 +189,7 @@ describe('SettingsDraft', () => {
   })
 
   it('apply() rolls back singleton on failure', async () => {
-    const { invoke } = await import('./tauri')
+    const { invoke } = await import('../session/tauri')
     vi.mocked(invoke).mockRejectedValueOnce(new Error('disk full'))
 
     const draft = createDraft(['editorFontSize'])
@@ -200,7 +200,7 @@ describe('SettingsDraft', () => {
   })
 
   it('apply() resets dirty to false', async () => {
-    const { invoke } = await import('./tauri')
+    const { invoke } = await import('../session/tauri')
     vi.mocked(invoke).mockResolvedValueOnce(undefined)
 
     const draft = createDraft(['editorFontSize'])
@@ -221,7 +221,7 @@ describe('SettingsDraft', () => {
   })
 
   it('afterApply hook runs after successful persist', async () => {
-    const { invoke } = await import('./tauri')
+    const { invoke } = await import('../session/tauri')
     vi.mocked(invoke).mockResolvedValueOnce(undefined)
 
     const afterApply = vi.fn()
@@ -233,7 +233,7 @@ describe('SettingsDraft', () => {
   })
 
   it('afterApply hook does NOT run on failure', async () => {
-    const { invoke } = await import('./tauri')
+    const { invoke } = await import('../session/tauri')
     vi.mocked(invoke).mockRejectedValueOnce(new Error('fail'))
 
     const afterApply = vi.fn()
@@ -245,7 +245,7 @@ describe('SettingsDraft', () => {
   })
 
   it('draft only affects its scoped keys', async () => {
-    const { invoke } = await import('./tauri')
+    const { invoke } = await import('../session/tauri')
     vi.mocked(invoke).mockResolvedValueOnce(undefined)
 
     applySettings({ ...DEFAULT_SETTINGS, editorFontSize: 16, proseFontSize: 18 })

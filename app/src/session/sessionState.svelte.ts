@@ -13,7 +13,7 @@
 
 import { invoke, listen } from './tauri'
 import type { SessionState } from './tauri'
-import { renderContent } from './renderContent'
+import { renderContent } from '../assistant/renderContent'
 import { getTheoremTitle, titleToFilename } from './theoremName'
 import { showError } from './errorNotification.svelte'
 import { setAssistantWidthPct, setGoalPanelPct, setWordWrap } from './layoutState.svelte'

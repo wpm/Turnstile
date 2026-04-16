@@ -1,12 +1,12 @@
 <script lang="ts">
   import { onMount, onDestroy, tick } from 'svelte'
-  import { invoke, listen } from '../lib/tauri'
-  import type { AssistantTurn, SessionState } from '../lib/tauri'
-  import type { ResolvedTheme } from '../lib/theme'
-  import { renderContent } from '../lib/renderContent'
-  import { showError } from '../lib/errorNotification.svelte'
-  import { findAbbrevReplacement, applyAbbrevReplacement } from '../lib/leanAbbrev'
-  import { detectCompletedDelimiter, isInsideOpenDelimiter } from '../lib/delimiterDetect'
+  import { invoke, listen } from '../session/tauri'
+  import type { AssistantTurn, SessionState } from '../session/tauri'
+  import type { ResolvedTheme } from '../setup/theme'
+  import { renderContent } from './renderContent'
+  import { showError } from '../session/errorNotification.svelte'
+  import { findAbbrevReplacement, applyAbbrevReplacement } from '../formal-proof/leanAbbrev'
+  import { detectCompletedDelimiter, isInsideOpenDelimiter } from './delimiterDetect'
   import {
     extractPlainText,
     getCursorOffset,
@@ -15,8 +15,8 @@
     replaceRangeWithNode,
     getRenderedNodeAtCursor,
     removeRenderedNode,
-  } from '../lib/richInput'
-  import { createMathElement, createCodeElement } from '../lib/renderInlineContent'
+  } from './richInput'
+  import { createMathElement, createCodeElement } from './renderInlineContent'
 
   // ---------------------------------------------------------------------------
   // Props

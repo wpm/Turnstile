@@ -1,8 +1,8 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte'
-  import { mountEditor } from '../lib/editor'
-  import type { DiagnosticInfo, FileProgressRange, SemanticToken } from '../lib/tauri'
-  import type { ResolvedTheme } from '../lib/theme'
+  import { mountEditor } from './editor'
+  import type { DiagnosticInfo, FileProgressRange, SemanticToken } from '../session/tauri'
+  import type { ResolvedTheme } from '../setup/theme'
 
   interface Props {
     initialTheme: ResolvedTheme

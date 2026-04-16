@@ -8,7 +8,7 @@
  */
 
 import { renderMath } from './math'
-import { highlightLean } from './leanHighlight'
+import { highlightLean } from '../formal-proof/leanHighlight'
 
 /**
  * Create a rendered inline math element.

@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach } from 'vitest'
 import { EditorView, type DecorationSet } from '@codemirror/view'
 import { EditorState } from '@codemirror/state'
-import type { FileProgressRange } from './tauri'
+import type { FileProgressRange } from '../session/tauri'
 import {
   computeProcessingLines,
   fileProgressExtension,

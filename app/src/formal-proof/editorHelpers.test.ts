@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import type { DiagnosticInfo, SemanticToken } from './tauri'
+import type { DiagnosticInfo, SemanticToken } from '../session/tauri'
 import {
   type DocLike,
   diagRange,

@@ -15,7 +15,7 @@
  */
 
 import { Marked } from 'marked'
-import { highlightLean, escapeHtml } from './leanHighlight'
+import { highlightLean, escapeHtml } from '../formal-proof/leanHighlight'
 import { renderMath } from './math'
 
 // ── Placeholder helpers ─────────────────────────────────────────────────

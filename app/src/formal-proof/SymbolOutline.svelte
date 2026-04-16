@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import type { DocumentSymbolInfo } from '../lib/lspRequests'
-  import { flattenSymbols, filterSymbols, symbolKindTag } from '../lib/symbolOutline'
+  import type { DocumentSymbolInfo } from './lspRequests'
+  import { flattenSymbols, filterSymbols, symbolKindTag } from './symbolOutline'
 
   interface Props {
     symbols: DocumentSymbolInfo[]

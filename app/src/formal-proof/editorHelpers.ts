@@ -7,7 +7,7 @@
  * interface, not on a full EditorView.
  */
 
-import type { DiagnosticInfo, SemanticToken } from './tauri'
+import type { DiagnosticInfo, SemanticToken } from '../session/tauri'
 import { tokenTypeToCssClass } from './tokenTypes'
 
 // ---------------------------------------------------------------------------

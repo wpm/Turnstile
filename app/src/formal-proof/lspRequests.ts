@@ -5,7 +5,7 @@
  * document URI, so callers do not pass it.
  */
 
-import { invoke } from './tauri'
+import { invoke } from '../session/tauri'
 
 export interface HoverInfo {
   contents: string

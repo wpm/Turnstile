@@ -6,7 +6,7 @@
  * logic without touching the singleton store.
  */
 
-import { invoke } from './tauri'
+import { invoke } from '../session/tauri'
 import type { ThemePreference } from './theme'
 
 /** Selectable font sizes offered in the Settings UI. */

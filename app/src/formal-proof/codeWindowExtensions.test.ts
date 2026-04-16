@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
-import type { SemanticToken } from './tauri'
+import type { SemanticToken } from '../session/tauri'
 import {
   semanticTokensField,
   setSemanticTokensEffect,

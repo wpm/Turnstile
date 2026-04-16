@@ -8,7 +8,7 @@
 
 import { StateEffect, StateField, RangeSet, type Extension, type Range } from '@codemirror/state'
 import { EditorView, Decoration, type DecorationSet } from '@codemirror/view'
-import type { FileProgressRange } from './tauri'
+import type { FileProgressRange } from '../session/tauri'
 
 // ---------------------------------------------------------------------------
 // Effect — dispatched from EditorHandle.applyFileProgress()

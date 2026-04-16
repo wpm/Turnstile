@@ -6,9 +6,9 @@
 
 import { EditorView, Decoration, type DecorationSet } from '@codemirror/view'
 import { StateField, StateEffect, RangeSet, type Extension } from '@codemirror/state'
-import type { SemanticToken } from './tauri'
+import type { SemanticToken } from '../session/tauri'
 import { buildSemanticTokenRanges } from './editorHelpers'
-import type { ResolvedTheme } from './theme'
+import type { ResolvedTheme } from '../setup/theme'
 
 // ---------------------------------------------------------------------------
 // Semantic token highlighting

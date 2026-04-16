@@ -1,30 +1,30 @@
 <script lang="ts">
   import { onMount, untrack } from 'svelte'
-  import { invoke, listen } from './lib/tauri'
-  import type { SetupProgressPayload } from './lib/tauri'
-  import Editor from './components/Editor.svelte'
-  import SetupOverlay from './components/SetupOverlay.svelte'
-  import AssistantPanel from './components/AssistantPanel.svelte'
-  import SettingsModal from './components/SettingsModal.svelte'
-  import ProofViewToggle from './components/ProofViewToggle.svelte'
-  import ProsePanel from './components/ProsePanel.svelte'
-  import GoalPanel from './components/GoalPanel.svelte'
-  import SymbolOutline from './components/SymbolOutline.svelte'
-  import { lspDocumentSymbols } from './lib/lspRequests'
-  import { theme, systemTheme, toggleTheme, resolveTheme } from './lib/theme'
-  import type { ResolvedTheme } from './lib/theme'
+  import { invoke, listen } from './session/tauri'
+  import type { SetupProgressPayload } from './session/tauri'
+  import Editor from './formal-proof/Editor.svelte'
+  import SetupOverlay from './setup/SetupOverlay.svelte'
+  import AssistantPanel from './assistant/AssistantPanel.svelte'
+  import SettingsModal from './setup/SettingsModal.svelte'
+  import ProofViewToggle from './session/ProofViewToggle.svelte'
+  import ProsePanel from './prose-proof/ProsePanel.svelte'
+  import GoalPanel from './goal-state/GoalPanel.svelte'
+  import SymbolOutline from './formal-proof/SymbolOutline.svelte'
+  import { lspDocumentSymbols } from './formal-proof/lspRequests'
+  import { theme, systemTheme, toggleTheme, resolveTheme } from './setup/theme'
+  import type { ResolvedTheme } from './setup/theme'
   import {
     settings,
     parseSettings,
     applySettings,
     setAvailableModels,
     updateSetting,
-  } from './lib/settings.svelte'
-  import type { ModelInfo } from './lib/settings.svelte'
-  import { handleMenuEvent } from './lib/menu'
-  import { syncSaveMenuState } from './lib/saveIndicator'
-  import { errorNotification, showError, dismissError } from './lib/errorNotification.svelte'
-  import { lspState, setOutlineSymbols, setupLspListeners } from './lib/lspState.svelte'
+  } from './setup/settings.svelte'
+  import type { ModelInfo } from './setup/settings.svelte'
+  import { handleMenuEvent } from './session/menu'
+  import { syncSaveMenuState } from './session/saveIndicator'
+  import { errorNotification, showError, dismissError } from './session/errorNotification.svelte'
+  import { lspState, setOutlineSymbols, setupLspListeners } from './formal-proof/lspState.svelte'
   import {
     layoutState,
     setAssistantWidthPct,
@@ -35,7 +35,7 @@
     ASSISTANT_WIDTH_MAX,
     GOAL_PANEL_MIN,
     GOAL_PANEL_MAX,
-  } from './lib/layoutState.svelte'
+  } from './session/layoutState.svelte'
   import {
     sessionState,
     setEditorContent,
@@ -49,8 +49,8 @@
     reopenLastSession,
     setupSessionListeners,
     type SessionSetupDeps,
-  } from './lib/sessionState.svelte'
-  import { installKeyboardShortcuts } from './lib/keyboard'
+  } from './session/sessionState.svelte'
+  import { installKeyboardShortcuts } from './session/keyboard'
 
   let setupVisible = $state(true)
   let setupMessage = $state('Checking Lean installation...')

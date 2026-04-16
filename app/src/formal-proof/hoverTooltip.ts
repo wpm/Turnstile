@@ -11,7 +11,7 @@ import { hoverTooltip, type Tooltip, type EditorView } from '@codemirror/view'
 import type { Extension } from '@codemirror/state'
 import { lspHover, type HoverInfo } from './lspRequests'
 import { cmPosToLsp } from './positionConvert'
-import { renderContent } from './renderContent'
+import { renderContent } from '../assistant/renderContent'
 
 /** Hover delay in ms — matches VS Code. Exported for tests. */
 export const HOVER_TYPE_DELAY_MS = 300

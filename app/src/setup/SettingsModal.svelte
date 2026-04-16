@@ -6,11 +6,11 @@
     settings,
     createDraft,
     updateSetting,
-  } from '../lib/settings.svelte'
-  import { invoke } from '../lib/tauri'
-  import { showError } from '../lib/errorNotification.svelte'
-  import { theme } from '../lib/theme'
-  import type { ThemePreference } from '../lib/theme'
+  } from './settings.svelte'
+  import { invoke } from '../session/tauri'
+  import { showError } from '../session/errorNotification.svelte'
+  import { theme } from './theme'
+  import type { ThemePreference } from './theme'
   import SelectField from './SelectField.svelte'
 
   const THEME_OPTIONS: { value: ThemePreference; label: string }[] = [

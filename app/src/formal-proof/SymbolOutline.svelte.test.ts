@@ -2,7 +2,7 @@ import { render } from 'vitest-browser-svelte'
 import { describe, it, expect, vi } from 'vitest'
 import { userEvent } from 'vitest/browser'
 import SymbolOutline from './SymbolOutline.svelte'
-import type { DocumentSymbolInfo } from '../lib/lspRequests'
+import type { DocumentSymbolInfo } from './lspRequests'
 
 const MOCK_SYMBOLS: DocumentSymbolInfo[] = [
   {

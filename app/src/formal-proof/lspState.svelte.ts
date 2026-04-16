@@ -8,8 +8,8 @@
  * register-before-start_lsp ordering.
  */
 
-import { listen } from './tauri'
-import type { DiagnosticInfo, FileProgressRange, SemanticToken } from './tauri'
+import { listen } from '../session/tauri'
+import type { DiagnosticInfo, FileProgressRange, SemanticToken } from '../session/tauri'
 import type { DocumentSymbolInfo } from './lspRequests'
 
 let diagnostics = $state<DiagnosticInfo[] | null>(null)

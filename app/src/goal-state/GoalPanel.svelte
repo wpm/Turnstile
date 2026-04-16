@@ -1,7 +1,7 @@
 <script lang="ts">
   import { SvelteSet } from 'svelte/reactivity'
-  import { parseBlocks } from '../lib/markdown'
-  import { computeHighlightedPanelIndices } from '../lib/editorHelpers'
+  import { parseBlocks } from './markdown'
+  import { computeHighlightedPanelIndices } from '../formal-proof/editorHelpers'
   import GoalBlock from './GoalBlock.svelte'
 
   interface Props {

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { parseGoalLine } from '../lib/goalLineParse'
+  import { parseGoalLine } from './goalLineParse'
 
   interface Props {
     content: string

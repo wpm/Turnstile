@@ -50,7 +50,7 @@ import {
   type DiagnosticInfo,
   type FileProgressRange,
   type SemanticToken,
-} from './tauri'
+} from '../session/tauri'
 import { cmLineToLsp, cmPosToLsp } from './positionConvert'
 import { fileProgressExtension, setFileProgressEffect } from './fileProgress'
 import {
@@ -59,7 +59,7 @@ import {
   diagnosticPopupClass,
   diagnosticSeverityClass,
 } from './editorHelpers'
-import type { ResolvedTheme } from './theme'
+import type { ResolvedTheme } from '../setup/theme'
 import { findAbbrevReplacement } from './leanAbbrev'
 import { indentationMarkers } from '@replit/codemirror-indentation-markers'
 import { hoverTypeExtension } from './hoverTooltip'
