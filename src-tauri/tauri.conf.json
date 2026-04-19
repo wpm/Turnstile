@@ -2,17 +2,18 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "turnstile",
   "version": "0.1.0",
-  "identifier": "com.mcneill.turnstile",
+  "identifier": "com.ontical.turnstile",
   "build": {
-    "beforeDevCommand": "pnpm dev",
+    "beforeDevCommand": { "script": "pnpm run dev", "cwd": ".." },
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "pnpm build",
+    "beforeBuildCommand": { "script": "pnpm run build", "cwd": ".." },
     "frontendDist": "../build"
   },
   "app": {
+    "withGlobalTauri": true,
     "windows": [
       {
-        "title": "turnstile",
+        "title": "New Theorem",
         "width": 800,
         "height": 600
       }
