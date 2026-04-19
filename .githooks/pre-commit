@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(git rev-parse --show-toplevel)"
+STAGED=$(git diff --cached --name-only --diff-filter=ACMR)
+
+# ── Frontend ──────────────────────────────────────────────────────────────────
+
+FRONTEND_FILES=$(echo "$STAGED" | grep -E '\.(ts|js|svelte)$' || true)
+
+if [[ -n "$FRONTEND_FILES" ]]; then
+  echo "▶ Frontend: formatting..."
+  pnpm --prefix "$ROOT" exec prettier --write $FRONTEND_FILES
+  git add $FRONTEND_FILES
+
+  echo "▶ Frontend: linting..."
+  pnpm --prefix "$ROOT" exec eslint --fix $FRONTEND_FILES
+  git add $FRONTEND_FILES
+
+  echo "▶ Frontend: type-checking..."
+  pnpm --prefix "$ROOT" run check
+fi
+
+# ── Rust backend ──────────────────────────────────────────────────────────────
+
+RUST_FILES=$(echo "$STAGED" | grep -E '\.rs$' || true)
+
+if [[ -n "$RUST_FILES" ]]; then
+  echo "▶ Rust: formatting..."
+  cargo fmt --manifest-path "$ROOT/src-tauri/Cargo.toml"
+  git add $RUST_FILES
+
+  echo "▶ Rust: linting (clippy)..."
+  cargo clippy --manifest-path "$ROOT/src-tauri/Cargo.toml" --all-targets -- \
+    -D warnings \
+    -D clippy::pedantic \
+    -D clippy::nursery \
+    -A clippy::module_name_repetitions
+fi
+
+echo "✓ Pre-commit checks passed"
