@@ -31,6 +31,8 @@ chrono = { version = "0.4", features = ["serde"] }
 async-trait = "0.1"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 thiserror = "2"
+lsp-types = "0.97"
+katex = "0.4.6"
 
 [features]
 mock-llm = []

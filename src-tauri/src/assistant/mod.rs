@@ -40,6 +40,9 @@ pub enum Role {
 pub struct Turn {
     pub role: Role,
     pub content: String,
+    /// Parsed formatting spans for user turns; empty for assistant turns.
+    #[serde(default)]
+    pub spans: Vec<crate::format::Span>,
     /// Unix timestamp in milliseconds.
     pub timestamp: i64,
 }
@@ -51,6 +54,7 @@ impl Turn {
         Self {
             role: Role::Assistant,
             content,
+            spans: vec![],
             timestamp: Utc::now().timestamp_millis(),
         }
     }
@@ -356,7 +360,7 @@ pub fn token_estimate(transcript: &Transcript) -> usize {
 /// Summarize the oldest 75 % of turns using `backend`, storing the result in
 /// `transcript.summary` and removing those turns from `transcript.turns`.
 ///
-/// If `transcript.turns` has fewer than 2 turns nothing is changed (we need
+/// If `transcript.turns` has fewer than 2 turns, nothing is changed (we need
 /// at least 2 turns to make summarization worthwhile).
 ///
 /// # Errors
@@ -375,7 +379,7 @@ pub async fn summarize_oldest(
     let cut = (n * 3 / 4).max(1);
     let to_summarize: Vec<Turn> = transcript.turns.drain(..cut).collect();
 
-    // Format the turns to be summarized as plain text for the completion prompt.
+    // Format turns to be summarized as plain text for the completion prompt.
     let mut history = String::new();
     if let Some(prev_summary) = &transcript.summary {
         history.push_str("[Previous summary]\n");
@@ -455,6 +459,7 @@ pub async fn send_message(
         let mut transcript = transcript_arc.lock().await;
         transcript.turns.push(Turn {
             role: Role::User,
+            spans: crate::format::parse(&content),
             content: content.clone(),
             timestamp: Utc::now().timestamp_millis(),
         });
@@ -519,6 +524,7 @@ mod tests {
     fn make_turn(role: Role, content: &str) -> Turn {
         Turn {
             role,
+            spans: vec![],
             content: content.to_string(),
             timestamp: 0,
         }

@@ -1,19 +1,53 @@
 //! Prose proof generation: translate the formal proof into textbook-style prose.
 //!
 //! The translator is a **background process**, not an agent.  It runs whenever
-//! the formal source changes (debounced), calls the LLM with a dedicated
+//! the goal state changes (debounced), calls the LLM with a dedicated
 //! system prompt, and writes the result into [`Proof::prose`](super::Proof).
 //!
 //! The runtime plumbing — the debounce loop, the staleness checks, the
 //! sequence-guarded retry — lives in the crate root (`lib.rs`) alongside the
 //! other LSP-adjacent background tasks.  What lives here is the LLM call
-//! itself and the Tauri command that lets the user force an on-demand
-//! regeneration.
+//! itself.
 
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Manager};
 
-use super::{compute_source_hash, ProsePayload, PROSE_UPDATED_EVENT};
+use crate::format::{scan_spans, Span};
 use crate::llm::{models, Llm, LlmError};
+
+/// Render `$...$` (inline) and `$$...$$` (display) math in `text` to `KaTeX` HTML.
+///
+/// Uses the shared [`scan_spans`] state machine, so delimiter semantics are
+/// identical to the chat input parser.  On render failure the original
+/// delimiters are preserved verbatim.
+///
+/// # Panics
+///
+/// Never panics — `Opts::build()` cannot fail when all fields are optional.
+#[must_use]
+pub fn render_katex(text: &str) -> String {
+    let inline_opts = katex::Opts::builder()
+        .display_mode(false)
+        .output_type(katex::OutputType::Html)
+        .build()
+        .unwrap();
+    let display_opts = katex::Opts::builder()
+        .display_mode(true)
+        .output_type(katex::OutputType::Html)
+        .build()
+        .unwrap();
+
+    scan_spans(text)
+        .into_iter()
+        .map(|span| match span {
+            Span::Plain(s) => s,
+            Span::Lean(s) => format!("`{s}`"),
+            Span::LaTeX(math) => katex::render_with_opts(&math, inline_opts.clone())
+                .unwrap_or_else(|_| format!("${math}$")),
+            Span::DisplayLatex(math) => katex::render_with_opts(&math, display_opts.clone())
+                .unwrap_or_else(|_| format!("$${math}$$")),
+        })
+        .collect()
+}
 
 /// Default translator prompt, loaded at compile time from `prompts/translator.md`.
 ///
@@ -60,55 +94,6 @@ pub async fn run_translator(
     Ok(turn.content)
 }
 
-/// Force a prose regeneration from the current formal source, bypassing the
-/// debounce and dirty-flag checks.
-///
-/// Emits [`PROSE_UPDATED_EVENT`] on success. This is a standalone LLM call —
-/// separate from the PA conversation — exposed to the UI as an explicit
-/// "regenerate prose" button.
-///
-/// # Errors
-///
-/// Returns a string error if the LLM call fails.
-#[tauri::command]
-pub async fn generate_prose(
-    app: AppHandle,
-    state: tauri::State<'_, crate::AppState>,
-) -> Result<String, String> {
-    let source = state.proof.lock().await.formal.source.clone();
-    if source.trim().is_empty() {
-        return Ok(String::new());
-    }
-
-    let backend = state.llm.clone();
-    let prose_text = run_translator(backend.as_ref(), &source, &app)
-        .await
-        .map_err(|e| e.0)?;
-
-    let source_hash = compute_source_hash(&source);
-
-    {
-        let mut proof = state.proof.lock().await;
-        proof.prose.text.clone_from(&prose_text);
-        proof.prose.source_hash.clone_from(&source_hash);
-    }
-
-    app.emit(
-        PROSE_UPDATED_EVENT,
-        &ProsePayload {
-            text: prose_text.clone(),
-            hash: Some(source_hash),
-        },
-    )
-    .ok();
-
-    state
-        .session_dirty
-        .store(true, std::sync::atomic::Ordering::SeqCst);
-
-    Ok(prose_text)
-}
-
 // ── Tests ────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -119,5 +104,38 @@ mod tests {
     fn translator_prompt_is_non_empty() {
         assert!(!DEFAULT_TRANSLATION_PROMPT.is_empty());
         assert!(DEFAULT_TRANSLATION_PROMPT.contains("mathematical writing assistant"));
+    }
+
+    #[test]
+    fn render_katex_leaves_plain_text_unchanged() {
+        assert_eq!(render_katex("hello world"), "hello world");
+    }
+
+    #[test]
+    fn render_katex_renders_inline_math() {
+        let out = render_katex("We have $x^2 + 1$ here.");
+        assert!(!out.contains('$'));
+        assert!(out.contains("katex"));
+    }
+
+    #[test]
+    fn render_katex_renders_display_math() {
+        let out = render_katex("$$\\int_0^1 x\\,dx$$");
+        assert!(!out.contains("$$"));
+        assert!(out.contains("katex"));
+    }
+
+    #[test]
+    fn render_katex_mixed_content() {
+        let out = render_katex("Inline $a$ and display $$b$$.");
+        assert!(!out.contains('$'));
+        assert!(out.starts_with("Inline "));
+        assert!(out.ends_with('.'));
+    }
+
+    #[test]
+    fn render_katex_unclosed_delimiter_preserved() {
+        let out = render_katex("broken $x + 1 here");
+        assert_eq!(out, "broken $x + 1 here");
     }
 }

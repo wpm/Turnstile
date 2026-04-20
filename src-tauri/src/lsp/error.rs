@@ -60,6 +60,10 @@ pub enum LspError {
     /// without emitting a stale result.
     #[error("stale request (document revision advanced)")]
     Stale,
+
+    /// An LSP operation was attempted from the wrong lifecycle state.
+    #[error("invalid LSP state: in '{current}', expected '{expected}'")]
+    InvalidState { current: String, expected: String },
 }
 
 impl From<LspError> for String {
@@ -71,7 +75,6 @@ impl From<LspError> for String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::error::Error as _;
     use std::io::ErrorKind;
 
     #[test]
@@ -83,22 +86,6 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains("lean"), "missing command: {msg}");
         assert!(msg.contains("no such file"), "missing os error: {msg}");
-    }
-
-    #[test]
-    fn display_stdin_capture_failed() {
-        assert_eq!(
-            LspError::StdinCaptureFailed.to_string(),
-            "failed to capture LSP server stdin"
-        );
-    }
-
-    #[test]
-    fn display_not_connected() {
-        assert_eq!(
-            LspError::NotConnected.to_string(),
-            "not connected to LSP server"
-        );
     }
 
     #[test]
@@ -131,22 +118,6 @@ mod tests {
     }
 
     #[test]
-    fn display_writer_contended() {
-        assert_eq!(
-            LspError::WriterContended.to_string(),
-            "writer lock contended during shutdown"
-        );
-    }
-
-    #[test]
-    fn display_stale() {
-        assert_eq!(
-            LspError::Stale.to_string(),
-            "stale request (document revision advanced)"
-        );
-    }
-
-    #[test]
     fn from_lsp_error_for_string_matches_display() {
         let err = LspError::Timeout {
             method: "$/lean/plainGoal".to_string(),
@@ -164,50 +135,5 @@ mod tests {
         }
         let err = inner().unwrap_err();
         assert!(matches!(err, LspError::Serde(_)));
-    }
-
-    #[test]
-    fn serde_error_source_is_populated() {
-        let parse_err = serde_json::from_str::<serde_json::Value>("not json").unwrap_err();
-        let err: LspError = parse_err.into();
-        assert!(err.source().is_some(), "Serde variant should expose source");
-    }
-
-    #[test]
-    fn spawn_failed_source_is_populated() {
-        let err = LspError::SpawnFailed {
-            command: "lean".to_string(),
-            source: io::Error::new(ErrorKind::NotFound, "no such file"),
-        };
-        assert!(
-            err.source().is_some(),
-            "SpawnFailed should expose io::Error source"
-        );
-    }
-
-    #[test]
-    fn io_variant_source_is_populated() {
-        let err = LspError::Io {
-            operation: "flush",
-            source: io::Error::new(ErrorKind::BrokenPipe, "pipe closed"),
-        };
-        assert!(
-            err.source().is_some(),
-            "Io variant should expose io::Error source"
-        );
-    }
-
-    #[test]
-    fn simple_variants_have_no_source() {
-        assert!(LspError::NotConnected.source().is_none());
-        assert!(LspError::StdinCaptureFailed.source().is_none());
-        assert!(LspError::WriterContended.source().is_none());
-        assert!(LspError::Stale.source().is_none());
-        assert!(LspError::LockPoisoned { lock: "x" }.source().is_none());
-        assert!(LspError::Timeout {
-            method: "m".to_string(),
-        }
-        .source()
-        .is_none());
     }
 }

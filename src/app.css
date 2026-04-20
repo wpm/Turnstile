@@ -1,0 +1,85 @@
+@import "tailwindcss";
+@import "katex/dist/katex.min.css";
+
+@theme {
+  --color-bg:            theme(--color-white);
+  --color-surface:       theme(--color-slate-50);
+  --color-header-bg:     theme(--color-slate-100);
+  --color-border:        theme(--color-slate-200);
+  --color-divider:       theme(--color-slate-200);
+  --color-divider-hover: theme(--color-slate-300);
+  --color-handle:        theme(--color-slate-400);
+  --color-handle-active: theme(--color-slate-600);
+  --color-text:          theme(--color-slate-900);
+  --color-text-muted:    theme(--color-slate-500);
+  --color-accent:        theme(--color-blue-600);
+  --color-accent-hover:  theme(--color-blue-700);
+  --color-accent-text:   theme(--color-white);
+}
+
+:root.dark {
+  --color-bg:            theme(--color-slate-900);
+  --color-surface:       theme(--color-slate-800);
+  --color-header-bg:     theme(--color-slate-800);
+  --color-border:        theme(--color-slate-700);
+  --color-divider:       theme(--color-slate-700);
+  --color-divider-hover: theme(--color-slate-600);
+  --color-handle:        theme(--color-slate-500);
+  --color-handle-active: theme(--color-slate-300);
+  --color-text:          theme(--color-slate-100);
+  --color-text-muted:    theme(--color-slate-400);
+}
+
+/* ── LSP semantic token colors ───────────────────────────────────────── */
+:root {
+  --cm-tok-keyword:   #0000ff;
+  --cm-tok-function:  #795e26;
+  --cm-tok-type:      #267f99;
+  --cm-tok-variable:  #001080;
+  --cm-tok-comment:   #008000;
+  --cm-tok-string:    #a31515;
+  --cm-tok-number:    #098658;
+  --cm-tok-operator:  #000000;
+  --cm-tok-namespace: #444444;
+  --cm-diag-error:    #e51400;
+  --cm-diag-warning:  #bf8803;
+  --cm-diag-info:     #1a85ff;
+  --cm-diag-hint:     #888888;
+}
+
+:root.dark {
+  --cm-tok-keyword:   #569cd6;
+  --cm-tok-function:  #dcdcaa;
+  --cm-tok-type:      #4ec9b0;
+  --cm-tok-variable:  #9cdcfe;
+  --cm-tok-comment:   #6a9955;
+  --cm-tok-string:    #ce9178;
+  --cm-tok-number:    #b5cea8;
+  --cm-tok-operator:  #d4d4d4;
+  --cm-tok-namespace: #c8c8c8;
+  --cm-diag-error:    #f44747;
+  --cm-diag-warning:  #cca700;
+  --cm-diag-info:     #75beff;
+  --cm-diag-hint:     #999999;
+}
+
+.cm-tok-keyword              { color: var(--cm-tok-keyword); }
+.cm-tok-function             { color: var(--cm-tok-function); }
+.cm-tok-type,
+.cm-tok-class,
+.cm-tok-struct,
+.cm-tok-enum,
+.cm-tok-interface            { color: var(--cm-tok-type); }
+.cm-tok-variable,
+.cm-tok-parameter            { color: var(--cm-tok-variable); }
+.cm-tok-comment              { color: var(--cm-tok-comment); font-style: italic; }
+.cm-tok-string               { color: var(--cm-tok-string); }
+.cm-tok-number               { color: var(--cm-tok-number); }
+.cm-tok-operator             { color: var(--cm-tok-operator); }
+.cm-tok-namespace            { color: var(--cm-tok-namespace); }
+
+/* ── LSP diagnostic underlines ───────────────────────────────────────── */
+.cm-diag-error   { text-decoration: underline wavy var(--cm-diag-error); }
+.cm-diag-warning { text-decoration: underline wavy var(--cm-diag-warning); }
+.cm-diag-info    { text-decoration: underline dotted var(--cm-diag-info); }
+.cm-diag-hint    { text-decoration: underline dotted var(--cm-diag-hint); }

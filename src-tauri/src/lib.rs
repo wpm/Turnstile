@@ -7,12 +7,9 @@
 //! Frontend change → `update_document` → `textDocument/didChange` → LSP emits
 //! `textDocument/publishDiagnostics` → `lsp-diagnostics` Tauri event → frontend.
 //!
-//! **Elaboration complete → goal state:**
-//! LSP emits `$/lean/fileProgress` with empty ranges → `spawn_goal_state_refresh`
-//! debounces 150 ms, then issues `$/lean/plainGoal` at end-of-doc and at every
-//! line-end → `goal-state-updated` Tauri event → frontend goal panel.
 
 pub mod assistant;
+pub mod format;
 pub mod llm;
 pub mod lsp;
 pub mod menu;
@@ -65,18 +62,6 @@ pub struct AppState {
     /// `$/lean/fileProgress` event, so that a stale background refresh task
     /// does not overwrite the panel with old data.
     pub goal_state_seq: Arc<AtomicU64>,
-    /// Snapshot of the last goal-state payload — just the data
-    /// [`lsp_hover_goal_panel`] needs to translate a (panel-line, column)
-    /// hover into a Formal Proof document position.
-    pub goal_state_cache: Arc<Mutex<GoalStateCache>>,
-}
-
-/// Index-parallel snapshot of the goal panel's code-block lines and their
-/// mapped Formal Proof source lines (1-indexed, `None` if unmapped).
-#[derive(Default)]
-pub struct GoalStateCache {
-    pub panel_lines: Vec<String>,
-    pub panel_line_to_source_line: Vec<Option<u32>>,
 }
 
 impl AppState {
@@ -93,6 +78,12 @@ impl AppState {
 struct SetupStatusResponse {
     complete: bool,
     project_path: String,
+}
+
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+fn parse_formatted_input(text: String) -> Vec<format::Span> {
+    format::parse(&text)
 }
 
 #[tauri::command]
@@ -125,6 +116,13 @@ async fn start_setup(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
+async fn get_lsp_ready(app: AppHandle) -> bool {
+    let state = app.state::<AppState>();
+    let ready = state.lsp_client.lock().await.is_some();
+    ready
+}
+
+#[tauri::command]
 async fn start_lsp(app: AppHandle) -> Result<(), String> {
     let state = app.state::<AppState>();
 
@@ -146,17 +144,16 @@ async fn start_lsp(app: AppHandle) -> Result<(), String> {
     )
     .ok();
 
-    let stdout = client.take_stdout().ok_or("Failed to take LSP stdout")?;
-
-    let token_types = client.token_types.clone();
-    let token_modifiers = client.token_modifiers.clone();
+    let token_types = client.token_types();
+    let token_modifiers = client.token_modifiers();
     let pending = client.pending.clone();
     let writer = client.writer.clone();
     let next_id = client.next_id.clone();
+    let stdout = client.take_stdout().ok_or("Failed to take LSP stdout")?;
     let app_handle = app.clone();
 
     std::thread::spawn(move || {
-        LspClient::read_messages(stdout, &pending, |msg| {
+        LspClient::receive_messages(stdout, &pending, |msg| {
             handle_lsp_message(
                 &app_handle,
                 &token_types,
@@ -179,23 +176,28 @@ async fn start_lsp(app: AppHandle) -> Result<(), String> {
     });
 
     let root_uri = state.root_uri();
+    client.set_lifecycle(lsp::LspLifecycle::Initializing);
     let init_result = client
-        .send_request_await("initialize", lsp::initialize_params(&root_uri))
+        .send_request_await_unchecked("initialize", lsp::initialize_params(&root_uri))
         .await
         .map_err(|e| format!("LSP initialize failed: {e}"))?;
+    client.set_lifecycle(lsp::LspLifecycle::Initialized);
 
     handle_initialize_response(
         &app,
-        &client.token_types,
-        &client.token_modifiers,
+        &client.token_types(),
+        &client.token_modifiers(),
         &init_result,
     );
 
     {
         let mut lock = state.lsp_client.lock().await;
         *lock = Some(client);
-        if let Some(client) = lock.as_ref() {
-            client.send_notification("initialized", json!({})).await?;
+        if let Some(client) = lock.as_mut() {
+            client
+                .send_notification_unchecked("initialized", json!({}))
+                .await?;
+            client.set_lifecycle(lsp::LspLifecycle::NormalOperation);
             let doc_uri = state.doc_uri();
             client
                 .send_notification(
@@ -237,6 +239,7 @@ async fn update_document(app: AppHandle, content: String) -> Result<(), String> 
     };
 
     let Some(client_arc) = client_arc else {
+        log::warn!("update_document: LSP client not connected; edit will not be sent to server");
         return Ok(());
     };
 
@@ -273,11 +276,6 @@ async fn update_document(app: AppHandle, content: String) -> Result<(), String> 
         }
     }
 
-    // Mark prose as dirty and kick off a debounced background regeneration.
-    state.prose_dirty.store(true, Ordering::SeqCst);
-    let seq = state.prose_generation_seq.fetch_add(1, Ordering::SeqCst) + 1;
-    spawn_prose_regeneration(app.clone(), seq);
-
     Ok(())
 }
 
@@ -297,11 +295,11 @@ enum ShouldGenerate {
 
 /// Decide whether to regenerate prose for sequence number `seq`.
 ///
-/// Performs (in order): staleness check, diagnostics check, source-hash check,
-/// and empty-source check. All four are short synchronous operations except
-/// the proof clone which needs the async mutex on `proof`.
+/// Performs (in order): staleness check, diagnostics check, goal-state-hash
+/// check, and empty-goal-state check. All four are short synchronous
+/// operations except the proof clone which needs the async mutex on `proof`.
 async fn should_generate_prose(state: &AppState, seq: u64) -> ShouldGenerate {
-    // A newer edit has superseded us.
+    // A newer goal-state change has superseded us.
     if state.prose_generation_seq.load(Ordering::SeqCst) != seq {
         return ShouldGenerate::Abort;
     }
@@ -315,19 +313,23 @@ async fn should_generate_prose(state: &AppState, seq: u64) -> ShouldGenerate {
         return ShouldGenerate::Abort;
     }
 
-    let (source, last_hash) = {
+    let (source, goal_state_text, last_hash) = {
         let guard = state.proof.lock().await;
-        (guard.formal.source.clone(), guard.prose.source_hash.clone())
+        (
+            guard.formal.source.clone(),
+            guard.goal_state.full.clone(),
+            guard.prose.goal_state_hash.clone(),
+        )
     };
-    let hash = proof::compute_source_hash(&source);
+    let hash = proof::compute_source_hash(&goal_state_text);
 
-    // Source hasn't changed since the last prose generation (e.g. type then undo).
+    // Goal state hasn't changed since the last prose generation.
     if last_hash == hash {
         return ShouldGenerate::Abort;
     }
 
     // Nothing to translate.
-    if source.trim().is_empty() {
+    if goal_state_text.trim().is_empty() {
         return ShouldGenerate::Abort;
     }
 
@@ -361,11 +363,12 @@ fn spawn_prose_regeneration(app: AppHandle, seq: u64) {
                 return;
             }
 
-            if let Ok(prose_text) = result {
+            if let Ok(raw) = result {
+                let prose_text = proof::translator::render_katex(&raw);
                 {
                     let mut proof_guard = state.proof.lock().await;
                     proof_guard.prose.text.clone_from(&prose_text);
-                    proof_guard.prose.source_hash.clone_from(&hash);
+                    proof_guard.prose.goal_state_hash.clone_from(&hash);
                 }
 
                 app.emit(
@@ -422,123 +425,47 @@ async fn fetch_full_proof_goal_state(state: &AppState) -> Result<String, String>
     Ok(rendered)
 }
 
-/// Fetch the rendered goal state at the end of every line in the document.
-///
-/// Returns a `Vec<String>` with one entry per line (same length as the number
-/// of lines in the source). Requests are issued sequentially to avoid
-/// hammering the LSP.
-///
-/// `seq` is the sequence number this fetch was spawned for; the loop checks
-/// `state.goal_state_seq` between every line and bails out with
-/// `Err("stale")` if a newer edit has arrived, so stale per-line data never
-/// reaches the UI on long proofs.
-#[allow(clippy::significant_drop_tightening)]
-async fn fetch_per_line_goal_states(state: &AppState, seq: u64) -> Result<Vec<String>, String> {
-    let source = state.proof.lock().await.formal.source.clone();
-
-    let lock = state.lsp_client.lock().await;
-    let Some(client) = lock.as_ref() else {
-        return Err(LspError::NotConnected.into());
-    };
-    let doc_uri = state.doc_uri();
-
-    let mut results: Vec<String> = Vec::new();
-    for (idx, line_text) in source.split('\n').enumerate() {
-        if state.goal_state_seq.load(Ordering::SeqCst) != seq {
-            return Err(LspError::Stale.into());
-        }
-        let line = u32::try_from(idx).map_err(|e| e.to_string())?;
-        let col = u32::try_from(line_text.chars().count()).map_err(|e| e.to_string())?;
-        let result = client
-            .send_request_await(
-                "$/lean/plainGoal",
-                json!({
-                    "textDocument": { "uri": doc_uri },
-                    "position": { "line": line, "character": col },
-                }),
-            )
-            .await
-            .unwrap_or(serde_json::Value::Null);
-        let rendered = result
-            .get("rendered")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        results.push(rendered);
-    }
-
-    Ok(results)
-}
-
-#[derive(serde::Serialize, Clone)]
-struct GoalStatePayload {
-    full: String,
-    panel_line_to_source_line: Vec<Option<u32>>,
-}
-
 /// Spawn a background task that, after a short debounce, fetches the
-/// whole-proof and per-line goal states and emits a
-/// [`proof::GOAL_STATE_UPDATED_EVENT`] to the frontend.
+/// whole-proof goal state and emits a [`proof::GOAL_STATE_UPDATED_EVENT`] to
+/// the frontend.
 ///
 /// The task is sequence-guarded: if `state.goal_state_seq` advances before
-/// the debounce fires (because another edit or another empty-progress event
-/// arrived), this task returns without emitting. This coalesces the burst of
-/// empty-`fileProgress` frames Lean emits as elaboration settles, and
-/// discards stale results that would overwrite newer ones.
+/// the debounce fires, this task returns without emitting.
 fn spawn_goal_state_refresh(app: AppHandle, seq: u64) {
-    // Use Tauri's global async runtime rather than `tokio::spawn`: this
-    // function is invoked from the plain `std::thread` that runs the LSP
-    // reader loop, which has no Tokio runtime attached to thread-local
-    // storage. `tauri::async_runtime::spawn` dispatches via a stored handle
-    // and so works from any thread.
     tauri::async_runtime::spawn(async move {
-        // Debounce: coalesce bursts of empty-progress frames.
         tokio::time::sleep(std::time::Duration::from_millis(150)).await;
 
         let state = app.state::<AppState>();
         if state.goal_state_seq.load(Ordering::SeqCst) != seq {
-            return; // A newer edit or progress event superseded us.
+            return;
         }
 
         let full = match fetch_full_proof_goal_state(&state).await {
             Ok(s) => s,
             Err(e) => {
-                log::debug!("goal-state refresh: full fetch failed: {e}");
+                log::debug!("goal-state refresh: fetch failed: {e}");
                 return;
             }
         };
 
-        if state.goal_state_seq.load(Ordering::SeqCst) != seq {
-            return;
-        }
-
-        let per_line = match fetch_per_line_goal_states(&state, seq).await {
-            Ok(v) => v,
-            Err(e) => {
-                log::debug!("goal-state refresh: per-line fetch failed: {e}");
-                return;
-            }
+        // Persist goal state and check whether it's changed since the last prose
+        // generation — both in one lock scope to avoid a TOCTOU race.
+        let (last_hash, new_hash) = {
+            let mut guard = state.proof.lock().await;
+            let last = guard.prose.goal_state_hash.clone();
+            guard.goal_state.full.clone_from(&full);
+            drop(guard);
+            let new = proof::compute_source_hash(&full);
+            (last, new)
         };
 
-        let panel_line_to_source_line =
-            proof::goal_panel_map::build_panel_line_to_source_line(&full, &per_line);
-        let panel_lines = proof::goal_panel_map::flatten_code_block_lines(&full);
+        app.emit(proof::GOAL_STATE_UPDATED_EVENT, &full).ok();
 
-        if let Ok(mut cache) = state.goal_state_cache.lock() {
-            cache.panel_lines = panel_lines;
-            cache
-                .panel_line_to_source_line
-                .clone_from(&panel_line_to_source_line);
+        if last_hash != new_hash && !full.trim().is_empty() {
+            state.prose_dirty.store(true, Ordering::SeqCst);
+            let prose_seq = state.prose_generation_seq.fetch_add(1, Ordering::SeqCst) + 1;
+            spawn_prose_regeneration(app.clone(), prose_seq);
         }
-
-        app.emit(
-            proof::GOAL_STATE_UPDATED_EVENT,
-            &GoalStatePayload {
-                full,
-                panel_line_to_source_line,
-            },
-        )
-        .ok();
     });
 }
 
@@ -604,85 +531,6 @@ async fn get_completions(
 async fn lsp_hover(app: AppHandle, line: u32, character: u32) -> Result<Option<HoverInfo>, String> {
     let state = app.state::<AppState>();
     let params = text_document_position_params(&state.doc_uri(), line, character);
-    Ok(call_lsp_raw(&state, "textDocument/hover", params)
-        .await?
-        .as_ref()
-        .and_then(lsp::parse_hover))
-}
-
-/// Translate a goal-panel hover into a Formal Proof document position.
-///
-/// Given the panel-line text, the source line it maps to, and a UTF-16
-/// column within the panel line, extract the word under the cursor and
-/// locate it on the source line. Returns the (0-indexed LSP line,
-/// UTF-16 column) to send to `textDocument/hover`, or `None` if the
-/// cursor isn't on a word or the word isn't present on the source line.
-fn resolve_goal_panel_hover_position(
-    panel_line: &str,
-    source_line: &str,
-    source_line_1indexed: u32,
-    panel_column: u32,
-) -> Option<(u32, u32)> {
-    let (word, _, _) = proof::goal_panel_hover::find_word_at(panel_line, panel_column)?;
-    let col = proof::goal_panel_hover::locate_in_source(&word, source_line)?;
-    Some((source_line_1indexed - 1, col))
-}
-
-/// Resolve a hover over an identifier in the Goal State panel by delegating
-/// to the Lean LSP at the corresponding position in the Formal Proof.
-///
-/// `panel_flat_line` is the 0-indexed flat line within the goal panel's
-/// concatenated code blocks (see `GoalPanel.codeBlockOffsets` on the
-/// frontend); `character` is the UTF-16 column the user is hovering.
-/// We look up the mapped Formal Proof line from the cached goal-state
-/// snapshot, find the hovered word on the source line, and issue a
-/// regular `textDocument/hover` there.
-#[tauri::command]
-async fn lsp_hover_goal_panel(
-    app: AppHandle,
-    panel_flat_line: u32,
-    character: u32,
-) -> Result<Option<HoverInfo>, String> {
-    let state = app.state::<AppState>();
-
-    let (panel_line, source_line_1indexed) = {
-        let cache = state
-            .goal_state_cache
-            .lock()
-            .map_err(|e| format!("goal-state cache poisoned: {e}"))?;
-        let idx = usize::try_from(panel_flat_line).map_err(|e| e.to_string())?;
-        let Some(panel_line) = cache.panel_lines.get(idx).cloned() else {
-            return Ok(None);
-        };
-        let Some(src_line) = cache.panel_line_to_source_line.get(idx).copied().flatten() else {
-            return Ok(None);
-        };
-        drop(cache);
-        (panel_line, src_line)
-    };
-
-    // Only the target source line needs to leave the `proof` lock.
-    let source_line = {
-        let proof = state.proof.lock().await;
-        proof
-            .formal
-            .source
-            .split('\n')
-            .nth((source_line_1indexed - 1) as usize)
-            .unwrap_or("")
-            .to_string()
-    };
-
-    let Some((line, col)) = resolve_goal_panel_hover_position(
-        &panel_line,
-        &source_line,
-        source_line_1indexed,
-        character,
-    ) else {
-        return Ok(None);
-    };
-
-    let params = text_document_position_params(&state.doc_uri(), line, col);
     Ok(call_lsp_raw(&state, "textDocument/hover", params)
         .await?
         .as_ref()
@@ -761,6 +609,28 @@ async fn lsp_document_symbols(app: AppHandle) -> Result<Vec<DocumentSymbolInfo>,
         .unwrap_or_default())
 }
 
+#[tauri::command]
+async fn lsp_format_document(app: AppHandle) -> Result<Vec<lsp::TextEditDto>, String> {
+    let state = app.state::<AppState>();
+    let params = json!({
+        "textDocument": { "uri": state.doc_uri() },
+        "options": { "tabSize": 2, "insertSpaces": true }
+    });
+    Ok(call_lsp_raw(&state, "textDocument/formatting", params)
+        .await?
+        .as_ref()
+        .map(lsp::parse_text_edits)
+        .unwrap_or_default())
+}
+
+fn lsp_server_log(typ: lsp_types::MessageType, message: &str) {
+    match typ {
+        lsp_types::MessageType::ERROR => log::error!("LSP server: {message}"),
+        lsp_types::MessageType::WARNING => log::warn!("LSP server: {message}"),
+        _ => log::debug!("LSP server: {message}"),
+    }
+}
+
 fn handle_lsp_message(
     app: &AppHandle,
     token_types: &Arc<Mutex<Vec<String>>>,
@@ -812,10 +682,22 @@ fn handle_lsp_message(
 
     match serde_json::from_value::<LspNotification>(msg.clone()) {
         Ok(LspNotification::PublishDiagnostics(params)) => {
-            let diagnostics = lsp::parse_diagnostics(&params);
+            let diagnostics = lsp::parse_diagnostics(params);
             let state = app.state::<AppState>();
             (*state.current_diagnostics.lock().unwrap()).clone_from(&diagnostics);
-            app.emit("lsp-diagnostics", diagnostics).ok();
+            app.emit("lsp-diagnostics", &diagnostics).ok();
+            let proof = state.proof.clone();
+            let app_handle = app.clone();
+            tauri::async_runtime::spawn(async move {
+                let items = {
+                    let mut guard = proof.lock().await;
+                    guard.annotations.set_diagnostics(&diagnostics);
+                    guard.annotations.items.clone()
+                };
+                app_handle
+                    .emit(proof::ANNOTATIONS_UPDATED_EVENT, &items)
+                    .ok();
+            });
         }
         Ok(LspNotification::FileProgress(params)) => {
             let ranges = lsp::parse_file_progress(&params);
@@ -825,10 +707,14 @@ fn handle_lsp_message(
                 let state = app.state::<AppState>();
                 let seq = state.goal_state_seq.fetch_add(1, Ordering::SeqCst) + 1;
                 spawn_goal_state_refresh(app.clone(), seq);
+                app.emit("lsp-elaboration-done", ()).ok();
             }
         }
-        Ok(LspNotification::LogMessage(p) | LspNotification::ShowMessage(p)) => {
-            log::info!("LSP: {}", p.message);
+        Ok(LspNotification::LogMessage(p)) => {
+            lsp_server_log(p.typ, &p.message);
+        }
+        Ok(LspNotification::ShowMessage(p)) => {
+            lsp_server_log(p.typ, &p.message);
         }
         Err(_) => {
             log::debug!("Unhandled LSP notification: {method}");
@@ -844,7 +730,7 @@ fn handle_initialize_response(
 ) {
     let type_legend = lsp::parse_token_legend(result);
     let modifier_legend = lsp::parse_modifier_legend(result);
-    log::info!("LSP semantic token legend: types={type_legend:?}, modifiers={modifier_legend:?}");
+    log::debug!("LSP semantic token legend: types={type_legend:?}, modifiers={modifier_legend:?}");
     if let Ok(mut types) = token_types.lock() {
         *types = type_legend;
     }
@@ -861,7 +747,7 @@ fn handle_initialize_response(
     )
     .ok();
 
-    log::info!("LSP initialize complete");
+    log::debug!("LSP initialize complete");
 }
 
 fn handle_semantic_tokens_response(
@@ -885,7 +771,19 @@ fn handle_semantic_tokens_response(
     let tokens = lsp::decode_semantic_tokens(&data_u32, &type_guard, &mod_guard);
     drop(type_guard);
     drop(mod_guard);
-    app.emit("lsp-semantic-tokens", tokens).ok();
+    let state = app.state::<AppState>();
+    let proof = state.proof.clone();
+    let app_handle = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let items = {
+            let mut guard = proof.lock().await;
+            guard.annotations.set_tokens(&tokens);
+            guard.annotations.items.clone()
+        };
+        app_handle
+            .emit(proof::ANNOTATIONS_UPDATED_EVENT, &items)
+            .ok();
+    });
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -917,11 +815,13 @@ pub fn run() {
                 }
             };
 
+            let setup_running = Arc::new(AtomicBool::new(false));
+
             app.manage(AppState {
                 lsp_client: Arc::new(tokio::sync::Mutex::new(None)),
-                project_path,
+                project_path: project_path.clone(),
                 doc_version: AtomicI64::new(2),
-                setup_running: Arc::new(AtomicBool::new(false)),
+                setup_running: setup_running.clone(),
                 proof: Arc::new(tokio::sync::Mutex::new(proof::Proof::default())),
                 transcript: Arc::new(tokio::sync::Mutex::new(assistant::Transcript::default())),
                 llm: llm_backend,
@@ -932,7 +832,22 @@ pub fn run() {
                 prose_dirty: Arc::new(AtomicBool::new(false)),
                 prose_generation_seq: Arc::new(AtomicU64::new(0)),
                 goal_state_seq: Arc::new(AtomicU64::new(0)),
-                goal_state_cache: Arc::new(Mutex::new(GoalStateCache::default())),
+            });
+
+            // On startup: run setup if needed, then start the LSP.
+            let app_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                if !setup::check_setup_complete(&project_path)
+                    && !setup_running.swap(true, Ordering::SeqCst)
+                {
+                    setup::run_setup(app_handle.clone(), project_path.clone(), setup_running).await;
+                }
+                // Start the LSP regardless of whether setup just ran or was already done.
+                // `start_lsp` is idempotent — if setup failed, lean_bin won't exist and
+                // it will emit an lsp-status error that the frontend can surface.
+                if let Err(e) = start_lsp(app_handle.clone()).await {
+                    log::warn!("Auto-start LSP failed: {e}");
+                }
             });
 
             Ok(())
@@ -951,21 +866,22 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_window_state::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
+            parse_formatted_input,
             get_setup_status,
             start_setup,
+            get_lsp_ready,
             start_lsp,
             update_document,
             get_completions,
             lsp_hover,
-            lsp_hover_goal_panel,
             lsp_definition,
             lsp_code_actions,
             lsp_resolve_code_action,
             lsp_document_symbols,
+            lsp_format_document,
             assistant::send_message,
             assistant::get_transcript,
             assistant::load_transcript,
-            proof::translator::generate_prose,
             settings::get_settings,
             settings::save_settings,
             settings::get_default_assistant_prompt,
@@ -995,8 +911,8 @@ mod tests {
     use std::sync::Mutex;
 
     use super::{
-        assistant, end_of_document_position, llm, lsp, proof, resolve_goal_panel_hover_position,
-        should_generate_prose, AppState, ShouldGenerate,
+        assistant, end_of_document_position, llm, lsp, proof, should_generate_prose, AppState,
+        ShouldGenerate,
     };
     use std::sync::Arc;
 
@@ -1012,33 +928,6 @@ mod tests {
         assert!(v1 > did_open_version);
         assert!(v2 > v1);
         assert!(v3 > v2);
-    }
-
-    #[test]
-    fn resolve_goal_panel_hover_position_finds_word_and_locates_on_source() {
-        // Hover at column 1 on "hp : p" hits the word "hp"; on the mapped
-        // source line "intro hp hq", "hp" starts at UTF-16 column 6.
-        assert_eq!(
-            resolve_goal_panel_hover_position("hp : p", "intro hp hq", 3, 1),
-            Some((2, 6))
-        );
-    }
-
-    #[test]
-    fn resolve_goal_panel_hover_position_none_when_not_on_word() {
-        // Column 5 on "a    b" is whitespace.
-        assert_eq!(
-            resolve_goal_panel_hover_position("a    b", "let a := b", 1, 3),
-            None
-        );
-    }
-
-    #[test]
-    fn resolve_goal_panel_hover_position_none_when_word_absent_from_source() {
-        assert_eq!(
-            resolve_goal_panel_hover_position("hp : p", "apply or_left", 1, 1),
-            None
-        );
     }
 
     #[test]
@@ -1070,7 +959,6 @@ mod tests {
             prose_dirty: Arc::new(AtomicBool::new(false)),
             prose_generation_seq: Arc::new(AtomicU64::new(0)),
             goal_state_seq: Arc::new(AtomicU64::new(0)),
-            goal_state_cache: Arc::new(Mutex::new(crate::GoalStateCache::default())),
         }
     }
 
@@ -1130,7 +1018,11 @@ mod tests {
     async fn should_generate_proceeds_when_diagnostics_have_only_warnings() {
         let state = make_state();
         state.prose_generation_seq.store(1, Ordering::SeqCst);
-        state.proof.lock().await.formal.source = "theorem foo".to_string();
+        {
+            let mut guard = state.proof.lock().await;
+            guard.formal.source = "theorem foo".to_string();
+            guard.goal_state.full = "⊢ True".to_string();
+        }
         state
             .current_diagnostics
             .lock()
@@ -1144,14 +1036,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn should_generate_aborts_when_source_hash_unchanged() {
+    async fn should_generate_aborts_when_goal_state_hash_unchanged() {
         let state = make_state();
         state.prose_generation_seq.store(1, Ordering::SeqCst);
-        let source = "theorem foo : True := trivial".to_string();
+        let goal_state = "⊢ True".to_string();
         {
             let mut guard = state.proof.lock().await;
-            guard.formal.source = source.clone();
-            guard.prose.source_hash = proof::compute_source_hash(&source);
+            guard.formal.source = "theorem foo : True := trivial".to_string();
+            guard.goal_state.full = goal_state.clone();
+            guard.prose.goal_state_hash = proof::compute_source_hash(&goal_state);
         }
 
         assert!(matches!(
@@ -1161,10 +1054,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn should_generate_aborts_when_source_is_whitespace_only() {
+    async fn should_generate_aborts_when_goal_state_is_whitespace_only() {
         let state = make_state();
         state.prose_generation_seq.store(1, Ordering::SeqCst);
-        state.proof.lock().await.formal.source = "   \n\t  ".to_string();
+        {
+            let mut guard = state.proof.lock().await;
+            guard.formal.source = "theorem foo : True := trivial".to_string();
+            guard.goal_state.full = "   \n\t  ".to_string();
+        }
 
         assert!(matches!(
             should_generate_prose(&state, 1).await,
@@ -1177,14 +1074,52 @@ mod tests {
         let state = make_state();
         state.prose_generation_seq.store(3, Ordering::SeqCst);
         let source = "theorem foo : True := trivial".to_string();
-        state.proof.lock().await.formal.source = source.clone();
+        let goal_state = "⊢ True".to_string();
+        {
+            let mut guard = state.proof.lock().await;
+            guard.formal.source = source.clone();
+            guard.goal_state.full = goal_state.clone();
+        }
 
         match should_generate_prose(&state, 3).await {
             ShouldGenerate::Proceed { source: s, hash } => {
                 assert_eq!(s, source);
-                assert_eq!(hash, proof::compute_source_hash(&source));
+                assert_eq!(hash, proof::compute_source_hash(&goal_state));
             }
             ShouldGenerate::Abort => panic!("expected Proceed"),
         }
+    }
+
+    #[tokio::test]
+    async fn should_generate_proceeds_with_empty_source_but_non_empty_goal_state() {
+        // Formal source may be empty while the goal state is non-empty (e.g. the
+        // LLM cleared the editor but LSP hasn't caught up). We still proceed
+        // so the translator can handle it; the LLM call itself may return empty.
+        let state = make_state();
+        state.prose_generation_seq.store(1, Ordering::SeqCst);
+        {
+            let mut guard = state.proof.lock().await;
+            guard.formal.source = String::new();
+            guard.goal_state.full = "⊢ True".to_string();
+        }
+
+        assert!(matches!(
+            should_generate_prose(&state, 1).await,
+            ShouldGenerate::Proceed { source, .. } if source.is_empty()
+        ));
+    }
+
+    #[tokio::test]
+    async fn stale_prose_seq_aborts_even_with_changed_goal_state() {
+        // Verifies that a prose regen task with a stale seq number aborts
+        // immediately even if the goal state hash has changed — ensures that
+        // rapid goal-state changes don't result in concurrent LLM calls.
+        let state = make_state();
+        state.prose_generation_seq.store(5, Ordering::SeqCst);
+
+        assert!(matches!(
+            should_generate_prose(&state, 3).await,
+            ShouldGenerate::Abort
+        ));
     }
 }

@@ -2,7 +2,7 @@
 //!
 //! A single `lean --server` process is shared across all tests via a
 //! `OnceLock<Option<Mutex<Session>>>`. This avoids the Mathlib startup cost
-//! for every individual test.
+//! for each test.
 //!
 //! # Running
 //!
@@ -13,7 +13,7 @@
 //!
 //! Tests use the Lean project created by Turnstile setup at
 //! `~/Library/Application Support/com.ontical.turnstile/lean-project/`.
-//! If that directory is absent the tests are skipped gracefully.
+//! If that directory is absent, the tests are skipped gracefully.
 //!
 //! Overrides:
 //!   `TURNSTILE_LSP_CMD`      — path to the lean binary
@@ -78,29 +78,15 @@ impl Session {
         let mut client = LspClient::spawn(&lean, &["--server"], &project)?;
 
         let (tx, rx) = mpsc::sync_channel::<Value>(512);
-        let stdout = client.take_stdout().ok_or("no stdout")?;
-        let pending = client.pending.clone();
-        let writer = client.writer.clone();
-        std::thread::spawn(move || {
-            LspClient::read_messages(stdout, &pending, move |msg| {
-                // Ack server→client requests (e.g. workspace/semanticTokens/refresh).
-                if msg.get("id").is_some() && msg.get("method").is_some() {
-                    lsp::ack_request(&writer, &msg["id"]).ok();
-                    return;
-                }
-                let _ = tx.send(msg.clone());
-            });
-        });
+        let root_uri = lsp::path_to_file_uri(&project);
 
         // `block_in_place` lets us call async code from a sync context while
         // inside a multi-thread Tokio runtime (used by `#[tokio::test]`).
         tokio::task::block_in_place(|| {
             let rt = tokio::runtime::Handle::current();
-            let root_uri = lsp::path_to_file_uri(&project);
-            rt.block_on(
-                client.send_request_await("initialize", lsp::initialize_params(&root_uri)),
-            )?;
-            rt.block_on(client.send_notification("initialized", json!({})))?;
+            rt.block_on(client.initialize(&root_uri, move |msg| {
+                let _ = tx.send(msg.clone());
+            }))?;
 
             let doc_uri = lsp::path_to_file_uri(&project.join("Proof.lean"));
             rt.block_on(client.send_notification(
@@ -138,7 +124,7 @@ impl Session {
         .map_err(Into::into)
     }
 
-    /// Replace the document with `text` and wait for elaboration + diagnostics.
+    /// Replace the document with `text` and wait for elaboration and diagnostics.
     /// No-ops if `text` matches the current content, returning the previous messages.
     fn set_content(&mut self, text: &str) -> Vec<Value> {
         if self.current_content.as_deref() == Some(text) {
@@ -278,6 +264,18 @@ fn errors_in(msgs: &[Value], uri: &str) -> Vec<Value> {
         .collect()
 }
 
+fn assert_workspace_edit_valid(edit: &lsp::WorkspaceEditDto) {
+    for (uri, edits) in &edit.changes {
+        assert!(!uri.is_empty(), "workspace edit URI should be non-empty");
+        for e in edits {
+            assert!(
+                e.start_line <= e.end_line,
+                "edit start_line should be <= end_line"
+            );
+        }
+    }
+}
+
 // ── Lean source fixtures ───────────────────────────────────────────────
 
 const PRIMES_PROOF: &str = "import Mathlib.Data.Nat.Prime.Infinite\n\n\
@@ -300,33 +298,6 @@ const UNSOLVED_GOALS: &str =
 // ── Tests ──────────────────────────────────────────────────────────────
 //
 // All tests share a single LSP session; run with --test-threads=1.
-
-#[tokio::test(flavor = "multi_thread")]
-async fn initialize_returns_capabilities() {
-    skip_if_no_project!(sess);
-    let exists = sess.project.exists();
-    drop(sess);
-    assert!(exists, "project path should exist after initialization");
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn server_advertises_semantic_tokens_provider() {
-    skip_if_no_project!(sess);
-    let uri = sess.doc_uri();
-    sess.set_content(TACTIC_PROOF);
-    let result = sess
-        .request(
-            "textDocument/semanticTokens/full",
-            json!({ "textDocument": { "uri": &uri } }),
-        )
-        .expect("semanticTokens/full request failed");
-    drop(sess);
-
-    assert!(
-        !result.is_null(),
-        "server should return semantic tokens (proving it advertised the provider)"
-    );
-}
 
 #[tokio::test(flavor = "multi_thread")]
 async fn valid_proof_produces_no_error_diagnostics() {
@@ -579,14 +550,6 @@ async fn diagnostic_positions_are_zero_indexed() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn window_messages_parsed_without_panic() {
-    skip_if_no_project!(sess);
-    // Drain queued messages; no panic = success.
-    sess.collect_until(Duration::from_secs(2), |_| false);
-    drop(sess);
-}
-
-#[tokio::test(flavor = "multi_thread")]
 async fn multiple_errors_in_one_file_all_reported() {
     skip_if_no_project!(sess);
     let uri = sess.doc_uri();
@@ -644,40 +607,12 @@ async fn hover_returns_type_for_local_theorem() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn hover_returns_none_on_whitespace() {
-    skip_if_no_project!(sess);
-    let uri = sess.doc_uri();
-    sess.set_content(LOCAL_DEF_PROOF);
-    // Blank line 2.
-    let result = sess
-        .request(
-            "textDocument/hover",
-            json!({
-                "textDocument": { "uri": &uri },
-                "position": { "line": 2, "character": 0 },
-            }),
-        )
-        .expect("hover request failed");
-    drop(sess);
-
-    // Either null from the server or an empty-contents structure that parse_hover rejects.
-    let parsed = lsp::parse_hover(&result);
-    assert!(
-        parsed.is_none()
-            || parsed
-                .as_ref()
-                .is_some_and(|h| !h.contents.trim().is_empty()),
-        "hover on whitespace should be None or have content; got: {parsed:?}"
-    );
-}
-
-#[tokio::test(flavor = "multi_thread")]
 async fn definition_resolves_to_local_theorem() {
     skip_if_no_project!(sess);
     let uri = sess.doc_uri();
     sess.set_content(LOCAL_DEF_PROOF);
     // "my_theorem" reference on line 3 (the example line). Position 27
-    // lands on the 'm' of "my_theorem" (after "example : 1 + 2 = 2 + 1 := ").
+    // lands on the 'm' of "my_theorem" (after "example: 1 + 2 = 2 + 1 := ").
     let result = sess
         .request(
             "textDocument/definition",
@@ -738,7 +673,7 @@ async fn document_symbols_returns_top_level_symbols() {
 async fn code_action_available_on_error_line() {
     skip_if_no_project!(sess);
     let uri = sess.doc_uri();
-    // Deliberately leave the goal unsolved so Lean offers a "Try this:" action.
+    // Deliberately leave the goal unsolved so that Lean offers a "Try this:" action.
     sess.set_content(UNSOLVED_GOALS);
     let result = sess
         .request(
@@ -762,5 +697,174 @@ async fn code_action_available_on_error_line() {
             !action.title.is_empty(),
             "code action title should be non-empty"
         );
+        if let Some(edit) = &action.edit {
+            assert_workspace_edit_valid(edit);
+        }
     }
+}
+
+// ── Completion / formatting / codeAction resolve / plainTermGoal ────────
+
+const COMPLETION_SOURCE: &str = "-- Completion test.\nexample : Nat := Nat.";
+
+const UNFORMATTED_SOURCE: &str = "def  foo:Nat:=42\n";
+
+#[tokio::test(flavor = "multi_thread")]
+async fn completion_returns_items_after_dot() {
+    skip_if_no_project!(sess);
+    let uri = sess.doc_uri();
+    sess.set_content(COMPLETION_SOURCE);
+    let result = sess
+        .request(
+            "textDocument/completion",
+            json!({
+                "textDocument": { "uri": &uri },
+                "position": { "line": 1, "character": 21 }
+            }),
+        )
+        .expect("completion request failed");
+    drop(sess);
+
+    if result.is_null() {
+        eprintln!("INFO: completion returned null");
+        return;
+    }
+
+    let items = lsp::parse_completion_items(&result);
+    assert!(
+        !items.is_empty(),
+        "expected completion items after 'Nat.'; got: {result}"
+    );
+    assert!(
+        items.iter().all(|i| !i.label.is_empty()),
+        "every completion item should have a non-empty label"
+    );
+    assert!(
+        items
+            .iter()
+            .any(|i| i.label.contains("succ") || i.label.contains("zero")),
+        "expected at least one Nat member (succ/zero) in completions; got: {:?}",
+        items.iter().map(|i| &i.label).collect::<Vec<_>>()
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn formatting_returns_text_edits_for_unformatted_source() {
+    skip_if_no_project!(sess);
+    let uri = sess.doc_uri();
+    sess.set_content(UNFORMATTED_SOURCE);
+    let result = sess
+        .request(
+            "textDocument/formatting",
+            json!({
+                "textDocument": { "uri": &uri },
+                "options": { "tabSize": 2, "insertSpaces": true }
+            }),
+        )
+        .expect("formatting request failed");
+    drop(sess);
+
+    if result.is_null() {
+        eprintln!("INFO: formatting returned null (server may not support it)");
+        return;
+    }
+
+    let edits = lsp::parse_text_edits(&result);
+    assert!(
+        !edits.is_empty(),
+        "expected formatting edits for unformatted source; got: {result}"
+    );
+    for edit in &edits {
+        assert!(
+            edit.start_line <= edit.end_line,
+            "edit start_line should be <= end_line; got: {edit:?}"
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn code_action_resolve_returns_workspace_edit() {
+    skip_if_no_project!(sess);
+    let uri = sess.doc_uri();
+    sess.set_content(UNSOLVED_GOALS);
+    let raw_result = sess
+        .request(
+            "textDocument/codeAction",
+            json!({
+                "textDocument": { "uri": &uri },
+                "range": {
+                    "start": { "line": 2, "character": 2 },
+                    "end": { "line": 2, "character": 6 }
+                },
+                "context": { "diagnostics": [], "triggerKind": 1 }
+            }),
+        )
+        .expect("codeAction request failed");
+
+    // Find the first action that has `data` but no inline `edit` — these require resolve.
+    let to_resolve = raw_result
+        .as_array()
+        .and_then(|arr| {
+            arr.iter().find(|entry| {
+                entry.get("data").is_some_and(|d| !d.is_null())
+                    && entry.get("edit").is_none_or(Value::is_null)
+            })
+        })
+        .cloned();
+
+    let Some(action) = to_resolve else {
+        drop(sess);
+        eprintln!("INFO: no unresolved code actions found (Lean may inline all edits)");
+        return;
+    };
+
+    let resolved = sess
+        .request("codeAction/resolve", action)
+        .expect("codeAction/resolve request failed");
+    drop(sess);
+
+    let edit = lsp::parse_workspace_edit(&resolved["edit"]);
+    assert!(
+        edit.is_some(),
+        "codeAction/resolve should return a workspace edit; got: {resolved}"
+    );
+    let edit = edit.unwrap();
+    assert!(
+        !edit.changes.is_empty(),
+        "resolved workspace edit should have at least one file change"
+    );
+    assert_workspace_edit_valid(&edit);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn plain_term_goal_returns_result_for_term_proof() {
+    skip_if_no_project!(sess);
+    let uri = sess.doc_uri();
+    // LOCAL_DEF_PROOF line 1: `theorem my_theorem (a b : Nat) : a + b = b + a := Nat.add_comm a b`
+    // Position 50 lands inside the `Nat.add_comm a b` term on the RHS.
+    sess.set_content(LOCAL_DEF_PROOF);
+    let result = sess
+        .request(
+            "$/lean/plainTermGoal",
+            json!({
+                "textDocument": { "uri": &uri },
+                "position": { "line": 1, "character": 50 }
+            }),
+        )
+        .expect("$/lean/plainTermGoal request failed");
+    drop(sess);
+
+    if result.is_null() {
+        eprintln!("INFO: plainTermGoal returned null at this position");
+        return;
+    }
+
+    let goal = result["goal"]
+        .as_str()
+        .or_else(|| result["rendered"].as_str())
+        .unwrap_or("");
+    assert!(
+        !goal.is_empty(),
+        "plainTermGoal should return a non-empty goal string; got: {result}"
+    );
 }

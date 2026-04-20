@@ -34,6 +34,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_dialog::{DialogExt, FilePath};
 
+use crate::proof::Annotations;
 use crate::AppState;
 
 /// Current `.turn` format version. Increment when making breaking changes.
@@ -105,6 +106,10 @@ pub struct SessionState {
     pub turns: Vec<TranscriptTurn>,
     /// LLM-generated summary of earlier conversation history, if present.
     pub summary: Option<String>,
+    /// Span annotations (tokens + diagnostics) from the last LSP response.
+    /// Absent in older session files; defaults to empty.
+    #[serde(default)]
+    pub annotations: Annotations,
 }
 
 impl SessionState {
@@ -123,6 +128,7 @@ impl SessionState {
             prose: ProseData::default(),
             turns: Vec::new(),
             summary: None,
+            annotations: Annotations::default(),
         }
     }
 }
@@ -208,6 +214,15 @@ pub(crate) fn build_zip(state: &SessionState) -> Result<Vec<u8>, String> {
             .map_err(|e| format!("ZIP write error: {e}"))?;
     }
 
+    if !state.annotations.items.is_empty() {
+        let annotations_json = serde_json::to_string_pretty(&state.annotations)
+            .map_err(|e| format!("Failed to serialize annotations: {e}"))?;
+        zip.start_file("annotations.json", options)
+            .map_err(|e| format!("ZIP error: {e}"))?;
+        zip.write_all(annotations_json.as_bytes())
+            .map_err(|e| format!("ZIP write error: {e}"))?;
+    }
+
     let cursor = zip.finish().map_err(|e| format!("ZIP finish error: {e}"))?;
     Ok(cursor.into_inner())
 }
@@ -279,12 +294,24 @@ pub(crate) fn parse_zip(bytes: &[u8]) -> Result<SessionState, String> {
         Err(_) => None,
     };
 
+    let annotations = match zip.by_name("annotations.json") {
+        Ok(mut file) => {
+            let mut s = String::new();
+            file.read_to_string(&mut s)
+                .map_err(|e| format!("Failed to read annotations.json: {e}"))?;
+            serde_json::from_str(&s)
+                .map_err(|e| format!("Failed to parse annotations.json: {e}"))?
+        }
+        Err(_) => Annotations::default(),
+    };
+
     Ok(SessionState {
         meta,
         proof_lean,
         prose,
         turns,
         summary,
+        annotations,
     })
 }
 
@@ -310,7 +337,7 @@ fn remove_autosave_file(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Emit a `session-loaded` event so the frontend can restore UI state.
+/// Emit a `session-loaded` event so the frontend can restore the UI state.
 fn emit_session_loaded(app: &AppHandle, state: &SessionState) {
     app.emit("session-loaded", state).ok();
 }
@@ -376,14 +403,23 @@ async fn apply_loaded_session(
         transcript.turns = session
             .turns
             .iter()
-            .map(|t| crate::assistant::Turn {
-                role: match t.role.as_str() {
+            .map(|t| {
+                let role = match t.role.as_str() {
                     "assistant" => crate::assistant::Role::Assistant,
                     "system" => crate::assistant::Role::System,
                     _ => crate::assistant::Role::User,
-                },
-                content: t.content.clone(),
-                timestamp: t.timestamp,
+                };
+                let spans = if role == crate::assistant::Role::User {
+                    crate::format::parse(&t.content)
+                } else {
+                    vec![]
+                };
+                crate::assistant::Turn {
+                    role,
+                    spans,
+                    content: t.content.clone(),
+                    timestamp: t.timestamp,
+                }
             })
             .collect();
     }
@@ -393,8 +429,9 @@ async fn apply_loaded_session(
         let mut proof = state.proof.lock().await;
         proof.formal.source.clone_from(&session.proof_lean);
         proof.prose.text.clone_from(&session.prose.text);
-        proof.prose.source_hash = session.prose.tactic_state_hash.clone().unwrap_or_default();
+        proof.prose.goal_state_hash = session.prose.tactic_state_hash.clone().unwrap_or_default();
         proof.goal_state = crate::proof::GoalState::default();
+        proof.annotations = session.annotations.clone();
     }
 
     // Update session path and clear dirty flag.
@@ -432,7 +469,7 @@ pub async fn open_session(
                 let _ = tx.send(resolved);
             });
         let Some(p) = rx.await.map_err(|_| "Dialog cancelled".to_string())? else {
-            return Ok(()); // user cancelled
+            return Ok(()); // user canceled
         };
         p
     };
@@ -520,7 +557,7 @@ pub async fn save_session(
 ///
 /// # Errors
 ///
-/// Returns a string error if the dialog is cancelled or writing the session file fails.
+/// Returns a string error if the dialog is canceled or writing the session file fails.
 #[tauri::command]
 pub async fn save_session_as(
     app: AppHandle,
@@ -549,7 +586,7 @@ pub async fn save_session_as(
         });
 
     let Some(file_path) = rx.await.map_err(|_| "Dialog cancelled".to_string())? else {
-        return Ok(()); // user cancelled
+        return Ok(()); // user canceled
     };
 
     do_save(
@@ -594,6 +631,8 @@ async fn do_save(
     let summary = transcript.summary.clone();
     drop(transcript);
 
+    let annotations = state.proof.lock().await.annotations.clone();
+
     // Preserve created_at from the passed meta; update saved_at.
     let mut final_meta = meta;
     final_meta.saved_at = Utc::now().to_rfc3339();
@@ -612,6 +651,7 @@ async fn do_save(
         },
         turns,
         summary,
+        annotations,
     };
 
     save(&session, path)?;
@@ -619,7 +659,7 @@ async fn do_save(
     Ok(())
 }
 
-/// Write an autosave to `{app_data_dir}/autosave.turn` (only if session is dirty).
+/// Write an autosave to `{app_data_dir}/autosave.turn` (only if the session is dirty).
 ///
 /// # Errors
 ///
@@ -749,6 +789,7 @@ mod tests {
                 },
             ],
             summary: Some("Earlier we discussed rfl.".to_string()),
+            annotations: Annotations::default(),
         }
     }
 
@@ -819,6 +860,25 @@ mod tests {
 
         assert_eq!(loaded.prose.text, "Some text");
         assert!(loaded.prose.tactic_state_hash.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn round_trip_preserves_tactic_state_hash() -> TestResult {
+        let mut state = sample_state();
+        state.prose = ProseData {
+            text: "Some prose.".to_string(),
+            tactic_state_hash: Some("deadbeef01234567".to_string()),
+        };
+
+        let tmp = NamedTempFile::new()?;
+        save(&state, tmp.path())?;
+        let loaded = load(tmp.path())?;
+
+        assert_eq!(
+            loaded.prose.tactic_state_hash.as_deref(),
+            Some("deadbeef01234567")
+        );
         Ok(())
     }
 
@@ -898,6 +958,7 @@ mod tests {
         assert!(state.prose.tactic_state_hash.is_none());
         assert!(state.turns.is_empty());
         assert!(state.summary.is_none());
+        assert!(state.annotations.items.is_empty());
     }
 
     #[test]

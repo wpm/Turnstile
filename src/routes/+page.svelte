@@ -1,155 +1,201 @@
 <script lang="ts">
+  import ProofViewToggle from "$lib/ProofViewToggle.svelte";
+  import ThemeToggle from "$lib/ThemeToggle.svelte";
+  import FormalProof from "$lib/FormalProof.svelte";
+  import GoalState from "$lib/GoalState.svelte";
+  import ProseProof from "$lib/ProseProof.svelte";
+  import Assistant from "$lib/Assistant.svelte";
+  import Divider from "$lib/Divider.svelte";
+  import type { ProofView } from "$lib/types";
+  import { onMount } from "svelte";
+  import { listen } from "@tauri-apps/api/event";
   import { invoke } from "@tauri-apps/api/core";
 
-  let name = $state("");
-  let greetMsg = $state("");
+  let proofView = $state<ProofView>("formal");
+  let dark = $state(false);
+  let goalText = $state("");
+  let proseText = $state("");
+  let lspReady = $state(false);
 
-  async function greet(event: Event) {
-    event.preventDefault();
-    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    greetMsg = await invoke("greet", { name });
+  onMount(() => {
+    let unlistenGoal: (() => void) | undefined;
+    let unlistenProse: (() => void) | undefined;
+    let unlistenLsp: (() => void) | undefined;
+
+    const setup = Promise.all([
+      listen<string>("goal-state-updated", (e) => {
+        goalText = e.payload;
+      }),
+      listen<{ text: string; hash: string | null }>("prose-updated", (e) => {
+        proseText = e.payload.text;
+      }),
+      listen<{ state: string; message: string }>("lsp-status", (e) => {
+        lspReady = e.payload.state === "connected";
+      }),
+    ]).then(([g, p, l]) => {
+      unlistenGoal = g;
+      unlistenProse = p;
+      unlistenLsp = l;
+      // Sync initial state: the lsp-status event may have fired before our
+      // listener was registered, so explicitly poll the current state.
+      void invoke<boolean>("get_lsp_ready").then((ready) => {
+        lspReady = ready;
+      });
+    });
+    void setup;
+
+    return () => {
+      unlistenGoal?.();
+      unlistenProse?.();
+      unlistenLsp?.();
+    };
+  });
+
+  function toggleTheme() {
+    dark = !dark;
+    document.documentElement.classList.toggle("dark", dark);
+  }
+
+  let leftWidth = $state(50); // percent
+  let topHeight = $state(50); // percent of left column
+
+  let draggingVertical = $state(false);
+  let draggingHorizontal = $state(false);
+  let dragRect: DOMRect | null = null;
+  let containerEl: HTMLDivElement;
+
+  function onVerticalDragStart(e: MouseEvent) {
+    draggingVertical = true;
+    dragRect = containerEl.getBoundingClientRect();
+    e.preventDefault();
+  }
+
+  function onHorizontalDragStart(e: MouseEvent) {
+    draggingHorizontal = true;
+    dragRect = containerEl.getBoundingClientRect();
+    e.preventDefault();
+  }
+
+  function onMouseMove(e: MouseEvent) {
+    if (!dragRect) return;
+    if (draggingVertical) {
+      leftWidth = Math.min(
+        80,
+        Math.max(20, ((e.clientX - dragRect.left) / dragRect.width) * 100),
+      );
+    }
+    if (draggingHorizontal) {
+      topHeight = Math.min(
+        85,
+        Math.max(15, ((e.clientY - dragRect.top) / dragRect.height) * 100),
+      );
+    }
+  }
+
+  function onMouseUp() {
+    draggingVertical = false;
+    draggingHorizontal = false;
+    dragRect = null;
   }
 </script>
 
-<main class="container">
-  <h1>Welcome to Tauri + Svelte</h1>
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div
+  class="app-container"
+  bind:this={containerEl}
+  onmousemove={onMouseMove}
+  onmouseup={onMouseUp}
+  onmouseleave={onMouseUp}
+>
+  <div class="column" style="width: {leftWidth}%">
+    <div class="panel" style="height: {topHeight}%">
+      <div class="panel-header">Formal Proof</div>
+      <div class="panel-content">
+        <FormalProof {dark} {lspReady} />
+      </div>
+    </div>
 
-  <div class="row">
-    <a href="https://vite.dev" target="_blank">
-      <img src="/vite.svg" class="logo vite" alt="Vite Logo" />
-    </a>
-    <a href="https://tauri.app" target="_blank">
-      <img src="/tauri.svg" class="logo tauri" alt="Tauri Logo" />
-    </a>
-    <a href="https://svelte.dev" target="_blank">
-      <img src="/svelte.svg" class="logo svelte-kit" alt="SvelteKit Logo" />
-    </a>
+    <Divider orientation="horizontal" onDragStart={onHorizontalDragStart} />
+
+    <div class="panel" style="height: {100 - topHeight}%">
+      <div class="panel-header">
+        {proofView === "formal" ? "Goal State" : "Prose Proof"}
+        <ProofViewToggle
+          view={proofView}
+          onToggle={() =>
+            (proofView = proofView === "formal" ? "prose" : "formal")}
+        />
+      </div>
+      <div class="panel-content">
+        {#if proofView === "formal"}
+          <GoalState content={goalText} />
+        {:else}
+          <ProseProof content={proseText} />
+        {/if}
+      </div>
+    </div>
   </div>
-  <p>Click on the Tauri, Vite, and SvelteKit logos to learn more.</p>
 
-  <form class="row" onsubmit={greet}>
-    <input id="greet-input" placeholder="Enter a name..." bind:value={name} />
-    <button type="submit">Greet</button>
-  </form>
-  <p>{greetMsg}</p>
-</main>
+  <Divider orientation="vertical" onDragStart={onVerticalDragStart} />
+
+  <div class="column" style="width: {100 - leftWidth}%">
+    <div class="panel-header">
+      Proof Assistant
+      <ThemeToggle {dark} onToggle={toggleTheme} />
+    </div>
+    <div class="panel-content">
+      <Assistant />
+    </div>
+  </div>
+</div>
 
 <style>
-  .logo.vite:hover {
-    filter: drop-shadow(0 0 2em #747bff);
+  .app-container {
+    display: flex;
+    flex-direction: row;
+    width: 100vw;
+    height: 100vh;
+    overflow: hidden;
+    background: var(--color-bg);
+    color: var(--color-text);
+    font-family: system-ui, sans-serif;
+    user-select: none;
   }
 
-  .logo.svelte-kit:hover {
-    filter: drop-shadow(0 0 2em #ff3e00);
-  }
-
-  :root {
-    font-family: Inter, Avenir, Helvetica, Arial, sans-serif;
-    font-size: 16px;
-    line-height: 24px;
-    font-weight: 400;
-
-    color: #0f0f0f;
-    background-color: #f6f6f6;
-
-    font-synthesis: none;
-    text-rendering: optimizeLegibility;
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
-    -webkit-text-size-adjust: 100%;
-  }
-
-  .container {
-    margin: 0;
-    padding-top: 10vh;
+  .column {
     display: flex;
     flex-direction: column;
-    justify-content: center;
-    text-align: center;
+    min-width: 0;
+    overflow: hidden;
   }
 
-  .logo {
-    height: 6em;
-    padding: 1.5em;
-    will-change: filter;
-    transition: 0.75s;
-  }
-
-  .logo.tauri:hover {
-    filter: drop-shadow(0 0 2em #24c8db);
-  }
-
-  .row {
+  .panel {
     display: flex;
-    justify-content: center;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
   }
 
-  a {
-    font-weight: 500;
-    color: #646cff;
-    text-decoration: inherit;
+  .panel-header {
+    height: 2.75rem;
+    padding: 0 1rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--color-text-muted);
+    background: var(--color-header-bg);
+    border-bottom: 1px solid var(--color-border);
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
   }
 
-  a:hover {
-    color: #535bf2;
-  }
-
-  h1 {
-    text-align: center;
-  }
-
-  input,
-  button {
-    border-radius: 8px;
-    border: 1px solid transparent;
-    padding: 0.6em 1.2em;
-    font-size: 1em;
-    font-weight: 500;
-    font-family: inherit;
-    color: #0f0f0f;
-    background-color: #ffffff;
-    transition: border-color 0.25s;
-    box-shadow: 0 2px 2px rgba(0, 0, 0, 0.2);
-  }
-
-  button {
-    cursor: pointer;
-  }
-
-  button:hover {
-    border-color: #396cd8;
-  }
-  button:active {
-    border-color: #396cd8;
-    background-color: #e8e8e8;
-  }
-
-  input,
-  button {
-    outline: none;
-  }
-
-  #greet-input {
-    margin-right: 5px;
-  }
-
-  @media (prefers-color-scheme: dark) {
-    :root {
-      color: #f6f6f6;
-      background-color: #2f2f2f;
-    }
-
-    a:hover {
-      color: #24c8db;
-    }
-
-    input,
-    button {
-      color: #ffffff;
-      background-color: #0f0f0f98;
-    }
-    button:active {
-      background-color: #0f0f0f69;
-    }
+  .panel-content {
+    flex: 1;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
   }
 </style>
