@@ -16,6 +16,7 @@
   } from "@codemirror/view";
   import {
     annotationField,
+    diagnosticGutter,
     setAnnotations,
     type Annotation,
   } from "./annotations";
@@ -27,6 +28,7 @@
   import { oneDark } from "@codemirror/theme-one-dark";
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
+  import { applyTextEdits, type TextEdit } from "./textEdits";
 
   const setProgressLines = StateEffect.define<{ from: number; to: number }[]>();
 
@@ -60,14 +62,6 @@
     provide: (f) => EditorView.decorations.from(f),
   });
 
-  interface TextEdit {
-    start_line: number;
-    start_character: number;
-    end_line: number;
-    end_character: number;
-    new_text: string;
-  }
-
   let {
     dark = false,
     lspReady = false,
@@ -84,35 +78,28 @@
   let unlistenAnnotations: (() => void) | undefined;
   // True while applying LSP format edits to suppress the update listener.
   let applyingFormat = false;
-
-  function applyTextEdits(v: EditorView, edits: TextEdit[]) {
-    const doc = v.state.doc;
-    const sorted = [...edits].sort(
-      (a, b) =>
-        b.start_line - a.start_line || b.start_character - a.start_character,
-    );
-    const changes = sorted.map((edit) => {
-      const fromLine = doc.line(edit.start_line + 1);
-      const toLine = doc.line(edit.end_line + 1);
-      return {
-        from: fromLine.from + edit.start_character,
-        to: toLine.from + edit.end_character,
-        insert: edit.new_text,
-      };
-    });
-    applyingFormat = true;
-    try {
-      v.dispatch({ changes });
-    } finally {
-      applyingFormat = false;
-    }
-  }
+  let isFormatting = $state(false);
 
   async function formatDocument() {
     if (!view) return;
-    const edits = await invoke<TextEdit[]>("lsp_format_document");
-    if (edits.length > 0) {
-      applyTextEdits(view, edits);
+    isFormatting = true;
+    view.dispatch({ effects: setProgressLines.of([]) });
+    try {
+      const edits = await invoke<TextEdit[]>("lsp_format_document");
+      if (edits.length > 0) {
+        applyTextEdits(
+          view,
+          edits,
+          () => {
+            applyingFormat = true;
+          },
+          () => {
+            applyingFormat = false;
+          },
+        );
+      }
+    } finally {
+      isFormatting = false;
     }
   }
 
@@ -126,6 +113,7 @@
           keymap.of([...defaultKeymap, ...historyKeymap]),
           progressField,
           annotationField,
+          ...diagnosticGutter,
           syntaxHighlighting(defaultHighlightStyle),
           editableCompartment.of(EditorView.editable.of(false)),
           themeCompartment.of(dark ? oneDark : []),
@@ -198,12 +186,17 @@
   });
 </script>
 
-<div bind:this={container} class="editor-host"></div>
+<div
+  bind:this={container}
+  class="editor-host"
+  class:is-formatting={isFormatting}
+></div>
 
 <style>
   .editor-host {
     height: 100%;
     overflow: hidden;
+    position: relative;
   }
 
   .editor-host :global(.cm-editor) {
@@ -230,6 +223,27 @@
         var(--color-accent) 12%,
         transparent
       );
+    }
+  }
+
+  .editor-host.is-formatting::after {
+    content: "Formatting\2026";
+    position: absolute;
+    bottom: 0.5rem;
+    right: 0.75rem;
+    font-size: 0.6875rem;
+    font-family: system-ui, sans-serif;
+    color: var(--color-text-muted);
+    pointer-events: none;
+    animation: fade-in 80ms ease-out;
+  }
+
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
     }
   }
 </style>

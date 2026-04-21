@@ -1,10 +1,13 @@
+// @vitest-environment jsdom
 import { describe, it, expect } from "vitest";
 import { EditorState } from "@codemirror/state";
 import { Decoration } from "@codemirror/view";
 import {
   annotationField,
+  annotationsDataField,
   setAnnotations,
   buildAnnotationDecorations,
+  buildDiagnosticTooltip,
   type Annotation,
 } from "./annotations";
 
@@ -257,5 +260,205 @@ describe("annotationField", () => {
     ];
     // Should not throw even though input is unsorted
     expect(() => buildAnnotationDecorations(state, annotations)).not.toThrow();
+  });
+});
+
+// ── annotationsDataField ───────────────────────────────────────────────
+
+function makeStateWithData(doc: string, annotations?: Annotation[]) {
+  let state = EditorState.create({
+    doc,
+    extensions: [annotationField, annotationsDataField],
+  });
+  if (annotations) {
+    state = state.update({ effects: setAnnotations.of(annotations) }).state;
+  }
+  return state;
+}
+
+describe("annotationsDataField", () => {
+  it("starts empty", () => {
+    const state = makeStateWithData("theorem foo : True");
+    expect(state.field(annotationsDataField)).toEqual([]);
+  });
+
+  it("stores the raw annotation array after setAnnotations", () => {
+    let state = makeStateWithData("theorem foo : True");
+    const annotations: Annotation[] = [
+      {
+        kind: "token",
+        line: 1,
+        col: 0,
+        length: 7,
+        tokenType: "keyword",
+        modifiers: [],
+      },
+    ];
+    state = state.update({ effects: setAnnotations.of(annotations) }).state;
+    expect(state.field(annotationsDataField)).toEqual(annotations);
+  });
+
+  it("replaces the array on each setAnnotations", () => {
+    let state = makeStateWithData("theorem foo : True");
+    const first: Annotation[] = [
+      {
+        kind: "token",
+        line: 1,
+        col: 0,
+        length: 7,
+        tokenType: "keyword",
+        modifiers: [],
+      },
+    ];
+    const second: Annotation[] = [
+      {
+        kind: "diagnostic",
+        startLine: 1,
+        startCol: 0,
+        endLine: 1,
+        endCol: 7,
+        severity: "error",
+        message: "oops",
+      },
+    ];
+    state = state.update({ effects: setAnnotations.of(first) }).state;
+    state = state.update({ effects: setAnnotations.of(second) }).state;
+    expect(state.field(annotationsDataField)).toEqual(second);
+  });
+
+  it("preserves data across doc changes", () => {
+    let state = makeStateWithData("hello");
+    const annotations: Annotation[] = [
+      {
+        kind: "token",
+        line: 1,
+        col: 0,
+        length: 5,
+        tokenType: "variable",
+        modifiers: [],
+      },
+    ];
+    state = state.update({ effects: setAnnotations.of(annotations) }).state;
+    state = state.update({ changes: { from: 5, insert: "!" } }).state;
+    expect(state.field(annotationsDataField)).toEqual(annotations);
+  });
+});
+
+// ── buildDiagnosticTooltip ─────────────────────────────────────────────
+
+describe("buildDiagnosticTooltip", () => {
+  it("returns null when no annotations are present", () => {
+    const state = makeStateWithData("hello world", []);
+    expect(buildDiagnosticTooltip(state, 3)).toBeNull();
+  });
+
+  it("returns null for a position outside all diagnostic ranges", () => {
+    const state = makeStateWithData("hello world", [
+      {
+        kind: "diagnostic",
+        startLine: 1,
+        startCol: 0,
+        endLine: 1,
+        endCol: 5,
+        severity: "error",
+        message: "err",
+      },
+    ]);
+    expect(buildDiagnosticTooltip(state, 6)).toBeNull();
+  });
+
+  it("returns a tooltip for a position inside a diagnostic range", () => {
+    const state = makeStateWithData("hello world", [
+      {
+        kind: "diagnostic",
+        startLine: 1,
+        startCol: 0,
+        endLine: 1,
+        endCol: 5,
+        severity: "error",
+        message: "bad token",
+      },
+    ]);
+    const tooltip = buildDiagnosticTooltip(state, 2);
+    if (!tooltip) throw new Error("expected a tooltip");
+    expect(tooltip.pos).toBe(2);
+    expect(tooltip.above).toBe(true);
+    expect(tooltip.arrow).toBe(true);
+  });
+
+  it("returns null for token annotations (not diagnostics)", () => {
+    const state = makeStateWithData("hello world", [
+      {
+        kind: "token",
+        line: 1,
+        col: 0,
+        length: 5,
+        tokenType: "keyword",
+        modifiers: [],
+      },
+    ]);
+    expect(buildDiagnosticTooltip(state, 2)).toBeNull();
+  });
+
+  it("includes all overlapping diagnostics at the hovered position", () => {
+    const state = makeStateWithData("hello", [
+      {
+        kind: "diagnostic",
+        startLine: 1,
+        startCol: 0,
+        endLine: 1,
+        endCol: 5,
+        severity: "error",
+        message: "first",
+      },
+      {
+        kind: "diagnostic",
+        startLine: 1,
+        startCol: 2,
+        endLine: 1,
+        endCol: 5,
+        severity: "warning",
+        message: "second",
+      },
+    ]);
+    // pos=3 is inside both
+    const tooltip = buildDiagnosticTooltip(state, 3);
+    if (!tooltip) throw new Error("expected a tooltip");
+    const dom = tooltip.create(null as never).dom;
+    expect(dom.textContent).toContain("first");
+    expect(dom.textContent).toContain("second");
+  });
+
+  it("returns null for diagnostics on out-of-bounds lines", () => {
+    const state = makeStateWithData("hi", [
+      {
+        kind: "diagnostic",
+        startLine: 99,
+        startCol: 0,
+        endLine: 99,
+        endCol: 2,
+        severity: "error",
+        message: "oof",
+      },
+    ]);
+    expect(buildDiagnosticTooltip(state, 0)).toBeNull();
+  });
+
+  it("includes the diagnostic message in the tooltip DOM", () => {
+    const state = makeStateWithData("oops", [
+      {
+        kind: "diagnostic",
+        startLine: 1,
+        startCol: 0,
+        endLine: 1,
+        endCol: 4,
+        severity: "error",
+        message: "type mismatch",
+      },
+    ]);
+    const tooltip = buildDiagnosticTooltip(state, 1);
+    if (!tooltip) throw new Error("expected a tooltip");
+    const dom = tooltip.create(null as never).dom;
+    expect(dom.textContent).toContain("type mismatch");
   });
 });

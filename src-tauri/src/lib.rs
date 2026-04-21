@@ -80,6 +80,12 @@ struct SetupStatusResponse {
     project_path: String,
 }
 
+#[derive(Clone, serde::Serialize)]
+struct LspShowMessage {
+    severity: &'static str, // "error" | "warning" | "info" | "log"
+    message: String,
+}
+
 #[tauri::command]
 #[allow(clippy::needless_pass_by_value)]
 fn parse_formatted_input(text: String) -> Vec<format::Span> {
@@ -623,6 +629,15 @@ async fn lsp_format_document(app: AppHandle) -> Result<Vec<lsp::TextEditDto>, St
         .unwrap_or_default())
 }
 
+const fn message_type_severity(typ: lsp_types::MessageType) -> &'static str {
+    match typ {
+        lsp_types::MessageType::ERROR => "error",
+        lsp_types::MessageType::WARNING => "warning",
+        lsp_types::MessageType::INFO => "info",
+        _ => "log",
+    }
+}
+
 fn lsp_server_log(typ: lsp_types::MessageType, message: &str) {
     match typ {
         lsp_types::MessageType::ERROR => log::error!("LSP server: {message}"),
@@ -715,6 +730,14 @@ fn handle_lsp_message(
         }
         Ok(LspNotification::ShowMessage(p)) => {
             lsp_server_log(p.typ, &p.message);
+            app.emit(
+                "lsp-show-message",
+                LspShowMessage {
+                    severity: message_type_severity(p.typ),
+                    message: p.message,
+                },
+            )
+            .ok();
         }
         Err(_) => {
             log::debug!("Unhandled LSP notification: {method}");

@@ -83,3 +83,63 @@
 .cm-diag-warning { text-decoration: underline wavy var(--cm-diag-warning); }
 .cm-diag-info    { text-decoration: underline dotted var(--cm-diag-info); }
 .cm-diag-hint    { text-decoration: underline dotted var(--cm-diag-hint); }
+
+/* ── Diagnostic hover tooltip ────────────────────────────────────────── */
+.cm-diagnostic-tooltip {
+  max-width: 360px;
+  padding: 0.375rem 0.5rem;
+  font-size: 0.8125rem;
+  font-family: system-ui, sans-serif;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+}
+
+.cm-diagnostic-tooltip-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.375rem;
+}
+
+.cm-diagnostic-tooltip-item--error .cm-diagnostic-tooltip-icon   { color: var(--cm-diag-error); }
+.cm-diagnostic-tooltip-item--warning .cm-diagnostic-tooltip-icon { color: var(--cm-diag-warning); }
+.cm-diagnostic-tooltip-item--info .cm-diagnostic-tooltip-icon    { color: var(--cm-diag-info); }
+.cm-diagnostic-tooltip-item--hint .cm-diagnostic-tooltip-icon    { color: var(--cm-diag-hint); }
+
+.cm-diagnostic-tooltip-icon {
+  font-size: 0.75rem;
+  line-height: 1.5;
+  flex-shrink: 0;
+}
+
+.cm-diagnostic-tooltip-msg {
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--color-text);
+  line-height: 1.4;
+}
+
+.cm-diagnostic-tooltip-sep {
+  border: none;
+  border-top: 1px solid var(--color-border);
+  margin: 0.25rem 0;
+}
+
+/* ── Diagnostic gutter markers ───────────────────────────────────────── */
+.cm-diag-gutter-col {
+  width: 1.25rem;
+  min-width: 1.25rem;
+}
+
+.cm-diag-gutter {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1rem;
+  font-size: 0.625rem;
+  line-height: 1;
+}
+
+.cm-diag-gutter--error   { color: var(--cm-diag-error); }
+.cm-diag-gutter--warning { color: var(--cm-diag-warning); }

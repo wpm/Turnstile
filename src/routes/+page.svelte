@@ -6,8 +6,10 @@
   import ProseProof from "$lib/ProseProof.svelte";
   import Assistant from "$lib/Assistant.svelte";
   import Divider from "$lib/Divider.svelte";
+  import Toast, { type ToastItem } from "$lib/Toast.svelte";
   import type { ProofView } from "$lib/types";
   import { onMount } from "svelte";
+  import { SvelteMap } from "svelte/reactivity";
   import { listen } from "@tauri-apps/api/event";
   import { invoke } from "@tauri-apps/api/core";
 
@@ -17,10 +19,48 @@
   let proseText = $state("");
   let lspReady = $state(false);
 
+  let toasts = $state<ToastItem[]>([]);
+  let toastSeq = 0;
+  const AUTO_DISMISS_MS = 5000;
+  const MAX_ERROR_TOASTS = 5;
+  const toastTimers = new SvelteMap<number, ReturnType<typeof setTimeout>>();
+
+  /* eslint-disable @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment -- $state<T[]> proxy loses generic in ESLint Svelte plugin */
+  function addToast(severity: ToastItem["severity"], message: string) {
+    const id = ++toastSeq;
+    if (severity === "error") {
+      const errorCount = toasts.filter((t) => t.severity === "error").length;
+      if (errorCount >= MAX_ERROR_TOASTS) {
+        const oldest = toasts.find((t) => t.severity === "error");
+        if (oldest) toasts = toasts.filter((t) => t.id !== oldest.id);
+      }
+    }
+    toasts = [...toasts, { id, severity, message }];
+    if (severity !== "error") {
+      toastTimers.set(
+        id,
+        setTimeout(() => {
+          dismissToast(id);
+        }, AUTO_DISMISS_MS),
+      );
+    }
+  }
+
+  function dismissToast(id: number) {
+    const timer = toastTimers.get(id);
+    if (timer !== undefined) {
+      clearTimeout(timer);
+      toastTimers.delete(id);
+    }
+    toasts = toasts.filter((t) => t.id !== id);
+  }
+  /* eslint-enable @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment */
+
   onMount(() => {
     let unlistenGoal: (() => void) | undefined;
     let unlistenProse: (() => void) | undefined;
     let unlistenLsp: (() => void) | undefined;
+    let unlistenShowMessage: (() => void) | undefined;
 
     const setup = Promise.all([
       listen<string>("goal-state-updated", (e) => {
@@ -32,10 +72,17 @@
       listen<{ state: string; message: string }>("lsp-status", (e) => {
         lspReady = e.payload.state === "connected";
       }),
-    ]).then(([g, p, l]) => {
+      listen<{ severity: string; message: string }>("lsp-show-message", (e) => {
+        addToast(
+          e.payload.severity as ToastItem["severity"],
+          e.payload.message,
+        );
+      }),
+    ]).then(([g, p, l, s]) => {
       unlistenGoal = g;
       unlistenProse = p;
       unlistenLsp = l;
+      unlistenShowMessage = s;
       // Sync initial state: the lsp-status event may have fired before our
       // listener was registered, so explicitly poll the current state.
       void invoke<boolean>("get_lsp_ready").then((ready) => {
@@ -48,6 +95,9 @@
       unlistenGoal?.();
       unlistenProse?.();
       unlistenLsp?.();
+      unlistenShowMessage?.();
+      for (const timer of toastTimers.values()) clearTimeout(timer);
+      toastTimers.clear();
     };
   });
 
@@ -147,6 +197,8 @@
       <Assistant />
     </div>
   </div>
+
+  <Toast {toasts} onDismiss={dismissToast} />
 </div>
 
 <style>
