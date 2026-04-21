@@ -656,6 +656,7 @@ async fn do_save(
 
     save(&session, path)?;
     state.session_dirty.store(false, Ordering::SeqCst);
+    crate::send_did_save(state).await;
     Ok(())
 }
 

@@ -5,6 +5,7 @@
     EditorState,
     StateEffect,
     StateField,
+    type Text,
   } from "@codemirror/state";
   import {
     EditorView,
@@ -28,7 +29,6 @@
   import { oneDark } from "@codemirror/theme-one-dark";
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
-  import { applyTextEdits, type TextEdit } from "./textEdits";
 
   const setProgressLines = StateEffect.define<{ from: number; to: number }[]>();
 
@@ -72,35 +72,18 @@
   const themeCompartment = new Compartment();
   const editableCompartment = new Compartment();
 
-  let debounceTimer: ReturnType<typeof setTimeout> | undefined;
-  let unlistenElaboration: (() => void) | undefined;
   let unlistenProgress: (() => void) | undefined;
   let unlistenAnnotations: (() => void) | undefined;
-  // True while applying LSP format edits to suppress the update listener.
-  let applyingFormat = false;
-  let isFormatting = $state(false);
 
-  async function formatDocument() {
-    if (!view) return;
-    isFormatting = true;
-    view.dispatch({ effects: setProgressLines.of([]) });
-    try {
-      const edits = await invoke<TextEdit[]>("lsp_format_document");
-      if (edits.length > 0) {
-        applyTextEdits(
-          view,
-          edits,
-          () => {
-            applyingFormat = true;
-          },
-          () => {
-            applyingFormat = false;
-          },
-        );
-      }
-    } finally {
-      isFormatting = false;
-    }
+  type LspPosition = { line: number; character: number };
+  type ContentChange = {
+    range: { start: LspPosition; end: LspPosition };
+    text: string;
+  };
+
+  function offsetToLspPosition(doc: Text, offset: number): LspPosition {
+    const line = doc.lineAt(offset);
+    return { line: line.number - 1, character: offset - line.from };
   }
 
   onMount(async () => {
@@ -122,22 +105,23 @@
             ".cm-scroller": { overflow: "auto" },
           }),
           EditorView.updateListener.of((update) => {
-            if (!update.docChanged || applyingFormat) return;
-            clearTimeout(debounceTimer);
-            const content = update.state.doc.toString();
-            debounceTimer = setTimeout(() => {
-              void invoke("update_document", { content });
-            }, 300);
+            if (!update.docChanged) return;
+            const oldDoc = update.startState.doc;
+            const changes: ContentChange[] = [];
+            update.changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
+              changes.push({
+                range: {
+                  start: offsetToLspPosition(oldDoc, fromA),
+                  end: offsetToLspPosition(oldDoc, toA),
+                },
+                text: inserted.toString(),
+              });
+            });
+            void invoke("update_document", { changes });
           }),
         ],
       }),
       parent: container,
-    });
-
-    // Format whenever the LSP finishes elaborating — this is the correct
-    // moment: the server has fully processed the latest didChange.
-    unlistenElaboration = await listen("lsp-elaboration-done", () => {
-      void formatDocument();
     });
 
     unlistenProgress = await listen<{ start_line: number; end_line: number }[]>(
@@ -162,8 +146,6 @@
   });
 
   onDestroy(() => {
-    clearTimeout(debounceTimer);
-    unlistenElaboration?.();
     unlistenProgress?.();
     unlistenAnnotations?.();
     view?.destroy();
@@ -186,11 +168,7 @@
   });
 </script>
 
-<div
-  bind:this={container}
-  class="editor-host"
-  class:is-formatting={isFormatting}
-></div>
+<div bind:this={container} class="editor-host"></div>
 
 <style>
   .editor-host {
@@ -223,27 +201,6 @@
         var(--color-accent) 12%,
         transparent
       );
-    }
-  }
-
-  .editor-host.is-formatting::after {
-    content: "Formatting\2026";
-    position: absolute;
-    bottom: 0.5rem;
-    right: 0.75rem;
-    font-size: 0.6875rem;
-    font-family: system-ui, sans-serif;
-    color: var(--color-text-muted);
-    pointer-events: none;
-    animation: fade-in 80ms ease-out;
-  }
-
-  @keyframes fade-in {
-    from {
-      opacity: 0;
-    }
-    to {
-      opacity: 1;
     }
   }
 </style>

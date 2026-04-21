@@ -152,6 +152,91 @@ impl Session {
         msgs
     }
 
+    /// Send one incremental `didChange` with a single range replacement and wait for elaboration.
+    /// `start`/`end` are (line, character) pairs (0-indexed, UTF-16 code units).
+    fn apply_incremental_change(
+        &mut self,
+        start: (u32, u32),
+        end: (u32, u32),
+        text: &str,
+    ) -> Vec<Value> {
+        let version = self.doc_version;
+        self.doc_version += 1;
+        let uri = self.doc_uri();
+
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(self.client.send_notification(
+                "textDocument/didChange",
+                json!({
+                    "textDocument": { "uri": &uri, "version": version },
+                    "contentChanges": [{
+                        "range": {
+                            "start": { "line": start.0, "character": start.1 },
+                            "end":   { "line": end.0,   "character": end.1   },
+                        },
+                        "text": text,
+                    }],
+                }),
+            ))
+        })
+        .expect("incremental didChange failed");
+
+        // Update tracked content by applying the change.
+        if let Some(ref mut content) = self.current_content {
+            let mut lines: Vec<String> = content.lines().map(str::to_owned).collect();
+            // Ensure enough lines exist.
+            while lines.len() <= end.0 as usize {
+                lines.push(String::new());
+            }
+            // Rebuild content with the replacement applied (single-line change only).
+            if start.0 == end.0 {
+                let line = &lines[start.0 as usize];
+                let new_line = format!(
+                    "{}{}{}",
+                    &line[..start.1 as usize],
+                    text,
+                    &line[end.1 as usize..]
+                );
+                lines[start.0 as usize] = new_line;
+            }
+            *content = lines.join("\n");
+            if !content.ends_with('\n') {
+                content.push('\n');
+            }
+        }
+
+        let msgs = self.wait_for_elaboration(&uri, Duration::from_mins(1));
+        msgs.clone_into(&mut self.last_msgs);
+        msgs
+    }
+
+    /// Send `textDocument/didSave` with the current content and a short wait for any response.
+    fn did_save(&mut self) {
+        let uri = self.doc_uri();
+        let text = self.current_content.clone().unwrap_or_default();
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(self.client.send_notification(
+                "textDocument/didSave",
+                json!({ "textDocument": { "uri": &uri }, "text": text }),
+            ))
+        })
+        .expect("didSave failed");
+        // Give the server a moment to process it; no specific response expected.
+        self.collect_until(Duration::from_millis(200), |_| false);
+    }
+
+    /// Send `textDocument/didClose`.
+    fn did_close(&self) {
+        let uri = self.doc_uri();
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(self.client.send_notification(
+                "textDocument/didClose",
+                json!({ "textDocument": { "uri": &uri } }),
+            ))
+        })
+        .expect("didClose failed");
+    }
+
     /// Collect messages until `done(msg)` returns true or `timeout` elapses.
     #[allow(clippy::needless_pass_by_ref_mut)] // recv_timeout mutates the Receiver via &mut self
     fn collect_until<F>(&mut self, timeout: Duration, mut done: F) -> Vec<Value>
@@ -867,4 +952,108 @@ async fn plain_term_goal_returns_result_for_term_proof() {
         !goal.is_empty(),
         "plainTermGoal should return a non-empty goal string; got: {result}"
     );
+}
+
+// ── Incremental sync / didSave / didClose ──────────────────────────────
+
+/// Incremental `didChange` with a single-range replacement produces correct diagnostics.
+#[tokio::test(flavor = "multi_thread")]
+async fn incremental_change_from_valid_to_error() {
+    skip_if_no_project!(sess);
+    let uri = sess.doc_uri();
+
+    // Start with a valid definition.
+    sess.set_content("def ok : Nat := 42\n");
+
+    // Incrementally replace "42" (line 0, chars 16–18) with a string literal.
+    let msgs = sess.apply_incremental_change((0, 16), (0, 18), "\"bad\"");
+    drop(sess);
+
+    let errors = errors_in(&msgs, &uri);
+    assert!(
+        !errors.is_empty(),
+        "incremental change producing type mismatch should yield errors; got: {:?}",
+        diagnostics_for(&msgs, &uri)
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn incremental_change_from_error_to_valid() {
+    skip_if_no_project!(sess);
+    let uri = sess.doc_uri();
+
+    // Start with a type error.
+    sess.set_content("def bad : Nat := \"string\"\n");
+
+    // Replace the string literal (chars 17–25) with a valid Nat literal.
+    let msgs = sess.apply_incremental_change((0, 17), (0, 25), "99");
+    drop(sess);
+
+    let errors = errors_in(&msgs, &uri);
+    assert!(
+        errors.is_empty(),
+        "incremental fix should clear errors; remaining: {errors:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn incremental_change_preserves_unmodified_lines() {
+    skip_if_no_project!(sess);
+    let uri = sess.doc_uri();
+
+    // Two-line document; edit only line 1.
+    let source = "def first : Nat := 1\ndef second : Nat := 2\n";
+    sess.set_content(source);
+
+    // Replace "2" on line 1 (chars 20–21) with "42".
+    let msgs = sess.apply_incremental_change((1, 20), (1, 21), "42");
+    drop(sess);
+
+    assert!(
+        errors_in(&msgs, &uri).is_empty(),
+        "edit to line 1 should not break line 0; errors: {:?}",
+        diagnostics_for(&msgs, &uri)
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn did_save_accepted_without_error() {
+    skip_if_no_project!(sess);
+
+    // Set a valid document then send didSave.
+    sess.set_content(TACTIC_PROOF);
+    // Should not panic or return an error.
+    sess.did_save();
+    drop(sess);
+    // No assertion needed — the test passes if no panic occurs.
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn did_close_accepted_without_error() {
+    skip_if_no_project!(sess);
+
+    // didClose should be accepted silently. We reopen immediately so other
+    // tests continue to work with the shared session.
+    sess.set_content(TACTIC_PROOF);
+    sess.did_close();
+
+    // Reopen so the shared session remains usable.
+    let uri = sess.doc_uri();
+    tokio::task::block_in_place(|| {
+        tokio::runtime::Handle::current().block_on(sess.client.send_notification(
+            "textDocument/didOpen",
+            json!({
+                "textDocument": {
+                    "uri": &uri,
+                    "languageId": "lean4",
+                    "version": sess.doc_version,
+                    "text": TACTIC_PROOF,
+                }
+            }),
+        ))
+    })
+    .expect("re-open after didClose failed");
+    sess.doc_version += 1;
+    sess.current_content = Some(TACTIC_PROOF.to_owned());
+    drop(sess);
 }

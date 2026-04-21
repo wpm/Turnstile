@@ -80,6 +80,75 @@ struct SetupStatusResponse {
     project_path: String,
 }
 
+/// An LSP `Position` as sent by the frontend.
+#[derive(serde::Deserialize)]
+struct LspPosition {
+    line: u32,
+    character: u32,
+}
+
+/// An LSP `Range` as sent by the frontend.
+#[derive(serde::Deserialize)]
+struct LspRange {
+    start: LspPosition,
+    end: LspPosition,
+}
+
+/// One entry in a `textDocument/didChange` `contentChanges` array.
+#[derive(serde::Deserialize)]
+struct ContentChange {
+    range: LspRange,
+    text: String,
+}
+
+/// Convert an LSP (line, character) position to a byte offset in `source`.
+/// Both line and character are 0-indexed; character counts UTF-16 code units.
+fn lsp_pos_to_offset(source: &str, target_line: u32, target_character: u32) -> usize {
+    let mut current_line = 0u32;
+    let mut utf16_col = 0u32;
+    let mut offset = 0;
+
+    for ch in source.chars() {
+        if current_line == target_line {
+            if utf16_col >= target_character {
+                return offset;
+            }
+            utf16_col += u32::try_from(ch.len_utf16()).unwrap_or(2);
+        } else if ch == '\n' {
+            current_line += 1;
+        }
+        offset += ch.len_utf8();
+    }
+    offset.min(source.len())
+}
+
+/// Apply a batch of incremental LSP content changes to `source` in order.
+/// Changes must be applied last-to-first so earlier offsets stay valid.
+fn apply_content_changes(source: &mut String, changes: &[ContentChange]) {
+    if changes.is_empty() {
+        return;
+    }
+    if changes.len() == 1 {
+        let c = &changes[0];
+        let start = lsp_pos_to_offset(source, c.range.start.line, c.range.start.character);
+        let end = lsp_pos_to_offset(source, c.range.end.line, c.range.end.character);
+        source.replace_range(start..end, &c.text);
+        return;
+    }
+    let mut edits: Vec<(usize, usize, &str)> = changes
+        .iter()
+        .map(|c| {
+            let start = lsp_pos_to_offset(source, c.range.start.line, c.range.start.character);
+            let end = lsp_pos_to_offset(source, c.range.end.line, c.range.end.character);
+            (start, end, c.text.as_str())
+        })
+        .collect();
+    edits.sort_by_key(|e| std::cmp::Reverse(e.0));
+    for (start, end, text) in edits {
+        source.replace_range(start..end, text);
+    }
+}
+
 #[derive(Clone, serde::Serialize)]
 struct LspShowMessage {
     severity: &'static str, // "error" | "warning" | "info" | "log"
@@ -225,17 +294,18 @@ async fn start_lsp(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn update_document(app: AppHandle, content: String) -> Result<(), String> {
+async fn update_document(app: AppHandle, changes: Vec<ContentChange>) -> Result<(), String> {
     let state = app.state::<AppState>();
     let doc_uri = state.doc_uri();
     let version = state.doc_version.fetch_add(1, Ordering::SeqCst);
 
-    // Keep the formal proof source in sync so the LLM can read it via
-    // read_lean_source.
-    state.proof.lock().await.formal.source = content.clone();
+    // Apply incremental changes to the stored source so `read_lean_source` stays in sync.
+    {
+        let mut proof = state.proof.lock().await;
+        apply_content_changes(&mut proof.formal.source, &changes);
+    }
 
-    // Invalidate any in-flight goal-state refresh task spawned before this
-    // edit. The subsequent empty-`fileProgress` event will spawn a fresh one.
+    // Invalidate any in-flight goal-state refresh task spawned before this edit.
     state.goal_state_seq.fetch_add(1, Ordering::SeqCst);
 
     // Clone the client Arc so we can release the lock before the semantic token request.
@@ -249,6 +319,20 @@ async fn update_document(app: AppHandle, content: String) -> Result<(), String> 
         return Ok(());
     };
 
+    // Build the contentChanges array for didChange (incremental sync, change kind 2).
+    let content_changes: Vec<serde_json::Value> = changes
+        .iter()
+        .map(|c| {
+            json!({
+                "range": {
+                    "start": { "line": c.range.start.line, "character": c.range.start.character },
+                    "end":   { "line": c.range.end.line,   "character": c.range.end.character   },
+                },
+                "text": c.text,
+            })
+        })
+        .collect();
+
     {
         let lock = client_arc.lock().await;
         if let Some(client) = lock.as_ref() {
@@ -256,11 +340,8 @@ async fn update_document(app: AppHandle, content: String) -> Result<(), String> 
                 .send_notification(
                     "textDocument/didChange",
                     json!({
-                        "textDocument": {
-                            "uri": doc_uri,
-                            "version": version,
-                        },
-                        "contentChanges": [{ "text": content }],
+                        "textDocument": { "uri": doc_uri, "version": version },
+                        "contentChanges": content_changes,
                     }),
                 )
                 .await?;
@@ -615,18 +696,21 @@ async fn lsp_document_symbols(app: AppHandle) -> Result<Vec<DocumentSymbolInfo>,
         .unwrap_or_default())
 }
 
-#[tauri::command]
-async fn lsp_format_document(app: AppHandle) -> Result<Vec<lsp::TextEditDto>, String> {
-    let state = app.state::<AppState>();
-    let params = json!({
-        "textDocument": { "uri": state.doc_uri() },
-        "options": { "tabSize": 2, "insertSpaces": true }
-    });
-    Ok(call_lsp_raw(&state, "textDocument/formatting", params)
-        .await?
-        .as_ref()
-        .map(lsp::parse_text_edits)
-        .unwrap_or_default())
+/// Send `textDocument/didSave` to the LSP server with the current source text.
+/// Called after session writes to disk. Fire-and-forget; errors are logged, not propagated.
+pub(crate) async fn send_did_save(state: &AppState) {
+    let source = state.proof.lock().await.formal.source.clone();
+    let doc_uri = state.doc_uri();
+    let lock = state.lsp_client.lock().await;
+    if let Some(client) = lock.as_ref() {
+        client
+            .send_notification(
+                "textDocument/didSave",
+                json!({ "textDocument": { "uri": doc_uri }, "text": source }),
+            )
+            .await
+            .ok();
+    }
 }
 
 const fn message_type_severity(typ: lsp_types::MessageType) -> &'static str {
@@ -813,6 +897,7 @@ fn handle_semantic_tokens_response(
 /// # Panics
 ///
 /// Panics if the Tauri application fails to build or run.
+#[allow(clippy::too_many_lines)]
 pub fn run() {
     env_logger::init();
 
@@ -888,6 +973,25 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_window_state::Builder::new().build())
+        .on_window_event(|window, event| {
+            if matches!(event, tauri::WindowEvent::Destroyed) {
+                let app = window.app_handle().clone();
+                tauri::async_runtime::block_on(async move {
+                    let state = app.state::<AppState>();
+                    let doc_uri = state.doc_uri();
+                    let lock = state.lsp_client.lock().await;
+                    if let Some(client) = lock.as_ref() {
+                        client
+                            .send_notification(
+                                "textDocument/didClose",
+                                json!({ "textDocument": { "uri": doc_uri } }),
+                            )
+                            .await
+                            .ok();
+                    }
+                });
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             parse_formatted_input,
             get_setup_status,
@@ -901,7 +1005,6 @@ pub fn run() {
             lsp_code_actions,
             lsp_resolve_code_action,
             lsp_document_symbols,
-            lsp_format_document,
             assistant::send_message,
             assistant::get_transcript,
             assistant::load_transcript,
@@ -934,7 +1037,8 @@ mod tests {
     use std::sync::Mutex;
 
     use super::{
-        assistant, end_of_document_position, llm, lsp, proof, should_generate_prose, AppState,
+        apply_content_changes, assistant, end_of_document_position, llm, lsp, lsp_pos_to_offset,
+        proof, should_generate_prose, AppState, ContentChange, LspPosition, LspRange,
         ShouldGenerate,
     };
     use std::sync::Arc;
@@ -961,6 +1065,115 @@ mod tests {
         assert_eq!(end_of_document_position("abc\ndef"), (1, 3));
         assert_eq!(end_of_document_position("abc\ndef\n"), (2, 0));
         assert_eq!(end_of_document_position("abc\ndef\nghi"), (2, 3));
+    }
+
+    // -- lsp_pos_to_offset --------------------------------------------------
+
+    fn pos(line: u32, character: u32) -> LspPosition {
+        LspPosition { line, character }
+    }
+
+    fn change(sl: u32, sc: u32, el: u32, ec: u32, text: &str) -> ContentChange {
+        ContentChange {
+            range: LspRange {
+                start: pos(sl, sc),
+                end: pos(el, ec),
+            },
+            text: text.to_string(),
+        }
+    }
+
+    #[test]
+    fn lsp_pos_to_offset_start_of_doc() {
+        assert_eq!(lsp_pos_to_offset("hello\nworld", 0, 0), 0);
+    }
+
+    #[test]
+    fn lsp_pos_to_offset_mid_first_line() {
+        assert_eq!(lsp_pos_to_offset("hello\nworld", 0, 3), 3);
+    }
+
+    #[test]
+    fn lsp_pos_to_offset_start_of_second_line() {
+        assert_eq!(lsp_pos_to_offset("hello\nworld", 1, 0), 6);
+    }
+
+    #[test]
+    fn lsp_pos_to_offset_mid_second_line() {
+        assert_eq!(lsp_pos_to_offset("hello\nworld", 1, 3), 9);
+    }
+
+    #[test]
+    fn lsp_pos_to_offset_empty_doc() {
+        assert_eq!(lsp_pos_to_offset("", 0, 0), 0);
+    }
+
+    #[test]
+    fn lsp_pos_to_offset_clamps_to_doc_length() {
+        assert_eq!(lsp_pos_to_offset("abc", 0, 100), 3);
+    }
+
+    #[test]
+    fn lsp_pos_to_offset_clamps_out_of_bounds_line() {
+        assert_eq!(lsp_pos_to_offset("hello\nworld", 5, 0), 11);
+    }
+
+    // -- apply_content_changes ----------------------------------------------
+
+    #[test]
+    fn apply_changes_single_insertion() {
+        let mut s = "hello world".to_string();
+        apply_content_changes(&mut s, &[change(0, 5, 0, 5, ",")]);
+        assert_eq!(s, "hello, world");
+    }
+
+    #[test]
+    fn apply_changes_single_deletion() {
+        let mut s = "hello world".to_string();
+        apply_content_changes(&mut s, &[change(0, 5, 0, 6, "")]);
+        assert_eq!(s, "helloworld");
+    }
+
+    #[test]
+    fn apply_changes_single_replacement() {
+        let mut s = "hello world".to_string();
+        apply_content_changes(&mut s, &[change(0, 6, 0, 11, "Lean")]);
+        assert_eq!(s, "hello Lean");
+    }
+
+    #[test]
+    fn apply_changes_append_newline_and_text() {
+        let mut s = "theorem foo".to_string();
+        apply_content_changes(&mut s, &[change(0, 11, 0, 11, " : True")]);
+        assert_eq!(s, "theorem foo : True");
+    }
+
+    #[test]
+    fn apply_changes_multiline_replacement() {
+        let mut s = "line0\nline1\nline2".to_string();
+        // Replace "line1" (line 1, chars 0–5) with "replaced"
+        apply_content_changes(&mut s, &[change(1, 0, 1, 5, "replaced")]);
+        assert_eq!(s, "line0\nreplaced\nline2");
+    }
+
+    #[test]
+    fn apply_changes_multiple_non_overlapping() {
+        // Two insertions on the same line at different positions.
+        // CodeMirror sends them in document order; we must apply last-first.
+        let mut s = "abcdef".to_string();
+        let changes = vec![
+            change(0, 2, 0, 2, "X"), // insert X at pos 2
+            change(0, 4, 0, 4, "Y"), // insert Y at pos 4 (in old doc)
+        ];
+        apply_content_changes(&mut s, &changes);
+        assert_eq!(s, "abXcdYef");
+    }
+
+    #[test]
+    fn apply_changes_empty_change_list() {
+        let mut s = "unchanged".to_string();
+        apply_content_changes(&mut s, &[]);
+        assert_eq!(s, "unchanged");
     }
 
     /// Minimal `AppState` suitable for exercising `should_generate_prose`. The
