@@ -121,7 +121,7 @@ impl Default for Transcript {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToolName {
     ReadLeanSource,
-    ReadTacticState,
+    ReadGoalState,
     ReadProseProof,
     UpdateProseProof,
     ReadDiagnostics,
@@ -132,7 +132,7 @@ impl ToolName {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::ReadLeanSource => "read_lean_source",
-            Self::ReadTacticState => "read_tactic_state",
+            Self::ReadGoalState => "read_goal_state",
             Self::ReadProseProof => "read_prose_proof",
             Self::UpdateProseProof => "update_prose_proof",
             Self::ReadDiagnostics => "read_diagnostics",
@@ -146,7 +146,7 @@ impl TryFrom<&str> for ToolName {
     fn try_from(value: &str) -> Result<Self, Self::Error> {
         match value {
             "read_lean_source" => Ok(Self::ReadLeanSource),
-            "read_tactic_state" => Ok(Self::ReadTacticState),
+            "read_goal_state" => Ok(Self::ReadGoalState),
             "read_prose_proof" => Ok(Self::ReadProseProof),
             "update_prose_proof" => Ok(Self::UpdateProseProof),
             "read_diagnostics" => Ok(Self::ReadDiagnostics),
@@ -176,23 +176,12 @@ pub fn default_tools() -> Vec<ToolDefinition> {
             }),
         },
         ToolDefinition {
-            name: ToolName::ReadTacticState.as_str().into(),
-            description: "Read the tactic state at a specific cursor position in the Lean source. \
-                          Both line and column are required."
-                .into(),
+            name: ToolName::ReadGoalState.as_str().into(),
+            description: "Read the current Lean goal state for the entire proof.".into(),
             input_schema: serde_json::json!({
                 "type": "object",
-                "properties": {
-                    "line": {
-                        "type": "integer",
-                        "description": "0-indexed line in the Lean source"
-                    },
-                    "column": {
-                        "type": "integer",
-                        "description": "0-indexed column in the Lean source"
-                    }
-                },
-                "required": ["line", "column"]
+                "properties": {},
+                "required": []
             }),
         },
         ToolDefinition {
@@ -260,43 +249,12 @@ pub async fn dispatch_tool(
 
     match tool {
         ToolName::ReadLeanSource => state.proof.lock().await.formal.source.clone(),
-        ToolName::ReadTacticState => {
-            // Delegate to the LSP if available.
-            let line = tool_input
-                .get("line")
-                .and_then(serde_json::Value::as_u64)
-                .map(|v| u32::try_from(v).unwrap_or(u32::MAX));
-            let col = tool_input
-                .get("column")
-                .and_then(serde_json::Value::as_u64)
-                .map(|v| u32::try_from(v).unwrap_or(u32::MAX));
-            let lsp_lock = state.lsp_client.lock().await;
-            match lsp_lock.as_ref() {
-                Some(client) => {
-                    let doc_uri = state.doc_uri();
-                    if let (Some(l), Some(c)) = (line, col) {
-                        let result = client
-                            .send_request_await(
-                                "$/lean/plainGoal",
-                                serde_json::json!({
-                                    "textDocument": { "uri": doc_uri },
-                                    "position": { "line": l, "character": c },
-                                }),
-                            )
-                            .await;
-                        match result {
-                            Ok(v) => v
-                                .get("rendered")
-                                .and_then(|r| r.as_str())
-                                .unwrap_or("(no goal)")
-                                .to_string(),
-                            Err(e) => format!("Error reading tactic state: {e}"),
-                        }
-                    } else {
-                        "(missing line/column — both are required)".to_string()
-                    }
-                }
-                None => "(LSP not connected)".to_string(),
+        ToolName::ReadGoalState => {
+            let goal = state.proof.lock().await.goal_state.full.clone();
+            if goal.is_empty() {
+                "(no goal)".to_string()
+            } else {
+                goal
             }
         }
         ToolName::ReadProseProof => state.proof.lock().await.prose.text.clone(),
@@ -570,7 +528,7 @@ mod tests {
         assert_eq!(tools.len(), 5);
         let names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
         assert!(names.contains(&"read_lean_source"));
-        assert!(names.contains(&"read_tactic_state"));
+        assert!(names.contains(&"read_goal_state"));
         assert!(names.contains(&"read_prose_proof"));
         assert!(names.contains(&"update_prose_proof"));
         assert!(names.contains(&"read_diagnostics"));
@@ -592,7 +550,7 @@ mod tests {
     fn tool_name_round_trips_via_str() {
         for variant in [
             ToolName::ReadLeanSource,
-            ToolName::ReadTacticState,
+            ToolName::ReadGoalState,
             ToolName::ReadProseProof,
             ToolName::UpdateProseProof,
             ToolName::ReadDiagnostics,
