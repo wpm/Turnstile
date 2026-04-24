@@ -188,14 +188,6 @@ impl Session {
                     .map_err(|e| e.to_string())?;
                 Ok(serde_json::to_value(r).unwrap_or(Value::Null))
             }
-            "textDocument/formatting" => {
-                let p: DocumentFormattingParams =
-                    serde_json::from_value(params).map_err(|e| e.to_string())?;
-                let r = rt
-                    .block_on(self.client.formatting(p))
-                    .map_err(|e| e.to_string())?;
-                Ok(serde_json::to_value(r).unwrap_or(Value::Null))
-            }
             "textDocument/semanticTokens/full" => {
                 let p: SemanticTokensParams =
                     serde_json::from_value(params).map_err(|e| e.to_string())?;
@@ -209,14 +201,6 @@ impl Session {
                     serde_json::from_value(params).map_err(|e| e.to_string())?;
                 let r = rt
                     .block_on(self.client.plain_goal(p))
-                    .map_err(|e| e.to_string())?;
-                Ok(serde_json::to_value(r).unwrap_or(Value::Null))
-            }
-            "$/lean/plainTermGoal" => {
-                let p: TextDocumentPositionParams =
-                    serde_json::from_value(params).map_err(|e| e.to_string())?;
-                let r = rt
-                    .block_on(self.client.plain_term_goal(p))
                     .map_err(|e| e.to_string())?;
                 Ok(serde_json::to_value(r).unwrap_or(Value::Null))
             }

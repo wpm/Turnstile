@@ -19,8 +19,8 @@ use lsp_types::notification::{
     DidChangeTextDocument, DidCloseTextDocument, DidOpenTextDocument, DidSaveTextDocument, Exit,
 };
 use lsp_types::request::{
-    CodeActionRequest, CodeActionResolveRequest, Completion, DocumentSymbolRequest, Formatting,
-    GotoDefinition, HoverRequest, SemanticTokensFullRequest, Shutdown,
+    CodeActionRequest, CodeActionResolveRequest, Completion, DocumentSymbolRequest, GotoDefinition,
+    HoverRequest, SemanticTokensFullRequest, Shutdown,
 };
 use lsp_types::{
     CodeAction, CodeActionClientCapabilities, CodeActionKindLiteralSupport,
@@ -34,7 +34,6 @@ use lsp_types::{
     SemanticTokensResult, SemanticTokensServerCapabilities, ShowMessageParams,
     TextDocumentClientCapabilities, TextDocumentPositionParams, TextDocumentSyncClientCapabilities,
 };
-use lsp_types::{DocumentFormattingParams, TextEdit};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::future::Future;
@@ -61,25 +60,10 @@ pub struct PlainGoal {
 /// Custom request type for `$/lean/plainGoal`.
 pub enum LeanPlainGoal {}
 
-/// Response type for the Lean `$/lean/plainTermGoal` extension request.
-#[derive(Debug, Serialize, Deserialize)]
-pub struct PlainTermGoal {
-    pub goal: String,
-}
-
-/// Custom request type for `$/lean/plainTermGoal`.
-pub enum LeanPlainTermGoal {}
-
 impl Request for LeanPlainGoal {
     type Params = TextDocumentPositionParams;
     type Result = Option<PlainGoal>;
     const METHOD: &'static str = "$/lean/plainGoal";
-}
-
-impl Request for LeanPlainTermGoal {
-    type Params = TextDocumentPositionParams;
-    type Result = Option<PlainTermGoal>;
-    const METHOD: &'static str = "$/lean/plainTermGoal";
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -517,22 +501,6 @@ impl LeanClient {
         params: TextDocumentPositionParams,
     ) -> impl Future<Output = async_lsp::Result<Option<PlainGoal>>> + use<'_> {
         self.request::<LeanPlainGoal>(params)
-    }
-
-    #[instrument(skip_all)]
-    pub fn plain_term_goal(
-        &self,
-        params: TextDocumentPositionParams,
-    ) -> impl Future<Output = async_lsp::Result<Option<PlainTermGoal>>> + use<'_> {
-        self.request::<LeanPlainTermGoal>(params)
-    }
-
-    #[instrument(skip_all)]
-    pub fn formatting(
-        &self,
-        params: DocumentFormattingParams,
-    ) -> impl Future<Output = async_lsp::Result<Option<Vec<TextEdit>>>> + use<'_> {
-        self.request::<Formatting>(params)
     }
 
     #[instrument(skip_all)]

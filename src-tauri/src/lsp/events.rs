@@ -84,7 +84,6 @@ fn handle_diagnostics(app: &AppHandle, params: PublishDiagnosticsParams) {
     let diagnostics: Vec<DiagnosticInfo> = parse_diagnostics(params);
     let state = app.state::<AppState>();
     (*state.current_diagnostics.lock().unwrap()).clone_from(&diagnostics);
-    app.emit("lsp-diagnostics", &diagnostics).ok();
     let proof = state.proof.clone();
     let app_handle = app.clone();
     tauri::async_runtime::spawn(async move {
