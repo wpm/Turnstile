@@ -12,6 +12,7 @@
     keymap,
     lineNumbers,
     highlightActiveLine,
+    tooltips,
     Decoration,
     type DecorationSet,
   } from "@codemirror/view";
@@ -21,6 +22,7 @@
     setAnnotations,
     type Annotation,
   } from "./annotations";
+  import { lspHoverTooltip } from "./hover";
   import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
   import {
     syntaxHighlighting,
@@ -95,9 +97,11 @@
           highlightActiveLine(),
           history(),
           keymap.of([...defaultKeymap, ...historyKeymap]),
+          tooltips({ parent: document.body }),
           progressField,
           annotationField,
           ...diagnosticGutter,
+          lspHoverTooltip,
           syntaxHighlighting(defaultHighlightStyle),
           editableCompartment.of(EditorView.editable.of(false)),
           themeCompartment.of(dark ? oneDark : []),
