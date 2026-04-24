@@ -1,21 +1,9 @@
-//! LSP client: stdin/stdout JSON-RPC 2.0 transport for the Lean language server.
-//!
-//! Transport: Content-Length framing per the LSP spec.
-//! The stdout reader runs on a dedicated thread (spawned in lib.rs) to avoid
-//! blocking the async runtime. Responses to awaited requests are routed back
-//! via the `pending` map; all other messages are dispatched to the caller's callback.
+//! LSP client: async-lsp based transport for the Lean language server.
 
-pub mod error;
-pub use error::LspError;
-
-mod transport;
-pub use transport::{ack_request, path_to_file_uri, send_request_sync};
+pub mod events;
 
 mod client;
-pub use client::{LspClient, LspLifecycle};
-
-mod protocol;
-pub use protocol::{initialize_params, parse_modifier_legend, parse_token_legend, LspNotification};
+pub use client::{FileProgressParams, LeanClient, PlainGoal, StartError, StopError};
 
 mod parse;
 pub use parse::{

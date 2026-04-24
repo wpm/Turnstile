@@ -1,7 +1,8 @@
-//! Frontend DTO types and LSP wire-format parsers.
+//! Frontend DTO types and LSP→DTO mappers.
 //!
-//! This module sits at the boundary between the LSP wire protocol and the
-//! Tauri frontend. Its two responsibilities are:
+//! This module sits at the boundary between the typed `lsp-types` structs
+//! (returned by `LeanClient`) and the Tauri frontend. Its two responsibilities
+//! are:
 //!
 //! **DTO types** — Lean-specific structs (`DiagnosticInfo`, `HoverInfo`,
 //! `SemanticToken`, etc.) that are serialized to JSON and emitted as Tauri
@@ -10,18 +11,14 @@
 //! flatten nested LSP shapes into flat structs, and carry only the fields the
 //! UI actually uses.
 //!
-//! **Parse functions** — Each `parse_*` function accepts a raw `serde_json::Value`
-//! (the `params` or `result` field of an LSP message), deserializes it into the
-//! appropriate `lsp-types` struct, then maps to the corresponding DTO. They are
-//! the single source of truth for each LSP→DTO conversion and are unit-tested
-//! against real LSP payloads.
+//! **Map functions** — Each `parse_*` function accepts a typed `lsp-types`
+//! value (already deserialized by `LeanClient`) and maps it to the
+//! corresponding DTO. They are the single source of truth for each
+//! LSP→DTO conversion and are unit-tested against real LSP payloads.
 //!
-//! [`decode_semantic_tokens`] is the exception: it operates on an already-decoded
-//! `&[u32]` rather than a JSON value, implementing the LSP delta-encoding
-//! algorithm to reconstruct absolute token positions from 5-tuple deltas.
-//!
-//! [`parse_file_progress`] also stays `Value`-based because `$/lean/fileProgress`
-//! is a Lean-specific extension with no analog in `lsp-types`.
+//! [`decode_semantic_tokens`] accepts a `&[lsp_types::SemanticToken]` slice and
+//! implements the LSP delta-encoding algorithm to reconstruct absolute token
+//! positions from 5-tuple deltas.
 
 use lsp_types::{
     CodeActionOrCommand, CodeActionResponse, CompletionResponse, DocumentSymbol,
@@ -30,6 +27,8 @@ use lsp_types::{
 };
 use serde::Serialize;
 use serde_json::Value;
+
+use crate::lsp::client::FileProgressParams;
 
 // ── Public DTO types for Tauri events ─────────────────────────────────
 
@@ -193,7 +192,7 @@ pub fn parse_diagnostics(params: PublishDiagnosticsParams) -> Vec<DiagnosticInfo
 ///   [deltaLine, deltaStart, length, tokenTypeIndex, tokenModifiers]
 #[must_use]
 pub fn decode_semantic_tokens(
-    data: &[u32],
+    data: &[lsp_types::SemanticToken],
     type_legend: &[String],
     modifier_legend: &[String],
 ) -> Vec<SemanticToken> {
@@ -201,12 +200,12 @@ pub fn decode_semantic_tokens(
     let mut line: u32 = 1; // 1-indexed for frontend
     let mut col: u32 = 0;
 
-    for chunk in data.chunks_exact(5) {
-        let delta_line = chunk[0];
-        let delta_start = chunk[1];
-        let length = chunk[2];
-        let token_type_idx = chunk[3] as usize;
-        let modifier_bits = chunk[4];
+    for token in data {
+        let delta_line = token.delta_line;
+        let delta_start = token.delta_start;
+        let length = token.length;
+        let token_type_idx = token.token_type as usize;
+        let modifier_bits = token.token_modifiers_bitset;
 
         if delta_line > 0 {
             line += delta_line;
@@ -239,13 +238,13 @@ pub fn decode_semantic_tokens(
     tokens
 }
 
-/// Parse a `textDocument/completion` response into a list of completion items.
+/// Map a `textDocument/completion` response into a list of completion items.
 ///
 /// The LSP response is either a `CompletionList` (`{ items: [...] }`) or a bare
 /// `CompletionItem[]`. Both shapes are handled here.
 #[must_use]
-pub fn parse_completion_items(result: &Value) -> Vec<CompletionItem> {
-    let Ok(resp) = serde_json::from_value::<CompletionResponse>(result.clone()) else {
+pub fn parse_completion_items(result: Option<CompletionResponse>) -> Vec<CompletionItem> {
+    let Some(resp) = result else {
         return Vec::new();
     };
     let items = match resp {
@@ -262,41 +261,28 @@ pub fn parse_completion_items(result: &Value) -> Vec<CompletionItem> {
         .collect()
 }
 
-/// Parse a `$/lean/fileProgress` notification params into processing ranges.
-///
-/// This is a Lean-specific extension with no `lsp-types` analog; it stays
-/// `Value`-based.
+/// Map a `$/lean/fileProgress` notification params into processing ranges.
 #[must_use]
-pub fn parse_file_progress(params: &Value) -> Vec<FileProgressRange> {
-    let Some(processing) = params.get("processing").and_then(|p| p.as_array()) else {
-        return Vec::new();
-    };
-
-    processing
-        .iter()
-        .filter_map(|item| {
-            let (sl, _sc, el, _ec) = parse_lsp_range(item.get("range")?)?;
-            Some(FileProgressRange {
-                start_line: sl + 1, // 0-indexed → 1-indexed
-                end_line: el + 1,
-            })
+pub fn parse_file_progress(params: FileProgressParams) -> Vec<FileProgressRange> {
+    params
+        .processing
+        .into_iter()
+        .map(|interval| FileProgressRange {
+            start_line: interval.range.start.line + 1, // 0-indexed → 1-indexed
+            end_line: interval.range.end.line + 1,
         })
         .collect()
 }
 
-/// Parse a `textDocument/hover` response into `HoverInfo`.
+/// Map a `textDocument/hover` response into `HoverInfo`.
 ///
 /// Preserves the server's markup `kind` so the frontend can render markdown
 /// (fenced Lean blocks, docstrings, inline code, LaTeX) as rich text and
 /// plaintext as preformatted text. Returns `None` if the response is null,
 /// has no readable contents, or the contents are empty.
 #[must_use]
-pub fn parse_hover(result: &Value) -> Option<HoverInfo> {
-    if result.is_null() {
-        return None;
-    }
-    let hover: Hover = serde_json::from_value(result.clone()).ok()?;
-    let (contents, kind) = hover_contents(hover.contents)?;
+pub fn parse_hover(result: Option<Hover>) -> Option<HoverInfo> {
+    let (contents, kind) = hover_contents(result?.contents)?;
     if contents.trim().is_empty() {
         None
     } else {
@@ -346,7 +332,7 @@ fn hover_contents(contents: HoverContents) -> Option<(String, HoverKind)> {
     }
 }
 
-/// Parse a `textDocument/definition` response, keeping only the first target.
+/// Map a `textDocument/definition` response, keeping only the first target.
 ///
 /// The Lean server may return any of:
 ///   - `Location` — `{ uri, range }`
@@ -357,12 +343,8 @@ fn hover_contents(contents: HoverContents) -> Option<(String, HoverKind)> {
 /// We set `linkSupport: false` in the initialize params, but Lean sometimes
 /// returns `LocationLink` anyway, so handle both shapes.
 #[must_use]
-pub fn parse_definition(result: &Value) -> Option<DefinitionLocation> {
-    if result.is_null() {
-        return None;
-    }
-    let response: GotoDefinitionResponse = serde_json::from_value(result.clone()).ok()?;
-    match response {
+pub fn parse_definition(result: Option<GotoDefinitionResponse>) -> Option<DefinitionLocation> {
+    match result? {
         GotoDefinitionResponse::Scalar(ref loc) => Some(location_to_dto(loc)),
         GotoDefinitionResponse::Array(ref locs) => locs.first().map(location_to_dto),
         GotoDefinitionResponse::Link(ref links) => links.first().map(location_link_to_dto),
@@ -390,15 +372,15 @@ fn location_link_to_dto(link: &LocationLink) -> DefinitionLocation {
     }
 }
 
-/// Parse a `textDocument/codeAction` response into our `CodeActionInfo` DTOs.
+/// Map a `textDocument/codeAction` response into our `CodeActionInfo` DTOs.
 ///
 /// Each entry is either a `Command` (ignored — we only surface workspace
 /// edits) or a `CodeAction` object. Inline edits are captured in
 /// `CodeActionInfo.edit`; actions with only a `data` field (to be resolved
 /// later via `codeAction/resolve`) carry `resolve_data`.
 #[must_use]
-pub fn parse_code_actions(result: &Value) -> Vec<CodeActionInfo> {
-    let Ok(resp) = serde_json::from_value::<CodeActionResponse>(result.clone()) else {
+pub fn parse_code_actions(result: Option<CodeActionResponse>) -> Vec<CodeActionInfo> {
+    let Some(resp) = result else {
         return Vec::new();
     };
     resp.into_iter()
@@ -427,24 +409,22 @@ fn workspace_edit_to_dto(edit: WorkspaceEdit) -> Option<WorkspaceEditDto> {
     Some(WorkspaceEditDto { changes: out })
 }
 
-/// Parse a `WorkspaceEdit` object with only `changes` (the shape Lean emits).
+/// Map a `WorkspaceEdit` into our `WorkspaceEditDto`.
 ///
-/// Returns `None` if the value doesn't look like a `WorkspaceEdit` we can use.
+/// Returns `None` if there are no `changes` (the only shape Lean emits).
 #[must_use]
-pub fn parse_workspace_edit(edit: &Value) -> Option<WorkspaceEditDto> {
-    let ws: WorkspaceEdit = serde_json::from_value(edit.clone()).ok()?;
-    workspace_edit_to_dto(ws)
+pub fn parse_workspace_edit(edit: WorkspaceEdit) -> Option<WorkspaceEditDto> {
+    workspace_edit_to_dto(edit)
 }
 
-/// Parse a `textDocument/formatting` response into a list of text edits.
-///
-/// Returns an empty vec if the result is null or not an array.
+/// Map a `textDocument/formatting` response into a list of text edits.
 #[must_use]
-pub fn parse_text_edits(result: &Value) -> Vec<TextEditDto> {
-    let Ok(edits) = serde_json::from_value::<Vec<TextEdit>>(result.clone()) else {
-        return Vec::new();
-    };
-    edits.into_iter().map(text_edit_to_dto).collect()
+pub fn parse_text_edits(result: Option<Vec<TextEdit>>) -> Vec<TextEditDto> {
+    result
+        .unwrap_or_default()
+        .into_iter()
+        .map(text_edit_to_dto)
+        .collect()
 }
 
 fn text_edit_to_dto(edit: TextEdit) -> TextEditDto {
@@ -457,19 +437,16 @@ fn text_edit_to_dto(edit: TextEdit) -> TextEditDto {
     }
 }
 
-/// Parse a `textDocument/documentSymbol` response into a hierarchical tree.
+/// Map a `textDocument/documentSymbol` response into a hierarchical tree.
 ///
 /// Only the modern `DocumentSymbol[]` shape is handled — we set
 /// `hierarchicalDocumentSymbolSupport: true` in the initialize handshake.
-pub fn parse_document_symbols(result: &Value) -> Vec<DocumentSymbolInfo> {
-    let Ok(resp) = serde_json::from_value::<DocumentSymbolResponse>(result.clone()) else {
-        return Vec::new();
-    };
-    match resp {
-        DocumentSymbolResponse::Nested(symbols) => {
+pub fn parse_document_symbols(result: Option<DocumentSymbolResponse>) -> Vec<DocumentSymbolInfo> {
+    match result {
+        Some(DocumentSymbolResponse::Nested(symbols)) => {
             symbols.into_iter().map(document_symbol_to_dto).collect()
         }
-        DocumentSymbolResponse::Flat(_) => Vec::new(),
+        _ => Vec::new(),
     }
 }
 
@@ -490,24 +467,58 @@ fn document_symbol_to_dto(sym: DocumentSymbol) -> DocumentSymbolInfo {
     }
 }
 
-fn parse_lsp_range(range: &Value) -> Option<(u32, u32, u32, u32)> {
-    let start = range.get("start")?;
-    let end = range.get("end")?;
-    Some((
-        u32::try_from(start.get("line")?.as_u64()?).ok()?,
-        u32::try_from(start.get("character")?.as_u64()?).ok()?,
-        u32::try_from(end.get("line")?.as_u64()?).ok()?,
-        u32::try_from(end.get("character")?.as_u64()?).ok()?,
-    ))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lsp_types::{DocumentSymbolResponse, GotoDefinitionResponse, Hover};
     use serde_json::json;
+
+    fn tokens_from_raw(data: &[u32]) -> Vec<lsp_types::SemanticToken> {
+        data.chunks_exact(5)
+            .map(|c| lsp_types::SemanticToken {
+                delta_line: c[0],
+                delta_start: c[1],
+                length: c[2],
+                token_type: c[3],
+                token_modifiers_bitset: c[4],
+            })
+            .collect()
+    }
 
     fn diags_from_value(v: Value) -> Vec<DiagnosticInfo> {
         parse_diagnostics(serde_json::from_value(v).expect("invalid PublishDiagnosticsParams"))
+    }
+
+    fn completion_from_value(v: Value) -> Vec<CompletionItem> {
+        parse_completion_items(serde_json::from_value(v).ok())
+    }
+
+    fn file_progress_from_value(v: Value) -> Vec<FileProgressRange> {
+        parse_file_progress(serde_json::from_value(v).expect("invalid FileProgressParams"))
+    }
+
+    fn hover_from_value(v: Value) -> Option<HoverInfo> {
+        parse_hover(serde_json::from_value::<Hover>(v).ok())
+    }
+
+    fn definition_from_value(v: Value) -> Option<DefinitionLocation> {
+        parse_definition(serde_json::from_value::<GotoDefinitionResponse>(v).ok())
+    }
+
+    fn code_actions_from_value(v: Value) -> Vec<CodeActionInfo> {
+        parse_code_actions(serde_json::from_value(v).ok())
+    }
+
+    fn doc_symbols_from_value(v: Value) -> Vec<DocumentSymbolInfo> {
+        parse_document_symbols(serde_json::from_value::<DocumentSymbolResponse>(v).ok())
+    }
+
+    fn workspace_edit_from_value(v: Value) -> Option<WorkspaceEditDto> {
+        parse_workspace_edit(serde_json::from_value(v).expect("invalid WorkspaceEdit"))
+    }
+
+    fn text_edits_from_value(v: Value) -> Vec<TextEditDto> {
+        parse_text_edits(serde_json::from_value(v).ok())
     }
 
     #[test]
@@ -542,7 +553,7 @@ mod tests {
     fn decode_semantic_tokens_single_token() {
         let types = vec!["keyword".to_string(), "type".to_string()];
         let modifiers = vec!["declaration".to_string()];
-        let data = vec![0, 5, 3, 0, 0];
+        let data = tokens_from_raw(&[0, 5, 3, 0, 0]);
         let tokens = decode_semantic_tokens(&data, &types, &modifiers);
         assert_eq!(tokens.len(), 1);
         assert_eq!(tokens[0].line, 1);
@@ -556,7 +567,7 @@ mod tests {
     fn decode_semantic_tokens_with_modifiers() {
         let types = vec!["keyword".to_string(), "variable".to_string()];
         let modifiers = vec!["declaration".to_string(), "readonly".to_string()];
-        let data = vec![0, 0, 5, 1, 0b11]; // variable with declaration+readonly
+        let data = tokens_from_raw(&[0, 0, 5, 1, 0b11]); // variable with declaration+readonly
         let tokens = decode_semantic_tokens(&data, &types, &modifiers);
         assert_eq!(tokens[0].token_type, "variable");
         assert_eq!(tokens[0].token_modifiers, vec!["declaration", "readonly"]);
@@ -566,10 +577,10 @@ mod tests {
     fn decode_semantic_tokens_line_advance() {
         let types = vec!["keyword".to_string()];
         let modifiers: Vec<String> = vec![];
-        let data = vec![
+        let data = tokens_from_raw(&[
             0, 0, 1, 0, 0, // token at line 1, col 0
             2, 4, 1, 0, 0, // delta line +2, col 4 → line 3, col 4
-        ];
+        ]);
         let tokens = decode_semantic_tokens(&data, &types, &modifiers);
         assert_eq!(tokens[0].line, 1);
         assert_eq!(tokens[1].line, 3);
@@ -581,7 +592,7 @@ mod tests {
         let types = vec!["keyword".to_string()];
         let modifiers: Vec<String> = vec![];
         // First token: line 1, col 10. Second token: delta_line=1 → line 2, delta_start=3 → col 3 (not 10+3).
-        let data = vec![0, 10, 1, 0, 0, 1, 3, 1, 0, 0];
+        let data = tokens_from_raw(&[0, 10, 1, 0, 0, 1, 3, 1, 0, 0]);
         let tokens = decode_semantic_tokens(&data, &types, &modifiers);
         assert_eq!(tokens[1].line, 2);
         assert_eq!(tokens[1].col, 3);
@@ -591,7 +602,7 @@ mod tests {
     fn decode_semantic_tokens_unknown_type_falls_back_to_variable() {
         let types = vec!["keyword".to_string()];
         let modifiers: Vec<String> = vec![];
-        let data = vec![0, 0, 5, 99, 0]; // index 99 out of bounds
+        let data = tokens_from_raw(&[0, 0, 5, 99, 0]); // index 99 out of bounds
         let tokens = decode_semantic_tokens(&data, &types, &modifiers);
         assert_eq!(tokens[0].token_type, "variable");
     }
@@ -605,7 +616,7 @@ mod tests {
                 { "label": "Nat.succ", "detail": "Nat → Nat" }
             ]
         });
-        let items = parse_completion_items(&result);
+        let items = completion_from_value(result);
         assert_eq!(items.len(), 2);
         assert_eq!(items[0].label, "theorem");
         assert_eq!(items[0].detail.as_deref(), Some("keyword"));
@@ -621,7 +632,7 @@ mod tests {
             { "label": "def" },
             { "label": "lemma", "detail": "keyword" }
         ]);
-        let items = parse_completion_items(&result);
+        let items = completion_from_value(result);
         assert_eq!(items.len(), 2);
         assert_eq!(items[0].label, "def");
         assert!(items[0].detail.is_none());
@@ -631,12 +642,12 @@ mod tests {
     #[test]
     fn parse_completion_items_empty_returns_empty() {
         let result = json!({ "isIncomplete": false, "items": [] });
-        assert!(parse_completion_items(&result).is_empty());
+        assert!(completion_from_value(result).is_empty());
     }
 
     #[test]
-    fn parse_completion_items_null_returns_empty() {
-        assert!(parse_completion_items(&json!(null)).is_empty());
+    fn parse_completion_items_none_returns_empty() {
+        assert!(parse_completion_items(None).is_empty());
     }
 
     #[test]
@@ -650,7 +661,7 @@ mod tests {
                 }
             }]
         });
-        let ranges = parse_file_progress(&params);
+        let ranges = file_progress_from_value(params);
         assert_eq!(ranges.len(), 1);
         assert_eq!(ranges[0].start_line, 1); // 0-indexed → 1-indexed
         assert_eq!(ranges[0].end_line, 11);
@@ -659,12 +670,13 @@ mod tests {
     #[test]
     fn parse_file_progress_multiple_ranges() {
         let params = json!({
+            "textDocument": { "uri": "file:///test.lean" },
             "processing": [
                 { "range": { "start": { "line": 0, "character": 0 }, "end": { "line": 5, "character": 0 } } },
                 { "range": { "start": { "line": 8, "character": 0 }, "end": { "line": 12, "character": 0 } } }
             ]
         });
-        let ranges = parse_file_progress(&params);
+        let ranges = file_progress_from_value(params);
         assert_eq!(ranges.len(), 2);
         assert_eq!(ranges[0].start_line, 1);
         assert_eq!(ranges[0].end_line, 6);
@@ -674,26 +686,11 @@ mod tests {
 
     #[test]
     fn parse_file_progress_empty_processing_returns_empty() {
-        let params = json!({ "processing": [] });
-        assert!(parse_file_progress(&params).is_empty());
-    }
-
-    #[test]
-    fn parse_file_progress_missing_processing_returns_empty() {
-        assert!(parse_file_progress(&json!({})).is_empty());
-    }
-
-    #[test]
-    fn parse_file_progress_skips_malformed_range() {
         let params = json!({
-            "processing": [
-                { "range": { "start": { "character": 0 }, "end": { "line": 5, "character": 0 } } },
-                { "range": { "start": { "line": 1, "character": 0 }, "end": { "line": 3, "character": 0 } } }
-            ]
+            "textDocument": { "uri": "file:///test.lean" },
+            "processing": []
         });
-        let ranges = parse_file_progress(&params);
-        assert_eq!(ranges.len(), 1, "malformed entry should be skipped");
-        assert_eq!(ranges[0].start_line, 2);
+        assert!(file_progress_from_value(params).is_empty());
     }
 
     #[test]
@@ -718,7 +715,7 @@ mod tests {
     fn parse_hover_markdown_preserves_docstring() {
         let raw = "```lean\ntheorem foo : True\n```\nDocumentation paragraph.";
         let result = json!({ "contents": { "kind": "markdown", "value": raw } });
-        let hover = parse_hover(&result).expect("hover should parse");
+        let hover = hover_from_value(result).expect("hover should parse");
         assert_eq!(hover.contents, raw);
         assert_eq!(hover.kind, HoverKind::Markdown);
     }
@@ -726,25 +723,20 @@ mod tests {
     #[test]
     fn parse_hover_plaintext_kind_roundtrips() {
         let result = json!({ "contents": { "kind": "plaintext", "value": "x : Nat" } });
-        let hover = parse_hover(&result).expect("hover should parse");
+        let hover = hover_from_value(result).expect("hover should parse");
         assert_eq!(hover.contents, "x : Nat");
         assert_eq!(hover.kind, HoverKind::Plaintext);
     }
 
     #[test]
-    fn parse_hover_null_returns_none() {
-        assert!(parse_hover(&Value::Null).is_none());
-    }
-
-    #[test]
-    fn parse_hover_missing_contents_returns_none() {
-        assert!(parse_hover(&json!({})).is_none());
+    fn parse_hover_none_returns_none() {
+        assert!(parse_hover(None).is_none());
     }
 
     #[test]
     fn parse_hover_bare_string_is_plaintext() {
         let result = json!({ "contents": "inline type" });
-        let hover = parse_hover(&result).expect("hover should parse");
+        let hover = hover_from_value(result).expect("hover should parse");
         assert_eq!(hover.contents, "inline type");
         assert_eq!(hover.kind, HoverKind::Plaintext);
     }
@@ -757,7 +749,7 @@ mod tests {
                 "Some docs"
             ]
         });
-        let hover = parse_hover(&result).expect("hover should parse");
+        let hover = hover_from_value(result).expect("hover should parse");
         assert_eq!(hover.kind, HoverKind::Markdown);
         assert!(hover.contents.contains("```lean\ntheorem foo : True\n```"));
         assert!(hover.contents.contains("Some docs"));
@@ -770,7 +762,7 @@ mod tests {
         // which renders as a fenced code block with language="one" and value="two".
         // This test documents that actual behavior.
         let result = json!({ "contents": ["lean", "theorem foo : True"] });
-        let hover = parse_hover(&result).expect("hover should parse");
+        let hover = hover_from_value(result).expect("hover should parse");
         assert_eq!(hover.kind, HoverKind::Markdown);
         assert!(hover.contents.contains("```lean\ntheorem foo : True\n```"));
     }
@@ -778,7 +770,7 @@ mod tests {
     #[test]
     fn parse_hover_empty_returns_none() {
         let result = json!({ "contents": { "kind": "markdown", "value": "" } });
-        assert!(parse_hover(&result).is_none());
+        assert!(hover_from_value(result).is_none());
     }
 
     // ── Definition parsing ─────────────────────────────────────────────
@@ -792,7 +784,7 @@ mod tests {
                 "end": { "line": 3, "character": 11 }
             }
         });
-        let def = parse_definition(&result).expect("definition should parse");
+        let def = definition_from_value(result).expect("definition should parse");
         assert_eq!(def.uri, "file:///home/user/proof.lean");
         assert_eq!(def.line, 3);
         assert_eq!(def.character, 8);
@@ -812,18 +804,19 @@ mod tests {
                 "range": { "start": { "line": 5, "character": 0 }, "end": { "line": 5, "character": 3 } }
             }
         ]);
-        let def = parse_definition(&result).expect("definition should parse");
+        let def = definition_from_value(result).expect("definition should parse");
         assert_eq!(def.uri, "file:///a.lean");
     }
 
     #[test]
-    fn parse_definition_null_returns_none() {
-        assert!(parse_definition(&Value::Null).is_none());
+    fn parse_definition_none_returns_none() {
+        assert!(parse_definition(None).is_none());
     }
 
     #[test]
     fn parse_definition_empty_array_returns_none() {
-        assert!(parse_definition(&json!([])).is_none());
+        let result = json!([]);
+        assert!(definition_from_value(result).is_none());
     }
 
     #[test]
@@ -843,7 +836,7 @@ mod tests {
                 "end": { "line": 1, "character": 18 }
             }
         }]);
-        let def = parse_definition(&result).expect("should parse LocationLink");
+        let def = definition_from_value(result).expect("should parse LocationLink");
         assert_eq!(def.uri, "file:///proof.lean");
         assert_eq!(def.line, 1);
         assert_eq!(def.character, 8);
@@ -866,7 +859,7 @@ mod tests {
                 "end": { "line": 5, "character": 10 }
             }
         }]);
-        let def = parse_definition(&result).expect("should parse LocationLink");
+        let def = definition_from_value(result).expect("should parse LocationLink");
         assert_eq!(def.uri, "file:///a.lean");
         assert_eq!(def.line, 5);
         assert_eq!(def.character, 2);
@@ -895,7 +888,7 @@ mod tests {
                 }
             }
         ]);
-        let actions = parse_code_actions(&result);
+        let actions = code_actions_from_value(result);
         assert_eq!(actions.len(), 1);
         assert_eq!(actions[0].title, "Try this: exact rfl");
         assert_eq!(actions[0].kind.as_deref(), Some("quickfix"));
@@ -917,16 +910,20 @@ mod tests {
                 "data": { "token": 42 }
             }
         ]);
-        let actions = parse_code_actions(&result);
+        let actions = code_actions_from_value(result);
         assert_eq!(actions.len(), 1);
         assert!(actions[0].edit.is_none());
         assert_eq!(actions[0].resolve_data, Some(json!({ "token": 42 })));
     }
 
     #[test]
-    fn parse_code_actions_empty_or_null_returns_empty() {
-        assert!(parse_code_actions(&json!([])).is_empty());
-        assert!(parse_code_actions(&Value::Null).is_empty());
+    fn parse_code_actions_empty_returns_empty() {
+        assert!(code_actions_from_value(json!([])).is_empty());
+    }
+
+    #[test]
+    fn parse_code_actions_none_returns_empty() {
+        assert!(parse_code_actions(None).is_empty());
     }
 
     #[test]
@@ -935,7 +932,7 @@ mod tests {
             { "command": "foo", "title": "a command" },
             { "title": "Real action" }
         ]);
-        let actions = parse_code_actions(&result);
+        let actions = code_actions_from_value(result);
         assert_eq!(actions.len(), 1);
         assert_eq!(actions[0].title, "Real action");
     }
@@ -970,7 +967,7 @@ mod tests {
                 }
             }
         ]);
-        let symbols = parse_document_symbols(&result);
+        let symbols = doc_symbols_from_value(result);
         assert_eq!(symbols.len(), 2);
         assert_eq!(symbols[0].name, "foo");
         assert_eq!(symbols[0].kind, 12);
@@ -1009,7 +1006,7 @@ mod tests {
                 ]
             }
         ]);
-        let symbols = parse_document_symbols(&result);
+        let symbols = doc_symbols_from_value(result);
         assert_eq!(symbols.len(), 1);
         assert_eq!(symbols[0].children.len(), 1);
         assert_eq!(symbols[0].children[0].name, "inner");
@@ -1017,8 +1014,8 @@ mod tests {
     }
 
     #[test]
-    fn parse_document_symbols_null_returns_empty() {
-        assert!(parse_document_symbols(&Value::Null).is_empty());
+    fn parse_document_symbols_none_returns_empty() {
+        assert!(parse_document_symbols(None).is_empty());
     }
 
     #[test]
@@ -1045,13 +1042,13 @@ mod tests {
                 ]
             }
         });
-        let ws = parse_workspace_edit(&edit).expect("parse");
+        let ws = workspace_edit_from_value(edit).expect("parse");
         assert_eq!(ws.changes.len(), 2);
     }
 
     #[test]
     fn parse_workspace_edit_missing_changes_returns_none() {
-        assert!(parse_workspace_edit(&json!({})).is_none());
+        assert!(workspace_edit_from_value(json!({})).is_none());
     }
 
     // ── Text edit parsing ──────────────────────────────────────────────
@@ -1065,7 +1062,7 @@ mod tests {
             },
             "newText": "hello"
         }]);
-        let edits = parse_text_edits(&result);
+        let edits = text_edits_from_value(result);
         assert_eq!(edits.len(), 1);
         assert_eq!(edits[0].start_line, 0);
         assert_eq!(edits[0].start_character, 4);
@@ -1086,7 +1083,7 @@ mod tests {
                 "newText": "  "
             }
         ]);
-        let edits = parse_text_edits(&result);
+        let edits = text_edits_from_value(result);
         assert_eq!(edits.len(), 2);
         assert_eq!(edits[0].new_text, "def");
         assert_eq!(edits[1].start_line, 1);
@@ -1095,12 +1092,12 @@ mod tests {
 
     #[test]
     fn parse_text_edits_empty_array_returns_empty() {
-        assert!(parse_text_edits(&json!([])).is_empty());
+        assert!(text_edits_from_value(json!([])).is_empty());
     }
 
     #[test]
-    fn parse_text_edits_null_returns_empty() {
-        assert!(parse_text_edits(&Value::Null).is_empty());
+    fn parse_text_edits_none_returns_empty() {
+        assert!(parse_text_edits(None).is_empty());
     }
 
     #[test]
@@ -1112,7 +1109,7 @@ mod tests {
             },
             "newText": "import Mathlib\n"
         }]);
-        let edits = parse_text_edits(&result);
+        let edits = text_edits_from_value(result);
         assert_eq!(edits.len(), 1);
         assert_eq!(edits[0].start_line, edits[0].end_line);
         assert_eq!(edits[0].start_character, edits[0].end_character);

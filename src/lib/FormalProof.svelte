@@ -74,6 +74,7 @@
 
   let unlistenProgress: (() => void) | undefined;
   let unlistenAnnotations: (() => void) | undefined;
+  let unlistenSessionLoaded: (() => void) | undefined;
 
   type LspPosition = { line: number; character: number };
   type ContentChange = {
@@ -143,11 +144,27 @@
         view.dispatch({ effects: setAnnotations.of(e.payload) });
       },
     );
+
+    unlistenSessionLoaded = await listen<{ proof_lean: string }>(
+      "session-loaded",
+      (e) => {
+        if (!view) return;
+        const newContent = e.payload.proof_lean;
+        const currentContent = view.state.doc.toString();
+        if (newContent === currentContent) return;
+        view.dispatch({
+          changes: { from: 0, to: view.state.doc.length, insert: newContent },
+          // Clear stale annotations from the previous document immediately.
+          effects: setAnnotations.of([]),
+        });
+      },
+    );
   });
 
   onDestroy(() => {
     unlistenProgress?.();
     unlistenAnnotations?.();
+    unlistenSessionLoaded?.();
     view?.destroy();
   });
 

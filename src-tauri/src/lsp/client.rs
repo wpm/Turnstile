@@ -1,606 +1,764 @@
-//! LSP client handle and lifecycle state machine.
+//! Lean LSP client built on `async-lsp`.
 //!
-//! [`LspClient`] owns the spawned `lean --server` process and provides the
-//! async API for sending JSON-RPC requests and notifications. The protocol
-//! lifecycle is tracked by [`LspLifecycle`], which follows the LSP 3.17 state
-//! diagram: `WaitingForInitialize` → `Initializing` → `Initialized` →
-//! `NormalOperation` → `ShuttingDown` → `ReadyToExit` → `Exited`.
-//!
-//! Guarded methods (`send_request_await`, `send_notification`) reject calls
-//! made from the wrong state. The `_unchecked` variants (crate-internal) bypass
-//! the guard for the initialization handshake, where the state is necessarily
-//! still `Initializing` or `Initialized`.
-//!
-//! The stdout reader runs on a dedicated OS thread (see [`LspClient::receive_messages`]).
-//! Responses to pending requests are routed back via per-request `mpsc` channels;
-//! all other messages (notifications, server→client requests) are dispatched to
-//! the caller-supplied callback.
+//! [`LeanClient`] owns the full lifetime of a `lean --server` process: it
+//! spawns the child, runs the initialization handshake, and provides a clean
+//! [`LeanClient::stop`] for the proper LSP teardown sequence. If the
+//! value is dropped without calling `shutdown`, the child is killed as a
+//! best-effort fallback via `kill_on_drop`.
 
-use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Write};
+use async_lsp::concurrency::ConcurrencyLayer;
+use async_lsp::lsp_types::{notification::Notification, request::Request};
+use async_lsp::lsp_types::{
+    ClientCapabilities, InitializeParams, InitializeResult, InitializedParams, Url, WorkspaceFolder,
+};
+use async_lsp::panic::CatchUnwindLayer;
+use async_lsp::router::Router;
+use async_lsp::tracing::TracingLayer;
+use async_lsp::{LanguageClient, LanguageServer, MainLoop, ResponseError, ServerSocket};
+use lsp_types::notification::{
+    DidChangeTextDocument, DidCloseTextDocument, DidOpenTextDocument, DidSaveTextDocument, Exit,
+};
+use lsp_types::request::{
+    CodeActionRequest, CodeActionResolveRequest, Completion, DocumentSymbolRequest, Formatting,
+    GotoDefinition, HoverRequest, SemanticTokensFullRequest, Shutdown,
+};
+use lsp_types::{
+    CodeAction, CodeActionClientCapabilities, CodeActionKindLiteralSupport,
+    CodeActionLiteralSupport, CodeActionParams, CodeActionResponse, CompletionClientCapabilities,
+    CompletionItemCapability, CompletionParams, CompletionResponse,
+    DocumentFormattingClientCapabilities, DocumentSymbolClientCapabilities, DocumentSymbolParams,
+    DocumentSymbolResponse, GotoCapability, GotoDefinitionParams, GotoDefinitionResponse, Hover,
+    HoverClientCapabilities, HoverParams, LogMessageParams, PublishDiagnosticsClientCapabilities,
+    PublishDiagnosticsParams, Range, SemanticTokensClientCapabilities,
+    SemanticTokensClientCapabilitiesRequests, SemanticTokensFullOptions, SemanticTokensParams,
+    SemanticTokensResult, SemanticTokensServerCapabilities, ShowMessageParams,
+    TextDocumentClientCapabilities, TextDocumentPositionParams, TextDocumentSyncClientCapabilities,
+};
+use lsp_types::{DocumentFormattingParams, TextEdit};
+use serde::{Deserialize, Serialize};
+use std::fmt;
+use std::future::Future;
+use std::ops::ControlFlow;
 use std::path::Path;
-use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicI64, Ordering};
-use std::sync::mpsc;
-use std::sync::{Arc, Mutex};
+use std::process::Stdio;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use thiserror::Error;
+use tokio::process::{Child, Command};
+use tokio::sync::mpsc;
+use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
+use tower::ServiceBuilder;
+use tracing::{debug, error, instrument, warn, Instrument};
 
-use log::{debug, error, warn};
-use serde_json::{json, Value};
+use crate::lsp::events::LspEvent;
 
-use super::{ack_request, LspError};
-
-/// Lifecycle states of the LSP protocol handshake.
-///
-/// Transitions follow the LSP 3.17 specification state diagram:
-///
-///   `WaitingForInitialize` → `Initializing` (initialize request sent)
-///   `Initializing` → `Initialized` (initialize response received)
-///   `Initialized` → `NormalOperation` (initialized notification sent)
-///   `NormalOperation` → `ShuttingDown` (shutdown request sent)
-///   `ShuttingDown` → `ReadyToExit` (shutdown response received)
-///   `ReadyToExit` → `Exited` (exit notification sent)
-///   any → `Error` (connection loss or protocol error)
-///   `Initializing` → `WaitingForInitialize` (initialize error, can retry)
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum LspLifecycle {
-    WaitingForInitialize,
-    Initializing,
-    /// `initialize` response received; `initialized` notification not yet sent.
-    Initialized,
-    NormalOperation,
-    ShuttingDown,
-    ReadyToExit,
-    Exited,
-    Error(String),
+/// Response type for the Lean `$/lean/plainGoal` extension request.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PlainGoal {
+    pub rendered: String,
 }
 
-impl std::fmt::Display for LspLifecycle {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::WaitingForInitialize => write!(f, "WaitingForInitialize"),
-            Self::Initializing => write!(f, "Initializing"),
-            Self::Initialized => write!(f, "Initialized"),
-            Self::NormalOperation => write!(f, "NormalOperation"),
-            Self::ShuttingDown => write!(f, "ShuttingDown"),
-            Self::ReadyToExit => write!(f, "ReadyToExit"),
-            Self::Exited => write!(f, "Exited"),
-            Self::Error(msg) => write!(f, "Error({msg})"),
-        }
+/// Custom request type for `$/lean/plainGoal`.
+pub enum LeanPlainGoal {}
+
+/// Response type for the Lean `$/lean/plainTermGoal` extension request.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PlainTermGoal {
+    pub goal: String,
+}
+
+/// Custom request type for `$/lean/plainTermGoal`.
+pub enum LeanPlainTermGoal {}
+
+impl Request for LeanPlainGoal {
+    type Params = TextDocumentPositionParams;
+    type Result = Option<PlainGoal>;
+    const METHOD: &'static str = "$/lean/plainGoal";
+}
+
+impl Request for LeanPlainTermGoal {
+    type Params = TextDocumentPositionParams;
+    type Result = Option<PlainTermGoal>;
+    const METHOD: &'static str = "$/lean/plainTermGoal";
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct FileProgressInterval {
+    pub range: Range,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct FileProgressParams {
+    #[serde(rename = "textDocument")]
+    pub text_document: lsp_types::TextDocumentIdentifier,
+    pub processing: Vec<FileProgressInterval>,
+}
+
+/// Custom notification type for `$/lean/fileProgress`.
+pub enum LeanFileProgress {}
+
+impl Notification for LeanFileProgress {
+    type Params = FileProgressParams;
+    const METHOD: &'static str = "$/lean/fileProgress";
+}
+
+/// Inbound half of the Lean LSP client.
+/// Handlers run on the `MainLoop` task when the server pushes messages.
+struct LeanListener {
+    tx: mpsc::Sender<LspEvent>,
+}
+
+impl LanguageClient for LeanListener {
+    type Error = ResponseError;
+    type NotifyResult = ControlFlow<async_lsp::Result<()>>;
+
+    fn semantic_tokens_refresh(
+        &mut self,
+        _params: <lsp_types::request::SemanticTokensRefresh as Request>::Params,
+    ) -> std::pin::Pin<Box<dyn Future<Output = async_lsp::Result<(), Self::Error>> + Send>> {
+        Box::pin(std::future::ready(Ok(())))
+    }
+
+    #[instrument(skip_all)]
+    fn show_message(&mut self, params: ShowMessageParams) -> Self::NotifyResult {
+        self.tx.try_send(LspEvent::ShowMessage(params)).ok();
+        ControlFlow::Continue(())
+    }
+
+    #[instrument(skip_all)]
+    fn log_message(&mut self, params: LogMessageParams) -> Self::NotifyResult {
+        self.tx.try_send(LspEvent::LogMessage(params)).ok();
+        ControlFlow::Continue(())
+    }
+
+    #[instrument(skip_all)]
+    fn publish_diagnostics(&mut self, params: PublishDiagnosticsParams) -> Self::NotifyResult {
+        self.tx.try_send(LspEvent::Diagnostics(params)).ok();
+        ControlFlow::Continue(())
     }
 }
 
-pub struct LspClient {
-    process: Child,
-    pub(crate) next_id: Arc<AtomicI64>,
-    /// Cloned by the reader thread and transport helpers to write messages without going
-    /// through `LspClient` (needed because the reader thread doesn't hold a client ref).
-    pub(crate) writer: Arc<tokio::sync::Mutex<Box<dyn Write + Send>>>,
-    token_types: Arc<Mutex<Vec<String>>>,
-    token_modifiers: Arc<Mutex<Vec<String>>>,
-    pub(crate) pending: Arc<Mutex<HashMap<i64, mpsc::SyncSender<Value>>>>,
-    lifecycle: LspLifecycle,
+const fn text_document_sync_caps() -> TextDocumentSyncClientCapabilities {
+    TextDocumentSyncClientCapabilities {
+        dynamic_registration: Some(false),
+        will_save: Some(false),
+        will_save_wait_until: Some(false),
+        did_save: Some(true),
+    }
 }
 
-impl LspClient {
-    fn new(process: Child, writer: impl Write + Send + 'static) -> Self {
-        Self {
-            process,
-            next_id: Arc::new(AtomicI64::new(1)),
-            writer: Arc::new(tokio::sync::Mutex::new(Box::new(writer))),
-            token_types: Arc::new(Mutex::new(Vec::new())),
-            token_modifiers: Arc::new(Mutex::new(Vec::new())),
-            pending: Arc::new(Mutex::new(HashMap::new())),
-            lifecycle: LspLifecycle::WaitingForInitialize,
-        }
+fn semantic_tokens_caps() -> SemanticTokensClientCapabilities {
+    use lsp_types::TokenFormat;
+    SemanticTokensClientCapabilities {
+        dynamic_registration: Some(false),
+        requests: SemanticTokensClientCapabilitiesRequests {
+            full: Some(SemanticTokensFullOptions::Bool(true)),
+            ..SemanticTokensClientCapabilitiesRequests::default()
+        },
+        token_types: vec![
+            "namespace".into(),
+            "type".into(),
+            "class".into(),
+            "enum".into(),
+            "interface".into(),
+            "struct".into(),
+            "typeParameter".into(),
+            "parameter".into(),
+            "variable".into(),
+            "property".into(),
+            "enumMember".into(),
+            "event".into(),
+            "function".into(),
+            "method".into(),
+            "macro".into(),
+            "keyword".into(),
+            "modifier".into(),
+            "comment".into(),
+            "string".into(),
+            "number".into(),
+            "regexp".into(),
+            "operator".into(),
+            "decorator".into(),
+        ],
+        token_modifiers: vec![
+            "declaration".into(),
+            "definition".into(),
+            "readonly".into(),
+            "static".into(),
+            "deprecated".into(),
+            "abstract".into(),
+            "async".into(),
+            "modification".into(),
+            "documentation".into(),
+            "defaultLibrary".into(),
+        ],
+        formats: vec![TokenFormat::RELATIVE],
+        multiline_token_support: Some(false),
+        overlapping_token_support: Some(false),
+        ..SemanticTokensClientCapabilities::default()
     }
+}
 
-    /// Spawn an LSP server process and return a client handle.
+fn text_document_caps() -> TextDocumentClientCapabilities {
+    use lsp_types::MarkupKind;
+    TextDocumentClientCapabilities {
+        synchronization: Some(text_document_sync_caps()),
+        publish_diagnostics: Some(PublishDiagnosticsClientCapabilities {
+            related_information: Some(true),
+            ..PublishDiagnosticsClientCapabilities::default()
+        }),
+        semantic_tokens: Some(semantic_tokens_caps()),
+        completion: Some(CompletionClientCapabilities {
+            completion_item: Some(CompletionItemCapability {
+                snippet_support: Some(false),
+                documentation_format: Some(vec![MarkupKind::PlainText]),
+                ..CompletionItemCapability::default()
+            }),
+            context_support: Some(false),
+            ..CompletionClientCapabilities::default()
+        }),
+        hover: Some(HoverClientCapabilities {
+            dynamic_registration: Some(false),
+            content_format: Some(vec![MarkupKind::Markdown, MarkupKind::PlainText]),
+        }),
+        definition: Some(GotoCapability {
+            dynamic_registration: Some(false),
+            link_support: Some(false),
+        }),
+        code_action: Some(CodeActionClientCapabilities {
+            dynamic_registration: Some(false),
+            resolve_support: Some(lsp_types::CodeActionCapabilityResolveSupport {
+                properties: vec!["edit".to_string()],
+            }),
+            code_action_literal_support: Some(CodeActionLiteralSupport {
+                code_action_kind: CodeActionKindLiteralSupport { value_set: vec![] },
+            }),
+            data_support: Some(true),
+            ..CodeActionClientCapabilities::default()
+        }),
+        document_symbol: Some(DocumentSymbolClientCapabilities {
+            dynamic_registration: Some(false),
+            hierarchical_document_symbol_support: Some(true),
+            ..DocumentSymbolClientCapabilities::default()
+        }),
+        formatting: Some(DocumentFormattingClientCapabilities {
+            dynamic_registration: Some(false),
+        }),
+        ..TextDocumentClientCapabilities::default()
+    }
+}
+
+fn full_client_capabilities() -> ClientCapabilities {
+    ClientCapabilities {
+        text_document: Some(text_document_caps()),
+        experimental: Some(serde_json::json!({ "plainGoal": true })),
+        ..ClientCapabilities::default()
+    }
+}
+
+/// Outbound half of the Lean LSP client.
+/// A running `lean --server` process with an established LSP connection.
+/// Send requests and notifications to the server through this.
+pub struct LeanClient {
+    socket: ServerSocket,
+    pub init_result: InitializeResult,
+    child: Child,
+    exit_expected: Arc<AtomicBool>,
+}
+
+impl LeanClient {
+    /// Spawn `lean --server`, run `initialize` + `initialized`, return a
+    /// connected `LeanClient`.
+    ///
+    /// * `lean_bin` — path to the `lean` executable.
+    /// * `cwd` — working directory for the child; should be the project root.
+    /// * `root_uri` — `file://` URL of the Lean project root.
+    /// * `event_tx` — channel for forwarding inbound server notifications.
     ///
     /// # Errors
-    /// Returns an error if the process cannot be spawned or its stdin cannot be captured.
-    pub fn spawn(command: &str, args: &[&str], cwd: &Path) -> Result<Self, LspError> {
-        debug!(
-            "Spawning LSP server: {command} {args:?} (cwd: {})",
-            cwd.display()
-        );
-
-        let mut child = Command::new(command)
-            .args(args)
+    ///
+    /// Returns `StartError` if spawning the child process fails, if the child
+    /// does not expose stdio pipes, or if the LSP `initialize` / `initialized`
+    /// handshake fails.
+    #[instrument(skip_all)]
+    pub async fn start(
+        lean_bin: &Path,
+        cwd: &Path,
+        root_uri: Url,
+        event_tx: mpsc::Sender<LspEvent>,
+    ) -> Result<Self, StartError> {
+        let mut child = Command::new(lean_bin)
+            .arg("--server")
             .current_dir(cwd)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .kill_on_drop(true)
             .spawn()
-            .map_err(|source| LspError::SpawnFailed {
-                command: command.to_string(),
-                source,
-            })?;
+            .map_err(StartError::Spawn)?;
 
-        let stdin = child.stdin.take().ok_or(LspError::StdinCaptureFailed)?;
+        let stdin = child
+            .stdin
+            .take()
+            .ok_or(StartError::MissingStdio)?
+            .compat_write();
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or(StartError::MissingStdio)?
+            .compat();
 
-        Ok(Self::new(child, stdin))
-    }
+        let exit_expected = Arc::new(AtomicBool::new(false));
 
-    /// Cloned `Arc` to the token type legend, for use outside the lock.
-    #[must_use]
-    pub fn token_types(&self) -> Arc<Mutex<Vec<String>>> {
-        self.token_types.clone()
-    }
-
-    /// Cloned `Arc` to the token modifier legend, for use outside the lock.
-    #[must_use]
-    pub fn token_modifiers(&self) -> Arc<Mutex<Vec<String>>> {
-        self.token_modifiers.clone()
-    }
-
-    /// Current lifecycle state.
-    #[must_use]
-    pub const fn lifecycle(&self) -> &LspLifecycle {
-        &self.lifecycle
-    }
-
-    /// Advance the lifecycle to a new state.
-    pub fn set_lifecycle(&mut self, state: LspLifecycle) {
-        self.lifecycle = state;
-    }
-
-    /// Send a JSON-RPC request and return the id used.
-    ///
-    /// # Errors
-    /// Returns an error if serialization or writing to the server fails.
-    pub async fn send_request(&self, method: &str, params: Value) -> Result<i64, LspError> {
-        self.ensure_normal_operation()?;
-        let id = self.next_id.fetch_add(1, Ordering::SeqCst);
-        let msg = json!({
-            "jsonrpc": "2.0",
-            "id": id,
-            "method": method,
-            "params": params,
-        });
-        self.send_message(&msg).await?;
-        Ok(id)
-    }
-
-    /// Send a JSON-RPC request and block until the response arrives.
-    /// Returns the `result` field of the response, or an error. Timeout: 10 seconds.
-    ///
-    /// # Errors
-    /// Returns an error if the request cannot be sent or the response times out.
-    pub async fn send_request_await(&self, method: &str, params: Value) -> Result<Value, LspError> {
-        self.ensure_normal_operation()?;
-        self.send_request_await_impl(method, params).await
-    }
-
-    /// Send a JSON-RPC notification (no id, no response expected).
-    ///
-    /// # Errors
-    /// Returns an error if serialization or writing to the server fails.
-    pub async fn send_notification(&self, method: &str, params: Value) -> Result<(), LspError> {
-        self.ensure_can_notify()?;
-        self.send_notification_impl(method, params).await
-    }
-
-    /// Send a request bypassing lifecycle guards. Used during the LSP initialization
-    /// handshake where the state is `Initializing`, not yet `NormalOperation`.
-    ///
-    /// # Errors
-    /// Returns an error if the request cannot be sent or the response times out.
-    pub(crate) async fn send_request_await_unchecked(
-        &self,
-        method: &str,
-        params: Value,
-    ) -> Result<Value, LspError> {
-        self.send_request_await_impl(method, params).await
-    }
-
-    /// Send a notification bypassing lifecycle guards. Used during the LSP initialization
-    /// handshake to send the `initialized` notification while still in `Initialized` state.
-    ///
-    /// # Errors
-    /// Returns an error if serialization or writing to the server fails.
-    pub(crate) async fn send_notification_unchecked(
-        &self,
-        method: &str,
-        params: Value,
-    ) -> Result<(), LspError> {
-        self.send_notification_impl(method, params).await
-    }
-
-    /// Receive messages from stdout in a blocking loop. Call from a spawned thread.
-    /// Routes responses to any registered pending senders; passes the rest to `on_message`.
-    pub fn receive_messages<F>(
-        stdout: std::process::ChildStdout,
-        pending: &Arc<Mutex<HashMap<i64, mpsc::SyncSender<Value>>>>,
-        mut on_message: F,
-    ) where
-        F: FnMut(&Value),
-    {
-        let mut reader = BufReader::new(stdout);
-
-        loop {
-            let mut content_length: usize = 0;
-            loop {
-                let mut line = String::new();
-                match reader.read_line(&mut line) {
-                    Ok(0) => {
-                        debug!("LSP server stdout closed");
-                        return;
-                    }
-                    Ok(_) => {
-                        let trimmed = line.trim();
-                        if trimmed.is_empty() {
-                            break;
-                        }
-                        if let Some(len_str) = trimmed.strip_prefix("Content-Length: ") {
-                            if let Ok(len) = len_str.parse::<usize>() {
-                                content_length = len;
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        error!("Error reading LSP stdout: {e}");
-                        return;
-                    }
-                }
-            }
-
-            if content_length == 0 {
-                warn!("Got LSP message with no Content-Length, skipping");
-                continue;
-            }
-
-            let mut body = vec![0u8; content_length];
-            if let Err(e) = std::io::Read::read_exact(&mut reader, &mut body) {
-                error!("Error reading LSP message body: {e}");
-                return;
-            }
-
-            match serde_json::from_slice::<Value>(&body) {
-                Ok(msg) => {
-                    debug!(
-                        "Client ← LSP\n{}",
-                        serde_json::to_string_pretty(&msg).unwrap_or_default()
-                    );
-
-                    if let Some(id_val) = msg.get("id") {
-                        if let Some(id) = id_val.as_i64() {
-                            let sender = pending.lock().ok().and_then(|mut p| p.remove(&id));
-                            if let Some(tx) = sender {
-                                let result = msg.get("result").cloned().unwrap_or(Value::Null);
-                                let _ = tx.send(result);
-                                continue;
-                            }
-                        }
-                    }
-
-                    on_message(&msg);
-                }
-                Err(e) => {
-                    warn!("Failed to parse LSP message: {e}");
-                }
-            }
-        }
-    }
-
-    /// Take stdout from the child process (can only be called once).
-    pub const fn take_stdout(&mut self) -> Option<std::process::ChildStdout> {
-        self.process.stdout.take()
-    }
-
-    /// Spawn the stdout reader thread, then perform the `initialize` / `initialized`
-    /// handshake. On success the client is in `NormalOperation` state.
-    ///
-    /// `on_notification` is called for every server-pushed message that is not a
-    /// response to a pending request. Use it to forward notifications to a channel.
-    ///
-    /// # Errors
-    /// Returns an error if stdout is unavailable or the handshake fails.
-    pub async fn initialize<F>(
-        &mut self,
-        root_uri: &str,
-        on_notification: F,
-    ) -> Result<Value, LspError>
-    where
-        F: FnMut(&Value) + Send + 'static,
-    {
-        let stdout = self.take_stdout().ok_or(LspError::StdinCaptureFailed)?;
-        let pending = self.pending.clone();
-        let writer = self.writer.clone();
-        let mut on_notification = on_notification;
-        std::thread::spawn(move || {
-            Self::receive_messages(stdout, &pending, move |msg| {
-                if msg.get("id").is_some() && msg.get("method").is_some() {
-                    ack_request(&writer, &msg["id"]).ok();
-                    return;
-                }
-                on_notification(msg);
-            });
-        });
-
-        self.set_lifecycle(LspLifecycle::Initializing);
-        let init_result = self
-            .send_request_await_unchecked("initialize", super::initialize_params(root_uri))
-            .await?;
-        self.set_lifecycle(LspLifecycle::Initialized);
-        self.send_notification_unchecked("initialized", json!({}))
-            .await?;
-        self.set_lifecycle(LspLifecycle::NormalOperation);
-        Ok(init_result)
-    }
-
-    async fn send_message(&self, msg: &Value) -> Result<(), LspError> {
-        debug!(
-            "Client → LSP\n{}",
-            serde_json::to_string_pretty(msg).unwrap_or_default()
-        );
-        let mut writer = self.writer.lock().await;
-        super::transport::write_framed_message(&mut *writer, msg)
-    }
-
-    async fn send_request_await_impl(
-        &self,
-        method: &str,
-        params: Value,
-    ) -> Result<Value, LspError> {
-        let (tx, rx) = mpsc::sync_channel::<Value>(1);
-        let id = self.next_id.fetch_add(1, Ordering::SeqCst);
-
-        {
-            let mut pending = self
-                .pending
-                .lock()
-                .map_err(|_| LspError::LockPoisoned { lock: "pending" })?;
-            pending.insert(id, tx);
-        }
-
-        let msg = json!({
-            "jsonrpc": "2.0",
-            "id": id,
-            "method": method,
-            "params": params,
-        });
-        self.send_message(&msg).await?;
-
-        let method_owned = method.to_owned();
-        tokio::task::spawn_blocking(move || {
-            rx.recv_timeout(std::time::Duration::from_secs(10))
-                .map_err(|_| LspError::Timeout {
-                    method: method_owned,
+        let (main_loop, mut socket) = MainLoop::new_client(|_server_socket| {
+            ServiceBuilder::new()
+                .layer(TracingLayer::default())
+                .layer(CatchUnwindLayer::default())
+                .layer(ConcurrencyLayer::default())
+                .service({
+                    let tx = event_tx.clone();
+                    let mut router = Router::from_language_client(LeanListener { tx });
+                    router.notification::<LeanFileProgress>(move |_, params| {
+                        event_tx.try_send(LspEvent::FileProgress(params)).ok();
+                        ControlFlow::Continue(())
+                    });
+                    router
                 })
-        })
-        .await?
-    }
-
-    async fn send_notification_impl(&self, method: &str, params: Value) -> Result<(), LspError> {
-        let msg = json!({
-            "jsonrpc": "2.0",
-            "method": method,
-            "params": params,
         });
-        self.send_message(&msg).await
-    }
 
-    fn ensure_normal_operation(&self) -> Result<(), LspError> {
-        if self.lifecycle == LspLifecycle::NormalOperation {
-            Ok(())
-        } else {
-            Err(LspError::InvalidState {
-                current: self.lifecycle.to_string(),
-                expected: "NormalOperation".to_string(),
-            })
-        }
-    }
-
-    /// Permits `Initialized` (for the `initialized` handshake notification) and `NormalOperation`.
-    fn ensure_can_notify(&self) -> Result<(), LspError> {
-        match self.lifecycle {
-            LspLifecycle::Initialized | LspLifecycle::NormalOperation => Ok(()),
-            _ => Err(LspError::InvalidState {
-                current: self.lifecycle.to_string(),
-                expected: "Initialized or NormalOperation".to_string(),
-            }),
-        }
-    }
-}
-
-// ── Shutdown ──────────────────────────────────────────────────────────
-
-impl LspClient {
-    /// Gracefully shut down the LSP server process.
-    ///
-    /// Sends a `shutdown` JSON-RPC request, waits briefly for the response,
-    /// then sends an `exit` notification and waits for the child to exit.
-    /// If the process doesn't exit within the timeout, it is killed.
-    ///
-    /// This is intentionally synchronous so it can be called from `Drop`.
-    pub fn shutdown(&mut self) {
-        debug!("Initiating LSP server shutdown");
-        self.lifecycle = LspLifecycle::ShuttingDown;
-
-        let id = self.next_id.fetch_add(1, Ordering::SeqCst);
-        let shutdown_msg = json!({
-            "jsonrpc": "2.0",
-            "id": id,
-            "method": "shutdown",
-            "params": null,
-        });
-        if let Err(e) = self.send_message_sync(&shutdown_msg) {
-            warn!("Failed to send shutdown request: {e}");
-        } else {
-            std::thread::sleep(std::time::Duration::from_secs(1));
-        }
-        self.lifecycle = LspLifecycle::ReadyToExit;
-
-        let exit_msg = json!({
-            "jsonrpc": "2.0",
-            "method": "exit",
-            "params": null,
-        });
-        if let Err(e) = self.send_message_sync(&exit_msg) {
-            warn!("Failed to send exit notification: {e}");
-        }
-        self.lifecycle = LspLifecycle::Exited;
-
-        if let Some(status) = self.process.try_wait().ok().flatten().or_else(|| {
-            std::thread::sleep(std::time::Duration::from_secs(1));
-            self.process.try_wait().ok().flatten()
-        }) {
-            if status.success() {
-                debug!("LSP server exited: {status}");
-            } else {
-                warn!("LSP server exited with error: {status}");
+        let expected = Arc::clone(&exit_expected);
+        tokio::spawn(
+            async move {
+                match main_loop.run_buffered(stdout, stdin).await {
+                    Ok(()) => debug!("lean --server exited"),
+                    Err(_) if expected.load(Ordering::Acquire) => {
+                        debug!("lean --server exited");
+                    }
+                    Err(err) => error!(%err, "lean --server exited with error"),
+                }
             }
-        } else {
-            warn!("LSP server did not exit in time, killing");
-            if let Err(e) = self.process.kill() {
-                warn!("Failed to kill LSP server: {e}");
-            } else {
-                let _ = self.process.wait();
-            }
-        }
-    }
-
-    fn send_message_sync(&self, msg: &Value) -> Result<(), LspError> {
-        debug!(
-            "Client → LSP\n{}",
-            serde_json::to_string_pretty(msg).unwrap_or_default()
+            .instrument(tracing::Span::current()),
         );
-        let mut writer = self
-            .writer
-            .try_lock()
-            .map_err(|_| LspError::WriterContended)?;
-        super::transport::write_framed_message(&mut *writer, msg)
+        debug!(pid = child.id().unwrap_or(0), "lean --server started");
+
+        let init_params = InitializeParams {
+            process_id: Some(std::process::id()),
+            workspace_folders: Some(vec![WorkspaceFolder {
+                uri: root_uri.clone(),
+                name: "turnstile".to_string(),
+            }]),
+            capabilities: full_client_capabilities(),
+            ..InitializeParams::default()
+        };
+
+        let init_result = socket
+            .initialize(init_params)
+            .await
+            .map_err(StartError::Initialize)?;
+
+        socket
+            .initialized(InitializedParams {})
+            .map_err(StartError::Initialized)?;
+        debug!(server_info = %DisplayServerInfo(init_result.server_info.as_ref()), "Language server initialized");
+
+        Ok(Self {
+            socket,
+            init_result,
+            child,
+            exit_expected,
+        })
+    }
+
+    /// Extract the semantic token type and modifier legends from the server's
+    /// `InitializeResult`. Returns `(types, modifiers)`.
+    #[must_use]
+    pub fn token_legend(&self) -> (Vec<String>, Vec<String>) {
+        fn extract(legend: &lsp_types::SemanticTokensLegend) -> (Vec<String>, Vec<String>) {
+            (
+                legend
+                    .token_types
+                    .iter()
+                    .map(|t| t.as_str().to_owned())
+                    .collect(),
+                legend
+                    .token_modifiers
+                    .iter()
+                    .map(|m| m.as_str().to_owned())
+                    .collect(),
+            )
+        }
+        match &self.init_result.capabilities.semantic_tokens_provider {
+            Some(SemanticTokensServerCapabilities::SemanticTokensOptions(o)) => extract(&o.legend),
+            Some(SemanticTokensServerCapabilities::SemanticTokensRegistrationOptions(o)) => {
+                extract(&o.semantic_tokens_options.legend)
+            }
+            None => (vec![], vec![]),
+        }
+    }
+
+    /// Perform the proper LSP shutdown sequence: `shutdown` request → `exit`
+    /// notification → wait for the process to exit.
+    ///
+    /// # Errors
+    ///
+    /// Returns `StopError` if the `shutdown` request, `exit` notification, or
+    /// the wait for the child process to exit fails.
+    #[instrument(skip_all)]
+    pub async fn stop(mut self) -> Result<(), StopError> {
+        self.shutdown().await.map_err(StopError::Shutdown)?;
+        self.exit().map_err(StopError::Exit)?;
+        self.child.wait().await?;
+        Ok(())
+    }
+
+    /// # Errors
+    ///
+    /// Returns an error if the notification could not be queued to the server.
+    #[instrument(skip_all)]
+    pub fn did_open(
+        &self,
+        params: <DidOpenTextDocument as Notification>::Params,
+    ) -> async_lsp::Result<()> {
+        self.notify::<DidOpenTextDocument>(params)
+    }
+
+    /// # Errors
+    ///
+    /// Returns an error if the notification could not be queued to the server.
+    #[instrument(skip_all)]
+    pub fn did_close(
+        &self,
+        params: <DidCloseTextDocument as Notification>::Params,
+    ) -> async_lsp::Result<()> {
+        self.notify::<DidCloseTextDocument>(params)
+    }
+
+    /// # Errors
+    ///
+    /// Returns an error if the notification could not be queued to the server.
+    #[instrument(skip_all)]
+    pub fn did_change(
+        &self,
+        params: <DidChangeTextDocument as Notification>::Params,
+    ) -> async_lsp::Result<()> {
+        self.notify::<DidChangeTextDocument>(params)
+    }
+
+    /// # Errors
+    ///
+    /// Returns an error if the notification could not be queued to the server.
+    #[instrument(skip_all)]
+    pub fn did_save(
+        &self,
+        params: <DidSaveTextDocument as Notification>::Params,
+    ) -> async_lsp::Result<()> {
+        self.notify::<DidSaveTextDocument>(params)
+    }
+
+    #[instrument(skip_all)]
+    pub fn hover(
+        &self,
+        params: HoverParams,
+    ) -> impl Future<Output = async_lsp::Result<Option<Hover>>> + use<'_> {
+        self.request::<HoverRequest>(params)
+    }
+
+    #[instrument(skip_all)]
+    pub fn completion(
+        &self,
+        params: CompletionParams,
+    ) -> impl Future<Output = async_lsp::Result<Option<CompletionResponse>>> + use<'_> {
+        self.request::<Completion>(params)
+    }
+
+    #[instrument(skip_all)]
+    pub fn definition(
+        &self,
+        params: GotoDefinitionParams,
+    ) -> impl Future<Output = async_lsp::Result<Option<GotoDefinitionResponse>>> + use<'_> {
+        self.request::<GotoDefinition>(params)
+    }
+
+    #[instrument(skip_all)]
+    pub fn code_action(
+        &self,
+        params: CodeActionParams,
+    ) -> impl Future<Output = async_lsp::Result<Option<CodeActionResponse>>> + use<'_> {
+        self.request::<CodeActionRequest>(params)
+    }
+
+    #[instrument(skip_all)]
+    pub fn resolve_code_action(
+        &self,
+        params: CodeAction,
+    ) -> impl Future<Output = async_lsp::Result<CodeAction>> + use<'_> {
+        self.request::<CodeActionResolveRequest>(params)
+    }
+
+    #[instrument(skip_all)]
+    pub fn document_symbol(
+        &self,
+        params: DocumentSymbolParams,
+    ) -> impl Future<Output = async_lsp::Result<Option<DocumentSymbolResponse>>> + use<'_> {
+        self.request::<DocumentSymbolRequest>(params)
+    }
+
+    #[instrument(skip_all)]
+    pub fn semantic_tokens_full(
+        &self,
+        params: SemanticTokensParams,
+    ) -> impl Future<Output = async_lsp::Result<Option<SemanticTokensResult>>> + use<'_> {
+        self.request::<SemanticTokensFullRequest>(params)
+    }
+
+    #[instrument(skip_all)]
+    pub fn plain_goal(
+        &self,
+        params: TextDocumentPositionParams,
+    ) -> impl Future<Output = async_lsp::Result<Option<PlainGoal>>> + use<'_> {
+        self.request::<LeanPlainGoal>(params)
+    }
+
+    #[instrument(skip_all)]
+    pub fn plain_term_goal(
+        &self,
+        params: TextDocumentPositionParams,
+    ) -> impl Future<Output = async_lsp::Result<Option<PlainTermGoal>>> + use<'_> {
+        self.request::<LeanPlainTermGoal>(params)
+    }
+
+    #[instrument(skip_all)]
+    pub fn formatting(
+        &self,
+        params: DocumentFormattingParams,
+    ) -> impl Future<Output = async_lsp::Result<Option<Vec<TextEdit>>>> + use<'_> {
+        self.request::<Formatting>(params)
+    }
+
+    #[instrument(skip_all)]
+    pub fn shutdown(&self) -> impl Future<Output = async_lsp::Result<()>> + use<'_> {
+        self.request::<Shutdown>(())
+    }
+
+    /// # Errors
+    ///
+    /// Returns an error if the `exit` notification could not be queued.
+    #[instrument(skip_all)]
+    pub fn exit(&self) -> async_lsp::Result<()> {
+        self.exit_expected.store(true, Ordering::Release);
+        self.notify::<Exit>(())
+    }
+
+    /// Send an LSP request and await the response.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request could not be sent or the server returned
+    /// an error response.
+    #[instrument(skip_all, fields(method = R::METHOD))]
+    pub async fn request<R>(&self, params: R::Params) -> async_lsp::Result<R::Result>
+    where
+        R: Request,
+        R::Params: Send,
+    {
+        self.socket.request::<R>(params).await
+    }
+
+    /// Send an LSP notification (fire-and-forget; queued asynchronously).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the notification could not be queued to the server.
+    #[instrument(skip_all, fields(method = N::METHOD))]
+    pub fn notify<N>(&self, params: N::Params) -> async_lsp::Result<()>
+    where
+        N: Notification,
+    {
+        self.socket.notify::<N>(params)
     }
 }
 
-impl Drop for LspClient {
-    fn drop(&mut self) {
-        self.shutdown();
+impl fmt::Display for LeanClient {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}",
+            DisplayServerInfo(self.init_result.server_info.as_ref())
+        )
     }
+}
+
+impl Drop for LeanClient {
+    fn drop(&mut self) {
+        // kill_on_drop(true) handles the actual kill; this log makes it visible
+        // when shutdown() wasn't called (e.g. a test panicked).
+        if self.child.id().is_some() {
+            warn!("LeanClient dropped without calling shutdown — killing child process");
+        }
+    }
+}
+
+struct DisplayServerInfo<'a>(Option<&'a lsp_types::ServerInfo>);
+
+impl fmt::Display for DisplayServerInfo<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            Some(info) => match &info.version {
+                Some(version) => write!(f, "{} {}", info.name, version),
+                None => write!(f, "{}", info.name),
+            },
+            None => write!(f, "<unknown server>"),
+        }
+    }
+}
+
+/// Errors that can occur while spawning Lean and running the initialization handshake.
+#[derive(Debug, Error)]
+pub enum StartError {
+    #[error("failed to spawn lean process: {0}")]
+    Spawn(#[source] std::io::Error),
+
+    #[error("lean child process did not expose stdin/stdout")]
+    MissingStdio,
+
+    #[error("initialize request failed: {0}")]
+    Initialize(#[source] async_lsp::Error),
+
+    #[error("initialized notification failed: {0}")]
+    Initialized(#[source] async_lsp::Error),
+}
+
+#[derive(Debug, Error)]
+pub enum StopError {
+    #[error("Shutdown failed: {0}")]
+    Shutdown(#[source] async_lsp::Error),
+
+    #[error("Exit failed: {0}")]
+    Exit(#[source] async_lsp::Error),
+
+    #[error("Wait for exit failed: {0}")]
+    Wait(#[from] std::io::Error),
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::BufRead;
-    use std::process::Stdio;
+    use std::path::PathBuf;
 
-    fn spawn_cat_client() -> LspClient {
-        LspClient::spawn("cat", &[], Path::new("/tmp")).expect("failed to spawn cat")
+    fn init_tracing() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .with_test_writer()
+            .try_init();
     }
 
-    fn extract_jsonrpc_messages(buf: &[u8]) -> Vec<Value> {
-        let mut msgs = Vec::new();
-        let mut cursor = std::io::Cursor::new(buf);
-        let mut reader = BufReader::new(&mut cursor);
+    #[tokio::test]
+    async fn spawns_and_initializes() {
+        init_tracing();
 
-        loop {
-            let mut content_length: Option<usize> = None;
-            loop {
-                let mut line = String::new();
-                match reader.read_line(&mut line) {
-                    Ok(0) | Err(_) => return msgs,
-                    Ok(_) => {
-                        let trimmed = line.trim();
-                        if trimmed.is_empty() {
-                            break;
-                        }
-                        if let Some(len_str) = trimmed.strip_prefix("Content-Length: ") {
-                            content_length = len_str.parse::<usize>().ok();
-                        }
-                    }
-                }
-            }
-            let Some(len) = content_length else {
-                return msgs;
-            };
-            let mut body = vec![0u8; len];
-            if std::io::Read::read_exact(&mut reader, &mut body).is_err() {
-                return msgs;
-            }
-            if let Ok(msg) = serde_json::from_slice::<Value>(&body) {
-                msgs.push(msg);
-            }
-        }
-    }
-
-    #[test]
-    fn lifecycle_starts_at_waiting_for_initialize() {
-        let client = spawn_cat_client();
-        assert_eq!(client.lifecycle(), &LspLifecycle::WaitingForInitialize);
-    }
-
-    #[test]
-    fn lifecycle_display() {
-        assert_eq!(LspLifecycle::NormalOperation.to_string(), "NormalOperation");
-        assert_eq!(
-            LspLifecycle::Error("oops".to_string()).to_string(),
-            "Error(oops)"
-        );
-    }
-
-    #[test]
-    fn shutdown_sends_shutdown_request_and_exit_notification() {
-        #[derive(Clone)]
-        struct BufWriter(Arc<Mutex<Vec<u8>>>);
-        impl Write for BufWriter {
-            fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {
-                self.0.lock().unwrap().extend_from_slice(data);
-                Ok(data.len())
-            }
-            fn flush(&mut self) -> std::io::Result<()> {
-                Ok(())
-            }
+        let lean = lean_bin();
+        if !lean.exists() {
+            eprintln!("skipping: lean not found at {}", lean.display());
+            return;
         }
 
-        let buf: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
+        let project = make_project();
+        let root_uri = Url::from_directory_path(project.path()).expect("file URL");
+        let (tx, _rx) = mpsc::channel(32);
 
-        let child = Command::new("cat")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .expect("failed to spawn cat");
-
-        let writer = BufWriter(Arc::clone(&buf));
-        let mut client = LspClient::new(child, writer);
-        client.lifecycle = LspLifecycle::NormalOperation;
-
-        client.shutdown();
-
-        let captured = buf.lock().unwrap();
-        let msgs = extract_jsonrpc_messages(&captured);
-        drop(captured);
+        let client = LeanClient::start(&lean, project.path(), root_uri, tx)
+            .await
+            .expect("start failed");
 
         assert!(
-            msgs.len() >= 2,
-            "Expected at least 2 messages (shutdown + exit), got {}: {msgs:?}",
-            msgs.len()
+            client.init_result.capabilities.text_document_sync.is_some(),
+            "expected text_document_sync capability"
         );
 
-        assert_eq!(msgs[0]["method"], "shutdown");
-        assert!(msgs[0].get("id").is_some(), "shutdown should have an id");
-
-        assert_eq!(msgs[1]["method"], "exit");
-        assert!(
-            msgs[1].get("id").is_none(),
-            "exit should be a notification (no id)"
-        );
-
-        assert_eq!(client.lifecycle(), &LspLifecycle::Exited);
+        client.stop().await.expect("Client stop failed");
     }
 
-    #[test]
-    fn drop_does_not_panic_when_process_already_dead() {
-        let mut client = spawn_cat_client();
-        let _ = client.process.kill();
-        let _ = client.process.wait();
-        drop(client);
+    #[tokio::test]
+    async fn opens_and_closes_conjunction() {
+        use async_lsp::lsp_types::{
+            DidCloseTextDocumentParams, DidOpenTextDocumentParams, TextDocumentIdentifier,
+            TextDocumentItem,
+        };
+
+        init_tracing();
+
+        let lean = lean_bin();
+        if !lean.exists() {
+            eprintln!("skipping: lean not found at {}", lean.display());
+            return;
+        }
+
+        let project = make_project();
+        let root_uri = Url::from_directory_path(project.path()).expect("root URL");
+
+        let file_path = copy_fixture(project.path(), "01_conjunction.lean");
+        let file_uri = Url::from_file_path(&file_path).expect("file URL");
+        let text = std::fs::read_to_string(&file_path).expect("read fixture");
+
+        let (tx, _rx) = mpsc::channel(32);
+        let client = LeanClient::start(&lean, project.path(), root_uri, tx)
+            .await
+            .expect("start failed");
+
+        client
+            .did_open(DidOpenTextDocumentParams {
+                text_document: TextDocumentItem {
+                    uri: file_uri.clone(),
+                    language_id: "lean".to_string(),
+                    version: 1,
+                    text,
+                },
+            })
+            .expect("didOpen notification");
+
+        client
+            .did_close(DidCloseTextDocumentParams {
+                text_document: TextDocumentIdentifier { uri: file_uri },
+            })
+            .expect("didClose notification");
+
+        client.stop().await.expect("Client stop failed");
     }
 
-    #[test]
-    fn drop_does_not_panic_on_normal_client() {
-        let client = spawn_cat_client();
-        drop(client);
+    /// Absolute path to the fixtures directory (resolved at compile time).
+    const FIXTURES_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures");
+
+    /// Copy a fixture into `project_dir` and return the destination path.
+    fn copy_fixture(project_dir: &Path, fixture: &str) -> PathBuf {
+        let src = PathBuf::from(FIXTURES_DIR).join(fixture);
+        let dst = project_dir.join(fixture);
+        std::fs::copy(&src, &dst)
+            .unwrap_or_else(|e| panic!("copy {} -> {}: {}", src.display(), dst.display(), e));
+        dst
+    }
+
+    /// Locate a `lean` binary: prefer `TURNSTILE_LSP_CMD`, fall back to `~/.elan/bin/lean`.
+    fn lean_bin() -> PathBuf {
+        if let Ok(p) = std::env::var("TURNSTILE_LSP_CMD") {
+            return PathBuf::from(p);
+        }
+        let home = std::env::var("HOME").expect("HOME not set");
+        let mut p = PathBuf::from(home);
+        p.push(".elan/bin/lean");
+        if cfg!(windows) {
+            p.set_extension("exe");
+        }
+        p
+    }
+
+    /// Create a throwaway Lean project directory with a pinned toolchain.
+    fn make_project() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(
+            dir.path().join("lean-toolchain"),
+            "leanprover/lean4:v4.29.0\n",
+        )
+        .expect("write lean-toolchain");
+        dir
     }
 }

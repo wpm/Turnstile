@@ -162,6 +162,18 @@ impl MockBackend {
 
 #[async_trait]
 impl Llm for MockBackend {
+    async fn complete(
+        &self,
+        _system_prompt: &str,
+        user_content: &str,
+        _model: &str,
+        app: &AppHandle,
+    ) -> Result<Turn, LlmError> {
+        let turn = Turn::assistant(format!("[echo] {user_content}"));
+        app.emit(STREAM_DONE_EVENT, ()).ok();
+        Ok(turn)
+    }
+
     async fn send_with_tools(
         &self,
         _system_prompt: &str,
@@ -197,18 +209,6 @@ impl Llm for MockBackend {
 
         app.emit(STREAM_DONE_EVENT, ()).ok();
         app.emit(COMPLETE_EVENT, &turn).ok();
-        Ok(turn)
-    }
-
-    async fn complete(
-        &self,
-        _system_prompt: &str,
-        user_content: &str,
-        _model: &str,
-        app: &AppHandle,
-    ) -> Result<Turn, LlmError> {
-        let turn = Turn::assistant(format!("[echo] {user_content}"));
-        app.emit(STREAM_DONE_EVENT, ()).ok();
         Ok(turn)
     }
 }
@@ -297,7 +297,7 @@ impl AnthropicBackend {
         let mut stop_reason = String::new();
         let mut buf = String::new();
 
-        // Tool use accumulation: block index → (id, name, accumulated input json string).
+        // Tool use accumulation: block index → (id, name, accumulated input JSON string).
         // BTreeMap preserves insertion order by key, which matches the Anthropic stream's
         // monotonically increasing `index` values.  The API requires tool_result blocks to
         // appear in the same order as the corresponding tool_use blocks.
@@ -414,6 +414,27 @@ impl AnthropicBackend {
 #[cfg(not(feature = "mock-llm"))]
 #[async_trait]
 impl Llm for AnthropicBackend {
+    async fn complete(
+        &self,
+        system_prompt: &str,
+        user_content: &str,
+        model: &str,
+        app: &AppHandle,
+    ) -> Result<Turn, LlmError> {
+        if self.api_key.is_empty() {
+            return Err(LlmError(
+                "ANTHROPIC_API_KEY is not set. Please set it and restart.".to_string(),
+            ));
+        }
+
+        let messages = vec![serde_json::json!({ "role": "user", "content": user_content })];
+        let (_stop_reason, text, _tool_calls) = self
+            .stream_request(system_prompt, &messages, &[], model, app)
+            .await?;
+
+        Ok(Turn::assistant(text))
+    }
+
     async fn send_with_tools(
         &self,
         system_prompt: &str,
@@ -507,27 +528,6 @@ impl Llm for AnthropicBackend {
         app.emit(STREAM_DONE_EVENT, ()).ok();
         app.emit(COMPLETE_EVENT, &turn).ok();
         Ok(turn)
-    }
-
-    async fn complete(
-        &self,
-        system_prompt: &str,
-        user_content: &str,
-        model: &str,
-        app: &AppHandle,
-    ) -> Result<Turn, LlmError> {
-        if self.api_key.is_empty() {
-            return Err(LlmError(
-                "ANTHROPIC_API_KEY is not set. Please set it and restart.".to_string(),
-            ));
-        }
-
-        let messages = vec![serde_json::json!({ "role": "user", "content": user_content })];
-        let (_stop_reason, text, _tool_calls) = self
-            .stream_request(system_prompt, &messages, &[], model, app)
-            .await?;
-
-        Ok(Turn::assistant(text))
     }
 }
 

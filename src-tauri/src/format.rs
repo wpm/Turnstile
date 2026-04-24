@@ -478,7 +478,7 @@ mod tests {
 
     #[test]
     fn t40_unicode_in_plain_text_passes_through() {
-        // Multi-byte UTF-8 chars must not be corrupted by byte-level scanning.
+        // Byte-level scanning must not corrupt multi-byte UTF-8 chars.
         assert_eq!(parse("αβγ"), vec![plain("αβγ")]);
     }
 

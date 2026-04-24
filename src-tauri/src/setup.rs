@@ -12,7 +12,7 @@ use tauri::{AppHandle, Emitter};
 use tokio::io::AsyncBufReadExt;
 use tokio::process::Command;
 
-use log::info;
+use tracing::info;
 
 // ── Constants ─────────────────────────────────────────────────────────
 

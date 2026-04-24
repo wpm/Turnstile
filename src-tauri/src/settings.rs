@@ -96,7 +96,7 @@ pub fn save_settings_to_disk(settings: &Settings, app_data_dir: &Path) -> Result
 
 // ── Tauri commands ────────────────────────────────────────────────────
 
-/// Return the current settings from app state.
+/// Return the current settings from the app state.
 ///
 /// # Errors
 ///
@@ -108,7 +108,7 @@ pub async fn get_settings(app: tauri::AppHandle) -> Result<Settings, String> {
     Ok(s)
 }
 
-/// Persist new settings to disk and update app state.
+/// Persist new settings to disk and update the app state.
 ///
 /// # Errors
 ///

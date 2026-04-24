@@ -107,7 +107,7 @@
   }
 
   let leftWidth = $state(50); // percent
-  let topHeight = $state(50); // percent of left column
+  let topHeight = $state(50); // percentage of left column
 
   let draggingVertical = $state(false);
   let draggingHorizontal = $state(false);

@@ -64,19 +64,29 @@
 }
 
 .cm-tok-keyword              { color: var(--cm-tok-keyword); }
-.cm-tok-function             { color: var(--cm-tok-function); }
+.cm-tok-function,
+.cm-tok-method,
+.cm-tok-macro                { color: var(--cm-tok-function); }
 .cm-tok-type,
 .cm-tok-class,
 .cm-tok-struct,
 .cm-tok-enum,
-.cm-tok-interface            { color: var(--cm-tok-type); }
+.cm-tok-interface,
+.cm-tok-typeParameter        { color: var(--cm-tok-type); }
 .cm-tok-variable,
-.cm-tok-parameter            { color: var(--cm-tok-variable); }
+.cm-tok-parameter,
+.cm-tok-property,
+.cm-tok-enumMember           { color: var(--cm-tok-variable); }
+.cm-tok-modifier             { color: var(--cm-tok-keyword); }
 .cm-tok-comment              { color: var(--cm-tok-comment); font-style: italic; }
 .cm-tok-string               { color: var(--cm-tok-string); }
 .cm-tok-number               { color: var(--cm-tok-number); }
 .cm-tok-operator             { color: var(--cm-tok-operator); }
 .cm-tok-namespace            { color: var(--cm-tok-namespace); }
+.cm-tok-event,
+.cm-tok-regexp,
+.cm-tok-decorator,
+.cm-tok-unknown              { color: var(--cm-tok-variable); }
 
 /* ── LSP diagnostic underlines ───────────────────────────────────────── */
 .cm-diag-error   { text-decoration: underline wavy var(--cm-diag-error); }

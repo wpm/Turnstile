@@ -22,16 +22,15 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use serde_json::json;
 use tauri::{AppHandle, Emitter, Manager};
 
 use lsp::{
-    CodeActionInfo, CompletionItem, DefinitionLocation, DocumentSymbolInfo, HoverInfo, LspClient,
-    LspError, LspNotification, LspStatus, WorkspaceEditDto,
+    CodeActionInfo, CompletionItem, DefinitionLocation, DocumentSymbolInfo, HoverInfo, LeanClient,
+    LspStatus, WorkspaceEditDto,
 };
 
 pub struct AppState {
-    pub lsp_client: Arc<tokio::sync::Mutex<Option<LspClient>>>,
+    pub lsp_client: Arc<tokio::sync::Mutex<Option<LeanClient>>>,
     /// Absolute path to the managed Lean project directory
     project_path: PathBuf,
     /// Document version counter (starts at 2; didOpen uses version 1)
@@ -62,15 +61,16 @@ pub struct AppState {
     /// `$/lean/fileProgress` event, so that a stale background refresh task
     /// does not overwrite the panel with old data.
     pub goal_state_seq: Arc<AtomicU64>,
+    /// Semantic token type legend from the server's `InitializeResult`.
+    pub token_types: Arc<Mutex<Vec<String>>>,
+    /// Semantic token modifier legend from the server's `InitializeResult`.
+    pub token_modifiers: Arc<Mutex<Vec<String>>>,
 }
 
 impl AppState {
-    pub(crate) fn doc_uri(&self) -> String {
-        lsp::path_to_file_uri(&self.project_path.join("Proof.lean"))
-    }
-
-    fn root_uri(&self) -> String {
-        lsp::path_to_file_uri(&self.project_path)
+    fn doc_uri(&self) -> Result<lsp_types::Url, String> {
+        lsp_types::Url::from_file_path(self.project_path.join("Proof.lean"))
+            .map_err(|()| "invalid doc path".to_string())
     }
 }
 
@@ -149,12 +149,6 @@ fn apply_content_changes(source: &mut String, changes: &[ContentChange]) {
     }
 }
 
-#[derive(Clone, serde::Serialize)]
-struct LspShowMessage {
-    severity: &'static str, // "error" | "warning" | "info" | "log"
-    message: String,
-}
-
 #[tauri::command]
 #[allow(clippy::needless_pass_by_value)]
 fn parse_formatted_input(text: String) -> Vec<format::Span> {
@@ -199,105 +193,104 @@ async fn get_lsp_ready(app: AppHandle) -> bool {
 
 #[tauri::command]
 async fn start_lsp(app: AppHandle) -> Result<(), String> {
+    use lsp_types::{DidOpenTextDocumentParams, TextDocumentItem, Url};
+    use tokio::sync::mpsc;
+
     let state = app.state::<AppState>();
 
-    let lean_cmd = setup::lean_bin();
-    let lean_str = lean_cmd.to_string_lossy().to_string();
-
-    let args_str = std::env::var("TURNSTILE_LSP_ARGS").unwrap_or_else(|_| "--server".to_string());
-    let args: Vec<String> = args_str.split_whitespace().map(String::from).collect();
-    let args_refs: Vec<&str> = args.iter().map(String::as_str).collect();
-
-    let mut client = LspClient::spawn(&lean_str, &args_refs, &state.project_path)?;
+    let lean_bin = setup::lean_bin();
+    let root_uri = Url::from_directory_path(&state.project_path)
+        .map_err(|()| "invalid project path".to_string())?;
 
     app.emit(
         "lsp-status",
         LspStatus {
             state: String::new(),
-            message: format!("initializing ({lean_str})..."),
+            message: format!("initializing ({})...", lean_bin.display()),
         },
     )
     .ok();
 
-    let token_types = client.token_types();
-    let token_modifiers = client.token_modifiers();
-    let pending = client.pending.clone();
-    let writer = client.writer.clone();
-    let next_id = client.next_id.clone();
-    let stdout = client.take_stdout().ok_or("Failed to take LSP stdout")?;
-    let app_handle = app.clone();
+    let (event_tx, event_rx) = mpsc::channel(64);
 
-    std::thread::spawn(move || {
-        LspClient::receive_messages(stdout, &pending, |msg| {
-            handle_lsp_message(
-                &app_handle,
-                &token_types,
-                &token_modifiers,
-                &writer,
-                &next_id,
-                msg,
-            );
-        });
+    tauri::async_runtime::spawn(lsp::events::forward_lsp_events(event_rx, app.clone()));
 
-        app_handle
-            .emit(
-                "lsp-status",
-                LspStatus {
-                    state: "error".to_string(),
-                    message: "server disconnected".to_string(),
-                },
-            )
-            .ok();
-    });
-
-    let root_uri = state.root_uri();
-    client.set_lifecycle(lsp::LspLifecycle::Initializing);
-    let init_result = client
-        .send_request_await_unchecked("initialize", lsp::initialize_params(&root_uri))
+    let client = LeanClient::start(&lean_bin, &state.project_path, root_uri, event_tx)
         .await
-        .map_err(|e| format!("LSP initialize failed: {e}"))?;
-    client.set_lifecycle(lsp::LspLifecycle::Initialized);
+        .map_err(|e| format!("LSP start failed: {e}"))?;
 
-    handle_initialize_response(
-        &app,
-        &client.token_types(),
-        &client.token_modifiers(),
-        &init_result,
-    );
-
+    let (types, modifiers) = client.token_legend();
+    tracing::debug!("LSP token legend: types={types:?}");
     {
-        let mut lock = state.lsp_client.lock().await;
-        *lock = Some(client);
-        if let Some(client) = lock.as_mut() {
-            client
-                .send_notification_unchecked("initialized", json!({}))
-                .await?;
-            client.set_lifecycle(lsp::LspLifecycle::NormalOperation);
-            let doc_uri = state.doc_uri();
-            client
-                .send_notification(
-                    "textDocument/didOpen",
-                    json!({
-                        "textDocument": {
-                            "uri": doc_uri,
-                            "languageId": "lean4",
-                            "version": 1,
-                            "text": "",
-                        }
-                    }),
-                )
-                .await?;
-        }
+        *state.token_types.lock().unwrap() = types;
+        *state.token_modifiers.lock().unwrap() = modifiers;
     }
+
+    app.emit(
+        "lsp-status",
+        LspStatus {
+            state: "connected".to_string(),
+            message: "connected".to_string(),
+        },
+    )
+    .ok();
+
+    let doc_uri = state.doc_uri()?;
+
+    client
+        .did_open(DidOpenTextDocumentParams {
+            text_document: TextDocumentItem {
+                uri: doc_uri,
+                language_id: "lean4".to_string(),
+                version: 1,
+                text: String::new(),
+            },
+        })
+        .map_err(|e| e.to_string())?;
+
+    *state.lsp_client.lock().await = Some(client);
 
     Ok(())
 }
 
+/// Decode semantic tokens and spawn a background task to update proof annotations.
+fn apply_semantic_tokens(app: &AppHandle, tokens: &lsp_types::SemanticTokens) {
+    let state = app.state::<AppState>();
+    let type_guard = state
+        .token_types
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mod_guard = state
+        .token_modifiers
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let decoded = lsp::decode_semantic_tokens(&tokens.data, &type_guard, &mod_guard);
+    drop(type_guard);
+    drop(mod_guard);
+    let proof = state.proof.clone();
+    let app_handle = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let items = {
+            let mut guard = proof.lock().await;
+            guard.annotations.set_tokens(&decoded);
+            guard.annotations.items.clone()
+        };
+        app_handle
+            .emit(proof::ANNOTATIONS_UPDATED_EVENT, &items)
+            .ok();
+    });
+}
+
 #[tauri::command]
 async fn update_document(app: AppHandle, changes: Vec<ContentChange>) -> Result<(), String> {
+    use lsp_types::{
+        DidChangeTextDocumentParams, SemanticTokensParams, TextDocumentContentChangeEvent,
+        TextDocumentIdentifier, VersionedTextDocumentIdentifier,
+    };
+
     let state = app.state::<AppState>();
-    let doc_uri = state.doc_uri();
-    let version = state.doc_version.fetch_add(1, Ordering::SeqCst);
+    let version =
+        i32::try_from(state.doc_version.fetch_add(1, Ordering::SeqCst)).unwrap_or(i32::MAX);
 
     // Apply incremental changes to the stored source so `read_lean_source` stays in sync.
     {
@@ -308,28 +301,35 @@ async fn update_document(app: AppHandle, changes: Vec<ContentChange>) -> Result<
     // Invalidate any in-flight goal-state refresh task spawned before this edit.
     state.goal_state_seq.fetch_add(1, Ordering::SeqCst);
 
-    // Clone the client Arc so we can release the lock before the semantic token request.
     let client_arc = {
         let lock = state.lsp_client.lock().await;
         lock.as_ref().map(|_| state.lsp_client.clone())
     };
 
     let Some(client_arc) = client_arc else {
-        log::warn!("update_document: LSP client not connected; edit will not be sent to server");
+        tracing::warn!(
+            "update_document: LSP client not connected; edit will not be sent to server"
+        );
         return Ok(());
     };
 
-    // Build the contentChanges array for didChange (incremental sync, change kind 2).
-    let content_changes: Vec<serde_json::Value> = changes
+    let doc_uri = state.doc_uri()?;
+
+    let content_changes: Vec<TextDocumentContentChangeEvent> = changes
         .iter()
-        .map(|c| {
-            json!({
-                "range": {
-                    "start": { "line": c.range.start.line, "character": c.range.start.character },
-                    "end":   { "line": c.range.end.line,   "character": c.range.end.character   },
+        .map(|c| TextDocumentContentChangeEvent {
+            range: Some(lsp_types::Range {
+                start: lsp_types::Position {
+                    line: c.range.start.line,
+                    character: c.range.start.character,
                 },
-                "text": c.text,
-            })
+                end: lsp_types::Position {
+                    line: c.range.end.line,
+                    character: c.range.end.character,
+                },
+            }),
+            range_length: None,
+            text: c.text.clone(),
         })
         .collect();
 
@@ -337,30 +337,38 @@ async fn update_document(app: AppHandle, changes: Vec<ContentChange>) -> Result<
         let lock = client_arc.lock().await;
         if let Some(client) = lock.as_ref() {
             client
-                .send_notification(
-                    "textDocument/didChange",
-                    json!({
-                        "textDocument": { "uri": doc_uri, "version": version },
-                        "contentChanges": content_changes,
-                    }),
-                )
-                .await?;
+                .did_change(DidChangeTextDocumentParams {
+                    text_document: VersionedTextDocumentIdentifier {
+                        uri: doc_uri.clone(),
+                        version,
+                    },
+                    content_changes,
+                })
+                .map_err(|e| e.to_string())?;
         }
     }
 
-    // Request semantic tokens separately, outside the didChange lock scope,
-    // so concurrent `$/lean/plainGoal` calls from the goal-state refresh task
-    // are not blocked.
-    {
+    // Request semantic tokens outside the didChange lock so concurrent plainGoal
+    // calls from the goal-state refresh task are not blocked.
+    let tokens_result = {
         let lock = client_arc.lock().await;
         if let Some(client) = lock.as_ref() {
             client
-                .send_request(
-                    "textDocument/semanticTokens/full",
-                    json!({ "textDocument": { "uri": doc_uri } }),
-                )
-                .await?;
+                .semantic_tokens_full(SemanticTokensParams {
+                    text_document: TextDocumentIdentifier { uri: doc_uri },
+                    work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
+                    partial_result_params: lsp_types::PartialResultParams::default(),
+                })
+                .await
+                .ok()
+                .flatten()
+        } else {
+            None
         }
+    };
+
+    if let Some(lsp_types::SemanticTokensResult::Tokens(tokens)) = tokens_result {
+        apply_semantic_tokens(&app, &tokens);
     }
 
     Ok(())
@@ -485,31 +493,30 @@ fn spawn_prose_regeneration(app: AppHandle, seq: u64) {
 /// the entire Formal Proof. Independent of cursor position.
 #[allow(clippy::significant_drop_tightening)] // lock must be held while awaiting on client
 async fn fetch_full_proof_goal_state(state: &AppState) -> Result<String, String> {
+    use lsp_types::{Position, TextDocumentIdentifier, TextDocumentPositionParams};
+
     let source = state.proof.lock().await.formal.source.clone();
     let (line, col) = end_of_document_position(&source);
 
     let lock = state.lsp_client.lock().await;
     let Some(client) = lock.as_ref() else {
-        return Err(LspError::NotConnected.into());
+        return Err("LSP not connected".to_string());
     };
 
-    let doc_uri = state.doc_uri();
-    let result = client
-        .send_request_await(
-            "$/lean/plainGoal",
-            json!({
-                "textDocument": { "uri": doc_uri },
-                "position": { "line": line, "character": col },
-            }),
-        )
-        .await?;
+    let doc_uri = state.doc_uri()?;
 
-    let rendered = result
-        .get("rendered")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-    Ok(rendered)
+    let result = client
+        .plain_goal(TextDocumentPositionParams {
+            text_document: TextDocumentIdentifier { uri: doc_uri },
+            position: Position {
+                line,
+                character: col,
+            },
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(result.map(|g| g.rendered).unwrap_or_default())
 }
 
 /// Spawn a background task that, after a short debounce, fetches the
@@ -571,57 +578,67 @@ fn end_of_document_position(source: &str) -> (u32, u32) {
     )
 }
 
-/// Send an LSP request and return the raw JSON response.
-///
-/// Returns `Ok(None)` if the LSP client is not connected — callers should
-/// treat this as "no data" and return their type's empty/None default. This
-/// consolidates the lock-check-send pattern used by every LSP Tauri command.
-#[allow(clippy::significant_drop_tightening)] // lock must be held while awaiting on client
-async fn call_lsp_raw(
-    state: &AppState,
-    method: &str,
-    params: serde_json::Value,
-) -> Result<Option<serde_json::Value>, String> {
-    let lock = state.lsp_client.lock().await;
-    let Some(client) = lock.as_ref() else {
-        return Ok(None);
-    };
-    let result = client.send_request_await(method, params).await?;
-    Ok(Some(result))
-}
-
-/// Build the `{ "textDocument": { "uri": … }, "position": { … } }` params
-/// shared by most `textDocument/*` requests.
-fn text_document_position_params(doc_uri: &str, line: u32, character: u32) -> serde_json::Value {
-    json!({
-        "textDocument": { "uri": doc_uri },
-        "position": { "line": line, "character": character },
-    })
-}
-
 #[tauri::command]
 async fn get_completions(
     app: AppHandle,
     line: u32,
     col: u32,
 ) -> Result<Vec<CompletionItem>, String> {
+    use lsp_types::{
+        CompletionContext, CompletionParams, CompletionTriggerKind, Position,
+        TextDocumentIdentifier,
+    };
+
     let state = app.state::<AppState>();
-    let params = text_document_position_params(&state.doc_uri(), line, col);
-    Ok(call_lsp_raw(&state, "textDocument/completion", params)
-        .await?
-        .as_ref()
-        .map(lsp::parse_completion_items)
-        .unwrap_or_default())
+    let lock = state.lsp_client.lock().await;
+    let Some(client) = lock.as_ref() else {
+        return Ok(Vec::new());
+    };
+    let doc_uri = state.doc_uri()?;
+    let raw = client
+        .completion(CompletionParams {
+            text_document_position: lsp_types::TextDocumentPositionParams {
+                text_document: TextDocumentIdentifier { uri: doc_uri },
+                position: Position {
+                    line,
+                    character: col,
+                },
+            },
+            work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
+            partial_result_params: lsp_types::PartialResultParams::default(),
+            context: Some(CompletionContext {
+                trigger_kind: CompletionTriggerKind::INVOKED,
+                trigger_character: None,
+            }),
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+    drop(lock);
+    Ok(lsp::parse_completion_items(raw))
 }
 
 #[tauri::command]
 async fn lsp_hover(app: AppHandle, line: u32, character: u32) -> Result<Option<HoverInfo>, String> {
+    use lsp_types::{HoverParams, Position, TextDocumentIdentifier};
+
     let state = app.state::<AppState>();
-    let params = text_document_position_params(&state.doc_uri(), line, character);
-    Ok(call_lsp_raw(&state, "textDocument/hover", params)
-        .await?
-        .as_ref()
-        .and_then(lsp::parse_hover))
+    let lock = state.lsp_client.lock().await;
+    let Some(client) = lock.as_ref() else {
+        return Ok(None);
+    };
+    let doc_uri = state.doc_uri()?;
+    let raw = client
+        .hover(HoverParams {
+            text_document_position_params: lsp_types::TextDocumentPositionParams {
+                text_document: TextDocumentIdentifier { uri: doc_uri },
+                position: Position { line, character },
+            },
+            work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+    drop(lock);
+    Ok(lsp::parse_hover(raw))
 }
 
 #[tauri::command]
@@ -630,12 +647,27 @@ async fn lsp_definition(
     line: u32,
     character: u32,
 ) -> Result<Option<DefinitionLocation>, String> {
+    use lsp_types::{GotoDefinitionParams, Position, TextDocumentIdentifier};
+
     let state = app.state::<AppState>();
-    let params = text_document_position_params(&state.doc_uri(), line, character);
-    Ok(call_lsp_raw(&state, "textDocument/definition", params)
-        .await?
-        .as_ref()
-        .and_then(lsp::parse_definition))
+    let lock = state.lsp_client.lock().await;
+    let Some(client) = lock.as_ref() else {
+        return Ok(None);
+    };
+    let doc_uri = state.doc_uri()?;
+    let raw = client
+        .definition(GotoDefinitionParams {
+            text_document_position_params: lsp_types::TextDocumentPositionParams {
+                text_document: TextDocumentIdentifier { uri: doc_uri },
+                position: Position { line, character },
+            },
+            work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
+            partial_result_params: lsp_types::PartialResultParams::default(),
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+    drop(lock);
+    Ok(lsp::parse_definition(raw))
 }
 
 #[tauri::command]
@@ -646,30 +678,51 @@ async fn lsp_code_actions(
     end_line: u32,
     end_character: u32,
 ) -> Result<Vec<CodeActionInfo>, String> {
+    use lsp_types::{
+        CodeActionContext, CodeActionParams, Diagnostic, Position, Range, TextDocumentIdentifier,
+    };
+
     let state = app.state::<AppState>();
-    let diagnostics_params = {
+    let lock = state.lsp_client.lock().await;
+    let Some(client) = lock.as_ref() else {
+        return Ok(Vec::new());
+    };
+    let doc_uri = state.doc_uri()?;
+    let diagnostics: Vec<Diagnostic> = {
         let diags = state
             .current_diagnostics
             .lock()
             .map_err(|e| format!("diagnostics lock poisoned: {e}"))?;
-        serde_json::to_value(diags.clone()).unwrap_or_else(|_| json!([]))
+        diags
+            .iter()
+            .filter_map(|d| serde_json::from_value(serde_json::to_value(d).ok()?).ok())
+            .collect()
     };
-    let params = json!({
-        "textDocument": { "uri": state.doc_uri() },
-        "range": {
-            "start": { "line": start_line, "character": start_character },
-            "end": { "line": end_line, "character": end_character }
-        },
-        "context": {
-            "diagnostics": diagnostics_params,
-            "triggerKind": 1
-        }
-    });
-    Ok(call_lsp_raw(&state, "textDocument/codeAction", params)
-        .await?
-        .as_ref()
-        .map(lsp::parse_code_actions)
-        .unwrap_or_default())
+    let raw = client
+        .code_action(CodeActionParams {
+            text_document: TextDocumentIdentifier { uri: doc_uri },
+            range: Range {
+                start: Position {
+                    line: start_line,
+                    character: start_character,
+                },
+                end: Position {
+                    line: end_line,
+                    character: end_character,
+                },
+            },
+            context: CodeActionContext {
+                diagnostics,
+                only: None,
+                trigger_kind: None,
+            },
+            work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
+            partial_result_params: lsp_types::PartialResultParams::default(),
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+    drop(lock);
+    Ok(lsp::parse_code_actions(raw))
 }
 
 #[tauri::command]
@@ -677,220 +730,63 @@ async fn lsp_resolve_code_action(
     app: AppHandle,
     action: serde_json::Value,
 ) -> Result<Option<WorkspaceEditDto>, String> {
+    use lsp_types::CodeAction;
+
     let state = app.state::<AppState>();
-    Ok(call_lsp_raw(&state, "codeAction/resolve", action)
-        .await?
-        .as_ref()
-        .and_then(|v| v.get("edit"))
-        .and_then(lsp::parse_workspace_edit))
+    let lock = state.lsp_client.lock().await;
+    let Some(client) = lock.as_ref() else {
+        return Ok(None);
+    };
+    let code_action: CodeAction =
+        serde_json::from_value(action).map_err(|e| format!("invalid code action: {e}"))?;
+    let resolved = client
+        .resolve_code_action(code_action)
+        .await
+        .map_err(|e| e.to_string())?;
+    drop(lock);
+    Ok(resolved.edit.and_then(lsp::parse_workspace_edit))
 }
 
 #[tauri::command]
 async fn lsp_document_symbols(app: AppHandle) -> Result<Vec<DocumentSymbolInfo>, String> {
+    use lsp_types::{DocumentSymbolParams, TextDocumentIdentifier};
+
     let state = app.state::<AppState>();
-    let params = json!({ "textDocument": { "uri": state.doc_uri() } });
-    Ok(call_lsp_raw(&state, "textDocument/documentSymbol", params)
-        .await?
-        .as_ref()
-        .map(lsp::parse_document_symbols)
-        .unwrap_or_default())
+    let lock = state.lsp_client.lock().await;
+    let Some(client) = lock.as_ref() else {
+        return Ok(Vec::new());
+    };
+    let doc_uri = state.doc_uri()?;
+    let raw = client
+        .document_symbol(DocumentSymbolParams {
+            text_document: TextDocumentIdentifier { uri: doc_uri },
+            work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
+            partial_result_params: lsp_types::PartialResultParams::default(),
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+    drop(lock);
+    Ok(lsp::parse_document_symbols(raw))
 }
 
 /// Send `textDocument/didSave` to the LSP server with the current source text.
 /// Called after session writes to disk. Fire-and-forget; errors are logged, not propagated.
 pub(crate) async fn send_did_save(state: &AppState) {
+    use lsp_types::{DidSaveTextDocumentParams, TextDocumentIdentifier};
+
     let source = state.proof.lock().await.formal.source.clone();
-    let doc_uri = state.doc_uri();
     let lock = state.lsp_client.lock().await;
     if let Some(client) = lock.as_ref() {
-        client
-            .send_notification(
-                "textDocument/didSave",
-                json!({ "textDocument": { "uri": doc_uri }, "text": source }),
-            )
-            .await
-            .ok();
-    }
-}
-
-const fn message_type_severity(typ: lsp_types::MessageType) -> &'static str {
-    match typ {
-        lsp_types::MessageType::ERROR => "error",
-        lsp_types::MessageType::WARNING => "warning",
-        lsp_types::MessageType::INFO => "info",
-        _ => "log",
-    }
-}
-
-fn lsp_server_log(typ: lsp_types::MessageType, message: &str) {
-    match typ {
-        lsp_types::MessageType::ERROR => log::error!("LSP server: {message}"),
-        lsp_types::MessageType::WARNING => log::warn!("LSP server: {message}"),
-        _ => log::debug!("LSP server: {message}"),
-    }
-}
-
-fn handle_lsp_message(
-    app: &AppHandle,
-    token_types: &Arc<Mutex<Vec<String>>>,
-    token_modifiers: &Arc<Mutex<Vec<String>>>,
-    writer: &Arc<tokio::sync::Mutex<Box<dyn std::io::Write + Send>>>,
-    next_id: &Arc<AtomicI64>,
-    msg: &serde_json::Value,
-) {
-    if let Some(result) = msg.get("result") {
-        if result.get("capabilities").is_some() {
-            handle_initialize_response(app, token_types, token_modifiers, result);
-        } else if let Some(data) = result.get("data") {
-            handle_semantic_tokens_response(app, token_types, token_modifiers, data);
-        }
-        return;
-    }
-
-    // Server→client requests have both "method" and "id"; ack them with null.
-    if let Some(id) = msg.get("id") {
-        if let Some(method) = msg.get("method").and_then(|m| m.as_str()) {
-            if let Err(e) = lsp::ack_request(writer, id) {
-                log::warn!("Failed to ack LSP request: {e}");
-            }
-
-            // The server says our cached semantic tokens are stale — re-request.
-            if method == "workspace/semanticTokens/refresh" {
-                let state = app.state::<AppState>();
-                let doc_uri = state.doc_uri();
-                if let Err(e) = lsp::send_request_sync(
-                    writer,
-                    next_id,
-                    "textDocument/semanticTokens/full",
-                    &json!({ "textDocument": { "uri": doc_uri } }),
-                ) {
-                    log::warn!("Failed to re-request semantic tokens: {e}");
-                }
-            }
-
+        let Ok(doc_uri) = state.doc_uri() else {
             return;
-        }
-    }
-
-    // Only messages with a "method" field are notifications we might handle.
-    // Everything else (responses without `result.capabilities` or
-    // `result.data`) is ignored upstream.
-    let Some(method) = msg.get("method").and_then(|m| m.as_str()) else {
-        return;
-    };
-
-    match serde_json::from_value::<LspNotification>(msg.clone()) {
-        Ok(LspNotification::PublishDiagnostics(params)) => {
-            let diagnostics = lsp::parse_diagnostics(params);
-            let state = app.state::<AppState>();
-            (*state.current_diagnostics.lock().unwrap()).clone_from(&diagnostics);
-            app.emit("lsp-diagnostics", &diagnostics).ok();
-            let proof = state.proof.clone();
-            let app_handle = app.clone();
-            tauri::async_runtime::spawn(async move {
-                let items = {
-                    let mut guard = proof.lock().await;
-                    guard.annotations.set_diagnostics(&diagnostics);
-                    guard.annotations.items.clone()
-                };
-                app_handle
-                    .emit(proof::ANNOTATIONS_UPDATED_EVENT, &items)
-                    .ok();
-            });
-        }
-        Ok(LspNotification::FileProgress(params)) => {
-            let ranges = lsp::parse_file_progress(&params);
-            let elaboration_done = ranges.is_empty();
-            app.emit("lsp-file-progress", ranges).ok();
-            if elaboration_done {
-                let state = app.state::<AppState>();
-                let seq = state.goal_state_seq.fetch_add(1, Ordering::SeqCst) + 1;
-                spawn_goal_state_refresh(app.clone(), seq);
-                app.emit("lsp-elaboration-done", ()).ok();
-            }
-        }
-        Ok(LspNotification::LogMessage(p)) => {
-            lsp_server_log(p.typ, &p.message);
-        }
-        Ok(LspNotification::ShowMessage(p)) => {
-            lsp_server_log(p.typ, &p.message);
-            app.emit(
-                "lsp-show-message",
-                LspShowMessage {
-                    severity: message_type_severity(p.typ),
-                    message: p.message,
-                },
-            )
-            .ok();
-        }
-        Err(_) => {
-            log::debug!("Unhandled LSP notification: {method}");
-        }
-    }
-}
-
-fn handle_initialize_response(
-    app: &AppHandle,
-    token_types: &Arc<Mutex<Vec<String>>>,
-    token_modifiers: &Arc<Mutex<Vec<String>>>,
-    result: &serde_json::Value,
-) {
-    let type_legend = lsp::parse_token_legend(result);
-    let modifier_legend = lsp::parse_modifier_legend(result);
-    log::debug!("LSP semantic token legend: types={type_legend:?}, modifiers={modifier_legend:?}");
-    if let Ok(mut types) = token_types.lock() {
-        *types = type_legend;
-    }
-    if let Ok(mut mods) = token_modifiers.lock() {
-        *mods = modifier_legend;
-    }
-
-    app.emit(
-        "lsp-status",
-        LspStatus {
-            state: "connected".to_string(),
-            message: "connected".to_string(),
-        },
-    )
-    .ok();
-
-    log::debug!("LSP initialize complete");
-}
-
-fn handle_semantic_tokens_response(
-    app: &AppHandle,
-    token_types: &Arc<Mutex<Vec<String>>>,
-    token_modifiers: &Arc<Mutex<Vec<String>>>,
-    data: &serde_json::Value,
-) {
-    let Some(arr) = data.as_array() else { return };
-    let data_u32: Vec<u32> = arr
-        .iter()
-        .filter_map(|v| v.as_u64().and_then(|n| u32::try_from(n).ok()))
-        .collect();
-
-    let type_guard = token_types
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let mod_guard = token_modifiers
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let tokens = lsp::decode_semantic_tokens(&data_u32, &type_guard, &mod_guard);
-    drop(type_guard);
-    drop(mod_guard);
-    let state = app.state::<AppState>();
-    let proof = state.proof.clone();
-    let app_handle = app.clone();
-    tauri::async_runtime::spawn(async move {
-        let items = {
-            let mut guard = proof.lock().await;
-            guard.annotations.set_tokens(&tokens);
-            guard.annotations.items.clone()
         };
-        app_handle
-            .emit(proof::ANNOTATIONS_UPDATED_EVENT, &items)
+        client
+            .did_save(DidSaveTextDocumentParams {
+                text_document: TextDocumentIdentifier { uri: doc_uri },
+                text: Some(source),
+            })
             .ok();
-    });
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -899,7 +795,10 @@ fn handle_semantic_tokens_response(
 /// Panics if the Tauri application fails to build or run.
 #[allow(clippy::too_many_lines)]
 pub fn run() {
-    env_logger::init();
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .init();
+    tracing_log::LogTracer::init().ok();
 
     tauri::Builder::default()
         .setup(|app| {
@@ -940,6 +839,8 @@ pub fn run() {
                 prose_dirty: Arc::new(AtomicBool::new(false)),
                 prose_generation_seq: Arc::new(AtomicU64::new(0)),
                 goal_state_seq: Arc::new(AtomicU64::new(0)),
+                token_types: Arc::new(Mutex::new(Vec::new())),
+                token_modifiers: Arc::new(Mutex::new(Vec::new())),
             });
 
             // On startup: run setup if needed, then start the LSP.
@@ -975,19 +876,19 @@ pub fn run() {
         .plugin(tauri_plugin_window_state::Builder::new().build())
         .on_window_event(|window, event| {
             if matches!(event, tauri::WindowEvent::Destroyed) {
+                use lsp_types::{DidCloseTextDocumentParams, TextDocumentIdentifier};
                 let app = window.app_handle().clone();
                 tauri::async_runtime::block_on(async move {
                     let state = app.state::<AppState>();
-                    let doc_uri = state.doc_uri();
                     let lock = state.lsp_client.lock().await;
                     if let Some(client) = lock.as_ref() {
-                        client
-                            .send_notification(
-                                "textDocument/didClose",
-                                json!({ "textDocument": { "uri": doc_uri } }),
-                            )
-                            .await
-                            .ok();
+                        if let Ok(uri) = state.doc_uri() {
+                            client
+                                .did_close(DidCloseTextDocumentParams {
+                                    text_document: TextDocumentIdentifier { uri },
+                                })
+                                .ok();
+                        }
                     }
                 });
             }
@@ -1195,6 +1096,8 @@ mod tests {
             prose_dirty: Arc::new(AtomicBool::new(false)),
             prose_generation_seq: Arc::new(AtomicU64::new(0)),
             goal_state_seq: Arc::new(AtomicU64::new(0)),
+            token_types: Arc::new(Mutex::new(Vec::new())),
+            token_modifiers: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
