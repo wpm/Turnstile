@@ -224,12 +224,16 @@ function buildGutterMarkers(state: EditorState): RangeSet<GutterMarker> {
 const diagnosticGutterMarkersField = StateField.define<RangeSet<GutterMarker>>({
   create: () => RangeSet.empty,
   update(markers, tr) {
-    for (const effect of tr.effects) {
-      if (effect.is(setAnnotations)) {
-        return buildGutterMarkers(tr.state);
+    try {
+      for (const effect of tr.effects) {
+        if (effect.is(setAnnotations)) {
+          return buildGutterMarkers(tr.state);
+        }
       }
+      return tr.docChanged ? markers.map(tr.changes) : markers;
+    } catch {
+      return RangeSet.empty;
     }
-    return tr.docChanged ? markers.map(tr.changes) : markers;
   },
 });
 

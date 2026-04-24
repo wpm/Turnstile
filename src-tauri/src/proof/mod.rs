@@ -106,6 +106,7 @@ impl DiagnosticSeverity {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum Annotation {
+    #[serde(rename_all = "camelCase")]
     Token {
         line: u32,
         col: u32,
@@ -113,6 +114,7 @@ pub enum Annotation {
         token_type: TokenType,
         modifiers: Vec<String>,
     },
+    #[serde(rename_all = "camelCase")]
     Diagnostic {
         start_line: u32,
         start_col: u32,
@@ -284,6 +286,47 @@ mod tests {
         assert!(p.prose.text.is_empty());
         assert!(p.prose.goal_state_hash.is_empty());
         assert!(p.goal_state.full.is_empty());
+    }
+
+    #[test]
+    fn annotation_serializes_with_camel_case_fields() {
+        let token = Annotation::Token {
+            line: 1,
+            col: 0,
+            length: 7,
+            token_type: TokenType::Keyword,
+            modifiers: vec![],
+        };
+        let diag = Annotation::Diagnostic {
+            start_line: 1,
+            start_col: 7,
+            end_line: 1,
+            end_col: 7,
+            severity: DiagnosticSeverity::Error,
+            message: "expected identifier".into(),
+        };
+        let token_json = serde_json::to_string(&token).unwrap();
+        let diag_json = serde_json::to_string(&diag).unwrap();
+        assert!(
+            token_json.contains("\"tokenType\""),
+            "token_type must serialize as tokenType, got: {token_json}"
+        );
+        assert!(
+            !token_json.contains("token_type"),
+            "must not contain snake_case token_type"
+        );
+        assert!(
+            diag_json.contains("\"startLine\""),
+            "start_line must serialize as startLine, got: {diag_json}"
+        );
+        assert!(
+            diag_json.contains("\"endLine\""),
+            "end_line must serialize as endLine, got: {diag_json}"
+        );
+        assert!(
+            !diag_json.contains("start_line"),
+            "must not contain snake_case start_line"
+        );
     }
 
     #[test]
