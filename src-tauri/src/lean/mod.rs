@@ -188,21 +188,6 @@ mod tests {
         guard.stop().await;
     }
 
-    #[tokio::test(flavor = "multi_thread")]
-    async fn and_comm_tokens() {
-        crate::init_tracing!();
-        #[rustfmt::skip]
-        assert_tokens(include_str!("fixtures/01_and_comm.lean"), &[
-            ("theorem", "keyword"),
-            ("p", "variable"), ("q", "variable"),          // type params
-            ("h", "variable"),                              // hypothesis
-            ("p", "variable"), ("q", "variable"),           // p ∧ q
-            ("q", "variable"), ("p", "variable"),           // q ∧ p
-            ("h", "variable"), ("2", "property"),           // h.2
-            ("h", "variable"), ("1", "property"),           // h.1
-        ]).await;
-    }
-
     async fn assert_tokens(source: &str, expected: &[(&str, &str)]) {
         let (client, messages) = lean_client_with(source).await;
         let guard = ClientGuard::new(client);
@@ -237,6 +222,21 @@ mod tests {
             .collect();
         assert_eq!(annotated, expected);
         guard.stop().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn and_comm_tokens() {
+        crate::init_tracing!();
+        #[rustfmt::skip]
+        assert_tokens(include_str!("fixtures/01_and_comm.lean"), &[
+            ("theorem", "keyword"),
+            ("p", "variable"), ("q", "variable"),          // type params
+            ("h", "variable"),                              // hypothesis
+            ("p", "variable"), ("q", "variable"),           // p ∧ q
+            ("q", "variable"), ("p", "variable"),           // q ∧ p
+            ("h", "variable"), ("2", "property"),           // h.2
+            ("h", "variable"), ("1", "property"),           // h.1
+        ]).await;
     }
 
     #[tokio::test(flavor = "multi_thread")]
