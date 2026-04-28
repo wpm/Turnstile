@@ -42,6 +42,18 @@ mod tests {
         (client, messages)
     }
 
+    async fn wait_for_elaboration(messages: &Arc<Mutex<Vec<TurnstileMessage>>>) -> bool {
+        wait_for(
+            messages,
+            |msgs| {
+                msgs.iter()
+                    .any(|m| matches!(m, TurnstileMessage::ElaborationDone))
+            },
+            Duration::from_mins(2),
+        )
+        .await
+    }
+
     /// Poll until `predicate` returns true or `timeout` elapses.
     async fn wait_for(
         messages: &Arc<Mutex<Vec<TurnstileMessage>>>,
@@ -100,16 +112,10 @@ mod tests {
         messages: &Arc<Mutex<Vec<TurnstileMessage>>>,
         needle: &str,
     ) -> bool {
-        let elaborated = wait_for(
-            messages,
-            |msgs| {
-                msgs.iter()
-                    .any(|m| matches!(m, TurnstileMessage::ElaborationDone))
-            },
-            Duration::from_mins(2),
-        )
-        .await;
-        assert!(elaborated, "timed out waiting for ElaborationDone");
+        assert!(
+            wait_for_elaboration(messages).await,
+            "timed out waiting for ElaborationDone"
+        );
         messages.lock().unwrap().iter().any(|m| {
             if let TurnstileMessage::Diagnostics(diags) = m {
                 diags.iter().any(|d| d.message.contains(needle))
@@ -200,16 +206,10 @@ mod tests {
     async fn assert_tokens(source: &str, expected: &[(&str, &str)]) {
         let (client, messages) = lean_client_with(source).await;
         let guard = ClientGuard::new(client);
-        let elaborated = wait_for(
-            &messages,
-            |msgs| {
-                msgs.iter()
-                    .any(|m| matches!(m, TurnstileMessage::ElaborationDone))
-            },
-            Duration::from_mins(2),
-        )
-        .await;
-        assert!(elaborated, "timed out waiting for ElaborationDone");
+        assert!(
+            wait_for_elaboration(&messages).await,
+            "timed out waiting for ElaborationDone"
+        );
         assert_elaborated_cleanly(&messages.lock().unwrap());
 
         let (type_legend, modifier_legend) = guard.token_legend();
@@ -415,16 +415,10 @@ mod tests {
             .expect("replace_document failed");
         assert_eq!(v1, 1);
 
-        let elaborated = wait_for(
-            &messages,
-            |msgs| {
-                msgs.iter()
-                    .any(|m| matches!(m, TurnstileMessage::ElaborationDone))
-            },
-            Duration::from_mins(2),
-        )
-        .await;
-        assert!(elaborated, "timed out waiting for ElaborationDone after v1");
+        assert!(
+            wait_for_elaboration(&messages).await,
+            "timed out waiting for ElaborationDone after v1"
+        );
 
         let v2 = guard
             .replace_document("def y : Nat := 1".into())
@@ -493,16 +487,10 @@ mod tests {
         let guard = ClientGuard::new(client);
 
         // Wait for first elaboration of the valid content.
-        let elaborated = wait_for(
-            &messages,
-            |msgs| {
-                msgs.iter()
-                    .any(|m| matches!(m, TurnstileMessage::ElaborationDone))
-            },
-            Duration::from_mins(2),
-        )
-        .await;
-        assert!(elaborated, "timed out waiting for first ElaborationDone");
+        assert!(
+            wait_for_elaboration(&messages).await,
+            "timed out waiting for first ElaborationDone"
+        );
 
         // Snapshot length so we can wait for a new ElaborationDone after the edit.
         let count_before = messages.lock().unwrap().len();
@@ -570,16 +558,10 @@ mod tests {
         let long_source = include_str!("fixtures/09_map_id.lean");
         let (client, messages) = lean_client_with(long_source).await;
 
-        let elaborated = wait_for(
-            &messages,
-            |msgs| {
-                msgs.iter()
-                    .any(|m| matches!(m, TurnstileMessage::ElaborationDone))
-            },
-            Duration::from_mins(2),
-        )
-        .await;
-        assert!(elaborated, "timed out waiting for ElaborationDone");
+        assert!(
+            wait_for_elaboration(&messages).await,
+            "timed out waiting for ElaborationDone"
+        );
 
         let client = Arc::new(client);
         let client2 = Arc::clone(&client);
