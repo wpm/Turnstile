@@ -20,6 +20,16 @@ fn url_filename(url: &lsp_types::Url) -> &str {
     url.path().rsplit('/').next().unwrap_or("")
 }
 
+fn format_range(r: &lsp_types::Range) -> String {
+    format!(
+        "{}:{}-{}:{}",
+        r.start.line + 1,
+        r.start.character,
+        r.end.line + 1,
+        r.end.character,
+    )
+}
+
 fn display_uri(uri: &lsp_types::Url) -> impl fmt::Display + '_ {
     struct D<'a>(&'a lsp_types::Url);
     impl fmt::Display for D<'_> {
@@ -171,12 +181,9 @@ impl DisplayLspParams for lsp_types::CodeActionParams {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 write!(
                     f,
-                    "{} {}:{} \u{2013} {}:{}",
+                    "{} {}",
                     url_filename(&self.0.text_document.uri),
-                    self.0.range.start.line + 1,
-                    self.0.range.start.character,
-                    self.0.range.end.line + 1,
-                    self.0.range.end.character
+                    format_range(&self.0.range)
                 )
             }
         }
@@ -282,20 +289,30 @@ impl DisplayLspParams for PublishDiagnosticsParams {
                     Some(v) => write!(f, "diagnostics {} v{}", url_filename(&self.0.uri), v)?,
                     None => write!(f, "diagnostics {}", url_filename(&self.0.uri))?,
                 }
-                let items: Vec<String> = self
-                    .0
-                    .diagnostics
-                    .iter()
-                    .map(|d| {
-                        let pos = format!("{}:{}", d.range.start.line + 1, d.range.start.character);
-                        match &d.code {
-                            Some(lsp_types::NumberOrString::Number(n)) => format!("{pos} {n}"),
-                            Some(lsp_types::NumberOrString::String(s)) => format!("{pos} {s}"),
-                            None => pos,
+                write!(f, " [")?;
+                for (i, d) in self.0.diagnostics.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    let severity = match d.severity {
+                        Some(lsp_types::DiagnosticSeverity::ERROR) => "error",
+                        Some(lsp_types::DiagnosticSeverity::WARNING) => "warning",
+                        Some(lsp_types::DiagnosticSeverity::INFORMATION) => "info",
+                        Some(lsp_types::DiagnosticSeverity::HINT) => "hint",
+                        _ => "unknown",
+                    };
+                    write!(f, "{} {severity}", format_range(&d.range))?;
+                    if let Some(code) = &d.code {
+                        match code {
+                            lsp_types::NumberOrString::Number(n) => write!(f, ":{n}")?,
+                            lsp_types::NumberOrString::String(s) => write!(f, ":{s}")?,
                         }
-                    })
-                    .collect();
-                write!(f, " [{}]", items.join(", "))
+                    }
+                    if let Some(desc) = &d.code_description {
+                        write!(f, ":{}", desc.href)?;
+                    }
+                }
+                write!(f, "]")
             }
         }
         D(self)
