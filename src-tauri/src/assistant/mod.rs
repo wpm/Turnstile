@@ -402,6 +402,7 @@ pub(crate) async fn effective_assistant_model(app: &AppHandle) -> String {
 ///
 /// Returns a string error if the LLM call fails.
 #[tauri::command]
+#[tracing::instrument(level = "debug", skip_all)]
 pub async fn send_message(
     app: AppHandle,
     content: String,
@@ -451,6 +452,7 @@ pub async fn send_message(
 ///
 /// Returns a string error if the transcript lock is unavailable.
 #[tauri::command]
+#[tracing::instrument(level = "debug", skip_all)]
 pub async fn get_transcript(
     state: tauri::State<'_, crate::AppState>,
 ) -> Result<Transcript, String> {
@@ -463,6 +465,7 @@ pub async fn get_transcript(
 ///
 /// Returns a string error if the transcript lock is unavailable.
 #[tauri::command]
+#[tracing::instrument(level = "debug", skip_all)]
 pub async fn load_transcript(
     new_transcript: Transcript,
     state: tauri::State<'_, crate::AppState>,

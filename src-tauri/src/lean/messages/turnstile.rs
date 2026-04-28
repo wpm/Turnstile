@@ -1,38 +1,30 @@
-//! Frontend DTO types and LSP→DTO mappers.
-//!
-//! This module sits at the boundary between the typed `lsp-types` structs
-//! (returned by `LeanClient`) and the Tauri frontend. Its two responsibilities
-//! are:
+//! The Lean-to-frontend boundary: DTO types and LSP→DTO translators.
 //!
 //! **DTO types** — Lean-specific structs (`DiagnosticInfo`, `HoverInfo`,
 //! `SemanticToken`, etc.) that are serialized to JSON and emitted as Tauri
-//! events. They are deliberately separate from the raw LSP types: they use
-//! 1-indexed line numbers (matching the frontend's `CodeMirror` convention),
-//! flatten nested LSP shapes into flat structs, and carry only the fields the
-//! UI actually uses.
+//! events. They use 1-indexed line numbers (matching the frontend's `CodeMirror`
+//! convention), flatten nested LSP shapes into flat structs, and carry only
+//! the fields the UI actually uses.
 //!
-//! **Map functions** — Each `parse_*` function accepts a typed `lsp-types`
-//! value (already deserialized by `LeanClient`) and maps it to the
-//! corresponding DTO. They are the single source of truth for each
-//! LSP→DTO conversion and are unit-tested against real LSP payloads.
-//!
-//! [`decode_semantic_tokens`] accepts a `&[lsp_types::SemanticToken]` slice and
-//! implements the LSP delta-encoding algorithm to reconstruct absolute token
-//! positions from 5-tuple deltas.
+//! **Translators** — Each `parse_*` function accepts a typed `lsp-types` value
+//! and maps it to the corresponding DTO. Unit-tested against real LSP payloads.
+//! [`decode_semantic_tokens`] implements the LSP delta-encoding algorithm to
+//! reconstruct absolute token positions from 5-tuple deltas.
 
+use crate::lean::messages::lean::LeanMessage;
+use crate::lean::server::FileProgressParams;
 use lsp_types::{
     CodeActionOrCommand, CodeActionResponse, CompletionResponse, DocumentSymbol,
     DocumentSymbolResponse, GotoDefinitionResponse, Hover, HoverContents, Location, LocationLink,
-    MarkedString, MarkupKind, PublishDiagnosticsParams, TextEdit, WorkspaceEdit,
+    MarkedString, MarkupKind, MessageType, PublishDiagnosticsParams, TextEdit, WorkspaceEdit,
 };
 use serde::Serialize;
 use serde_json::Value;
-
-use crate::lsp::client::FileProgressParams;
-
+use std::fmt;
+use tracing::{debug, error, instrument, warn};
 // ── Public DTO types for Tauri events ─────────────────────────────────
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct DiagnosticInfo {
     pub start_line: u32,
     pub start_col: u32,
@@ -42,7 +34,7 @@ pub struct DiagnosticInfo {
     pub message: String,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct SemanticToken {
     pub line: u32,
     pub col: u32,
@@ -70,7 +62,7 @@ pub struct CompletionItem {
 
 /// A range of lines currently being elaborated by the Lean server.
 /// Emitted via the `$/lean/fileProgress` notification.
-#[derive(Clone, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct FileProgressRange {
     pub start_line: u32, // 1-indexed (converted from 0-indexed LSP)
     pub end_line: u32,   // 1-indexed
@@ -154,6 +146,209 @@ pub struct DocumentSymbolInfo {
     pub children: Vec<Self>,
 }
 
+/// A Turnstile-layer message destined for the frontend.
+///
+/// Produced by translating a [`LeanMessage`]: raw LSP types are mapped
+/// to DTO types, positions are normalized to the frontend's convention, and
+/// server-internal notifications (e.g. `LogMessage`) that carry no frontend
+/// payload are dropped entirely.
+#[derive(Clone, Debug, Serialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum TurnstileMessage {
+    Diagnostics(Vec<DiagnosticInfo>),
+    FileProgress(Vec<FileProgressRange>),
+    ElaborationDone,
+    ShowMessage {
+        severity: &'static str,
+        message: String,
+    },
+    SemanticTokenRefresh,
+}
+
+// ── Display implementations ────────────────────────────────────────────
+
+impl fmt::Display for TurnstileMessage {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Diagnostics(diags) => fmt_list(f, "diagnostics", "items", diags),
+            Self::FileProgress(ranges) => fmt_list(f, "fileProgress", "ranges", ranges),
+            Self::ElaborationDone => write!(f, "elaborationDone"),
+            Self::ShowMessage { severity, message } => {
+                write!(f, "showMessage [{severity}]: {message}")
+            }
+            Self::SemanticTokenRefresh => write!(f, "semanticTokenRefresh"),
+        }
+    }
+}
+
+fn fmt_list(
+    f: &mut fmt::Formatter<'_>,
+    label: &str,
+    unit: &str,
+    items: &[impl fmt::Display],
+) -> fmt::Result {
+    write!(f, "{label} ({} {unit})", items.len())?;
+    for item in items {
+        write!(f, "\n  {item}")?;
+    }
+    Ok(())
+}
+
+impl fmt::Display for DiagnosticInfo {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let severity = match self.severity {
+            1 => "error",
+            2 => "warning",
+            3 => "info",
+            _ => "hint",
+        };
+        write!(
+            f,
+            "{severity} at {}:{}: {}",
+            self.start_line, self.start_col, self.message
+        )
+    }
+}
+
+impl fmt::Display for SemanticToken {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}:{} len={} {}",
+            self.line, self.col, self.length, self.token_type
+        )?;
+        if !self.token_modifiers.is_empty() {
+            write!(f, " [{}]", self.token_modifiers.join(", "))?;
+        }
+        Ok(())
+    }
+}
+
+impl fmt::Display for LspStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.state.is_empty() {
+            write!(f, "{}", self.message)
+        } else {
+            write!(f, "{}: {}", self.state, self.message)
+        }
+    }
+}
+
+impl fmt::Display for CompletionItem {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.label)?;
+        if let Some(detail) = &self.detail {
+            write!(f, "  — {detail}")?;
+        }
+        Ok(())
+    }
+}
+
+impl fmt::Display for FileProgressRange {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "lines {}–{}", self.start_line, self.end_line)
+    }
+}
+
+impl fmt::Display for HoverKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Markdown => write!(f, "markdown"),
+            Self::Plaintext => write!(f, "plaintext"),
+        }
+    }
+}
+
+impl fmt::Display for HoverInfo {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "[{}]\n{}", self.kind, self.contents)
+    }
+}
+
+pub(super) fn uri_filename(uri: &str) -> &str {
+    uri.rsplit('/').next().unwrap_or(uri)
+}
+
+impl fmt::Display for DefinitionLocation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{} {}:{} – {}:{}",
+            uri_filename(&self.uri),
+            self.line,
+            self.character,
+            self.end_line,
+            self.end_character
+        )
+    }
+}
+
+impl fmt::Display for TextEditDto {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let range = if self.start_line == self.end_line {
+            format!(
+                "{}:{}-{}",
+                self.start_line, self.start_character, self.end_character
+            )
+        } else {
+            format!(
+                "{}:{} – {}:{}",
+                self.start_line, self.start_character, self.end_line, self.end_character
+            )
+        };
+        let mut chars = self.new_text.chars();
+        let preview: String = chars.by_ref().take(40).collect();
+        let ellipsis = if chars.next().is_some() { "…" } else { "" };
+        write!(f, "{range} \u{2190} \"{preview}{ellipsis}\"")
+    }
+}
+
+impl fmt::Display for WorkspaceEditDto {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for (uri, edits) in &self.changes {
+            writeln!(f, "  {}:", uri_filename(uri))?;
+            for edit in edits {
+                writeln!(f, "    {edit}")?;
+            }
+        }
+        Ok(())
+    }
+}
+
+impl fmt::Display for CodeActionInfo {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.title)?;
+        if let Some(kind) = &self.kind {
+            write!(f, " ({kind})")?;
+        }
+        if let Some(edit) = &self.edit {
+            write!(f, "\n{edit}")?;
+        } else if self.resolve_data.is_some() {
+            write!(f, " [needs resolve]")?;
+        }
+        Ok(())
+    }
+}
+
+impl fmt::Display for DocumentSymbolInfo {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt_symbol(f, self, 0)
+    }
+}
+
+fn fmt_symbol(f: &mut fmt::Formatter<'_>, sym: &DocumentSymbolInfo, depth: usize) -> fmt::Result {
+    let indent = "  ".repeat(depth);
+    writeln!(
+        f,
+        "{indent}{} (kind {}) line {}",
+        sym.name, sym.kind, sym.start_line
+    )?;
+    for child in &sym.children {
+        fmt_symbol(f, child, depth + 1)?;
+    }
+    Ok(())
+}
+
 // ── Private helpers ────────────────────────────────────────────────────
 
 // lsp-types newtypes (DiagnosticSeverity, SymbolKind, …) are transparent `i32` wrappers
@@ -191,6 +386,7 @@ pub fn parse_diagnostics(params: PublishDiagnosticsParams) -> Vec<DiagnosticInfo
 /// The LSP response is a flat array of 5-tuples:
 ///   [deltaLine, deltaStart, length, tokenTypeIndex, tokenModifiers]
 #[must_use]
+#[instrument(level = "debug", skip_all)]
 pub fn decode_semantic_tokens(
     data: &[lsp_types::SemanticToken],
     type_legend: &[String],
@@ -235,6 +431,40 @@ pub fn decode_semantic_tokens(
         });
     }
 
+    if tracing::enabled!(tracing::Level::DEBUG) {
+        let pos_width = tokens
+            .iter()
+            .map(|t| format!("{}:{}", t.line, t.col).len())
+            .max()
+            .unwrap_or(0);
+        let len_width = tokens
+            .iter()
+            .map(|t| t.length.to_string().len())
+            .max()
+            .unwrap_or(0);
+        let lines = tokens
+            .iter()
+            .map(|t| {
+                let pos = format!("{}:{}", t.line, t.col);
+                let mods = if t.token_modifiers.is_empty() {
+                    String::new()
+                } else {
+                    format!(" [{}]", t.token_modifiers.join(", "))
+                };
+                format!(
+                    "  {:<pos_width$}  len={:<len_width$}  {}{}",
+                    pos,
+                    t.length,
+                    t.token_type,
+                    mods,
+                    pos_width = pos_width,
+                    len_width = len_width,
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        debug!(count = tokens.len(), tokens = %format!("\n{lines}"), "decode_semantic_tokens");
+    }
     tokens
 }
 
@@ -419,6 +649,7 @@ pub fn parse_workspace_edit(edit: WorkspaceEdit) -> Option<WorkspaceEditDto> {
 
 /// Map a `textDocument/formatting` response into a list of text edits.
 #[must_use]
+#[allow(dead_code)]
 pub fn parse_text_edits(result: Option<Vec<TextEdit>>) -> Vec<TextEditDto> {
     result
         .unwrap_or_default()
@@ -464,6 +695,65 @@ fn document_symbol_to_dto(sym: DocumentSymbol) -> DocumentSymbolInfo {
             .into_iter()
             .map(document_symbol_to_dto)
             .collect(),
+    }
+}
+
+// ── Tauri event name constants ─────────────────────────────────────────
+
+pub const FILE_PROGRESS_EVENT: &str = "lsp-file-progress";
+pub const ELABORATION_DONE_EVENT: &str = "lsp-elaboration-done";
+pub const SHOW_MESSAGE_EVENT: &str = "lsp-show-message";
+
+fn server_log(typ: MessageType, message: &str) {
+    match typ {
+        MessageType::ERROR => error!("LSP server: {message}"),
+        MessageType::WARNING => warn!("LSP server: {message}"),
+        _ => debug!("LSP server: {message}"),
+    }
+}
+
+const fn message_type_severity(typ: MessageType) -> &'static str {
+    match typ {
+        MessageType::ERROR => "error",
+        MessageType::WARNING => "warning",
+        MessageType::INFO => "info",
+        _ => "log",
+    }
+}
+
+/// Translate a [`LeanMessage`] into zero or more [`TurnstileMessage`]s.
+///
+/// Returns `None` for server-internal notifications (`LogMessage`) that carry
+/// no frontend payload. `TokenRefresh` and `ElaborationDone` produce a
+/// [`TurnstileMessage::SemanticTokenRefresh`] or
+/// [`TurnstileMessage::ElaborationDone`] respectively; they do not emit
+/// multiple messages, so a single `Option` is sufficient.
+pub(in crate::lean) fn translate(msg: LeanMessage) -> Option<TurnstileMessage> {
+    debug!("{msg}");
+    match msg {
+        LeanMessage::Diagnostics(params) => {
+            Some(TurnstileMessage::Diagnostics(parse_diagnostics(params)))
+        }
+        LeanMessage::FileProgress(params) => {
+            let ranges = parse_file_progress(params);
+            if ranges.is_empty() {
+                Some(TurnstileMessage::ElaborationDone)
+            } else {
+                Some(TurnstileMessage::FileProgress(ranges))
+            }
+        }
+        LeanMessage::LogMessage(p) => {
+            server_log(p.typ, &p.message);
+            None
+        }
+        LeanMessage::ShowMessage(p) => {
+            server_log(p.typ, &p.message);
+            Some(TurnstileMessage::ShowMessage {
+                severity: message_type_severity(p.typ),
+                message: p.message,
+            })
+        }
+        LeanMessage::TokenRefresh => Some(TurnstileMessage::SemanticTokenRefresh),
     }
 }
 

@@ -11,7 +11,7 @@ pub mod translator;
 
 use serde::{Deserialize, Serialize};
 
-use crate::lsp::{DiagnosticInfo, SemanticToken};
+use crate::lean::messages::turnstile::{DiagnosticInfo, SemanticToken};
 
 /// Semantic token type, mirroring the LSP token type legend.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

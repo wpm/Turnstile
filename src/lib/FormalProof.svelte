@@ -70,7 +70,7 @@
   }: { dark?: boolean; lspReady?: boolean } = $props();
 
   let container: HTMLDivElement;
-  let view: EditorView | undefined;
+  let view = $state<EditorView | undefined>(undefined);
   const themeCompartment = new Compartment();
   const editableCompartment = new Compartment();
 

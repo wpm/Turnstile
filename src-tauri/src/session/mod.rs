@@ -370,6 +370,7 @@ fn write_last_session(dir: &Path, session_path: &Path) -> Result<(), String> {
 ///
 /// Returns a string error if the session state cannot be reset.
 #[tauri::command]
+#[tracing::instrument(level = "debug", skip_all)]
 pub async fn new_session(app: AppHandle, state: tauri::State<'_, AppState>) -> Result<(), String> {
     // Clear session path and dirty flag.
     *state.current_session_path.lock().await = None;
@@ -448,6 +449,7 @@ async fn apply_loaded_session(
 ///
 /// Returns a string error if the file cannot be read or parsed.
 #[tauri::command]
+#[tracing::instrument(level = "debug", skip_all)]
 pub async fn open_session(
     app: AppHandle,
     path: Option<String>,
@@ -489,6 +491,7 @@ pub async fn open_session(
 ///
 /// Returns an error if no autosave file exists or if it fails to parse.
 #[tauri::command]
+#[tracing::instrument(level = "debug", skip_all)]
 pub async fn restore_auto_save(
     app: AppHandle,
     state: tauri::State<'_, AppState>,
@@ -514,6 +517,7 @@ pub async fn restore_auto_save(
 ///
 /// Returns a string error if writing the session file fails.
 #[tauri::command]
+#[tracing::instrument(level = "debug", skip_all)]
 pub async fn save_session(
     app: AppHandle,
     proof_lean: String,
@@ -559,6 +563,7 @@ pub async fn save_session(
 ///
 /// Returns a string error if the dialog is canceled or writing the session file fails.
 #[tauri::command]
+#[tracing::instrument(level = "debug", skip_all)]
 pub async fn save_session_as(
     app: AppHandle,
     proof_lean: String,
@@ -656,7 +661,6 @@ async fn do_save(
 
     save(&session, path)?;
     state.session_dirty.store(false, Ordering::SeqCst);
-    crate::send_did_save(state).await;
     Ok(())
 }
 
@@ -666,6 +670,7 @@ async fn do_save(
 ///
 /// Returns a string error if writing the autosave file fails.
 #[tauri::command]
+#[tracing::instrument(level = "debug", skip_all)]
 pub async fn auto_save_session(
     app: AppHandle,
     proof_lean: String,
@@ -691,6 +696,7 @@ pub async fn auto_save_session(
 ///
 /// Returns a string error if the app data directory cannot be resolved.
 #[tauri::command]
+#[tracing::instrument(level = "debug", skip_all)]
 #[allow(clippy::needless_pass_by_value)]
 pub fn check_auto_save(app: AppHandle) -> Result<bool, String> {
     let path = autosave_path(&app)?;
@@ -703,6 +709,7 @@ pub fn check_auto_save(app: AppHandle) -> Result<bool, String> {
 ///
 /// Returns a string error if the file cannot be deleted.
 #[tauri::command]
+#[tracing::instrument(level = "debug", skip_all)]
 #[allow(clippy::needless_pass_by_value)]
 pub fn delete_auto_save(app: AppHandle) -> Result<(), String> {
     let path = autosave_path(&app)?;
@@ -715,6 +722,7 @@ pub fn delete_auto_save(app: AppHandle) -> Result<(), String> {
 ///
 /// Returns a string error if the app data directory cannot be resolved.
 #[tauri::command]
+#[tracing::instrument(level = "debug", skip_all)]
 #[allow(clippy::needless_pass_by_value)]
 pub fn get_last_session(app: AppHandle) -> Result<Option<String>, String> {
     let dir = app_data_dir(&app)?;
@@ -727,6 +735,7 @@ pub fn get_last_session(app: AppHandle) -> Result<Option<String>, String> {
 ///
 /// Returns a string error if the file cannot be written.
 #[tauri::command]
+#[tracing::instrument(level = "debug", skip_all)]
 #[allow(clippy::needless_pass_by_value)]
 pub fn set_last_session(app: AppHandle, path: String) -> Result<(), String> {
     let dir = app_data_dir(&app)?;
@@ -739,6 +748,7 @@ pub fn set_last_session(app: AppHandle, path: String) -> Result<(), String> {
 ///
 /// Returns an error if the window title cannot be set.
 #[tauri::command]
+#[tracing::instrument(level = "debug", skip_all)]
 #[allow(clippy::needless_pass_by_value)]
 pub fn set_window_title(app: AppHandle, title: String) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("main") {

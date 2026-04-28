@@ -537,6 +537,7 @@ impl Llm for AnthropicBackend {
 
 /// Return the list of available models from `models.rs`.
 #[tauri::command]
+#[tracing::instrument(level = "debug", skip_all)]
 #[must_use]
 pub fn get_available_models() -> Vec<models::ModelInfo> {
     models::MODELS.to_vec()

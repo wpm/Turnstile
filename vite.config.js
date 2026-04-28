@@ -26,7 +26,9 @@ export default defineConfig({
       : undefined,
     watch: {
       // 3. tell Vite to ignore watching `src-tauri`
-      ignored: ["**/src-tauri/**"],
+      // 4. ignore SvelteKit's auto-generated files — they change during startup
+      //    and cause spurious full-page reloads that wipe the editor content
+      ignored: ["**/src-tauri/**", "**/.svelte-kit/generated/**"],
     },
   },
 });

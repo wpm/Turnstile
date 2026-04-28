@@ -102,6 +102,7 @@ pub fn save_settings_to_disk(settings: &Settings, app_data_dir: &Path) -> Result
 ///
 /// Returns an error if the settings mutex is poisoned.
 #[tauri::command]
+#[tracing::instrument(level = "debug", skip_all)]
 pub async fn get_settings(app: tauri::AppHandle) -> Result<Settings, String> {
     let state = app.state::<crate::AppState>();
     let s = state.settings.lock().await.clone();
@@ -114,6 +115,7 @@ pub async fn get_settings(app: tauri::AppHandle) -> Result<Settings, String> {
 ///
 /// Returns an error if the app data directory cannot be resolved or the file cannot be written.
 #[tauri::command]
+#[tracing::instrument(level = "debug", skip_all)]
 pub async fn save_settings(app: tauri::AppHandle, settings: Settings) -> Result<(), String> {
     let app_data_dir = app
         .path()

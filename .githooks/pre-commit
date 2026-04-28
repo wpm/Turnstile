@@ -26,6 +26,7 @@ fi
 RUST_FILES=$(echo "$STAGED" | grep -E '\.rs$' || true)
 
 if [[ -n "$RUST_FILES" ]]; then
+  export PATH="$HOME/.cargo/bin:$PATH"
   echo "▶ Rust: formatting..."
   cargo fmt --manifest-path "$ROOT/src-tauri/Cargo.toml"
   git add $RUST_FILES

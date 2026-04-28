@@ -159,6 +159,7 @@ pub fn build_menu<R: Runtime>(handle: &AppHandle<R>) -> tauri::Result<tauri::men
 ///
 /// Returns a string error if the menu item is not found or is not a regular `MenuItem`.
 #[tauri::command]
+#[tracing::instrument(level = "debug", skip_all)]
 #[allow(clippy::needless_pass_by_value)]
 pub fn set_menu_item_enabled(app: AppHandle, id: String, enabled: bool) -> Result<(), String> {
     let menu = app

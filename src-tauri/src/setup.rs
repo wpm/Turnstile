@@ -12,7 +12,7 @@ use tauri::{AppHandle, Emitter};
 use tokio::io::AsyncBufReadExt;
 use tokio::process::Command;
 
-use tracing::info;
+use tracing::debug;
 
 // ── Constants ─────────────────────────────────────────────────────────
 
@@ -43,6 +43,17 @@ pub fn lean_bin() -> PathBuf {
 /// Absolute path to the `lake` binary installed by elan.
 pub fn lake_bin() -> PathBuf {
     elan_bin_dir().join(if cfg!(windows) { "lake.exe" } else { "lake" })
+}
+
+/// Absolute path to the managed Lean project directory.
+/// Respects `TURNSTILE_PROJECT_DIR` env override for tests and development.
+pub fn project_dir() -> PathBuf {
+    if let Ok(p) = std::env::var("TURNSTILE_PROJECT_DIR") {
+        return PathBuf::from(p);
+    }
+    dirs::data_dir()
+        .unwrap_or_else(|| home_dir().join("Library/Application Support"))
+        .join("com.ontical.turnstile/lean-project")
 }
 
 fn home_dir() -> PathBuf {
@@ -98,17 +109,17 @@ fn resume_from(project_path: &Path) -> ResumeFrom {
 /// Run the full setup sequence, emitting `setup-progress` events throughout.
 /// Designed to be called from `tokio::spawn`.
 pub async fn run_setup(app: AppHandle, project_path: PathBuf, setup_running: Arc<AtomicBool>) {
-    info!(
+    debug!(
         "run_setup: started, project_path={}",
         project_path.display()
     );
     let result = do_setup(&app, &project_path).await;
     setup_running.store(false, Ordering::SeqCst);
     if let Err(e) = result {
-        info!("run_setup: error: {e}");
+        debug!("run_setup: error: {e}");
         emit_progress(&app, "error", &e, 0);
     } else {
-        info!("run_setup: completed successfully");
+        debug!("run_setup: completed successfully");
     }
 }
 
@@ -117,25 +128,25 @@ async fn do_setup(app: &AppHandle, project_path: &Path) -> Result<(), String> {
 
     match resume_from(project_path) {
         ResumeFrom::InstallingElan => {
-            info!("do_setup: resuming from InstallingElan");
+            debug!("do_setup: resuming from InstallingElan");
             install_elan(app).await?;
             create_project(app, project_path)?;
             fetch_mathlib(app, project_path).await?;
             download_cache(app, project_path).await?;
         }
         ResumeFrom::CreatingProject => {
-            info!("do_setup: resuming from CreatingProject");
+            debug!("do_setup: resuming from CreatingProject");
             create_project(app, project_path)?;
             fetch_mathlib(app, project_path).await?;
             download_cache(app, project_path).await?;
         }
         ResumeFrom::FetchingMathlib => {
-            info!("do_setup: resuming from FetchingMathlib");
+            debug!("do_setup: resuming from FetchingMathlib");
             fetch_mathlib(app, project_path).await?;
             download_cache(app, project_path).await?;
         }
         ResumeFrom::DownloadingCache => {
-            info!("do_setup: resuming from DownloadingCache");
+            debug!("do_setup: resuming from DownloadingCache");
             download_cache(app, project_path).await?;
         }
     }
@@ -190,7 +201,7 @@ async fn install_elan_unix(app: &AppHandle) -> Result<(), String> {
         ));
     }
 
-    info!("elan installed successfully");
+    debug!("elan installed successfully");
     emit_progress(app, "installing-elan", "elan installed.", 9);
     Ok(())
 }
@@ -234,7 +245,7 @@ async fn install_elan_windows(app: &AppHandle) -> Result<(), String> {
         ));
     }
 
-    info!("elan installed successfully (Windows)");
+    debug!("elan installed successfully (Windows)");
     emit_progress(app, "installing-elan", "elan installed.", 9);
     Ok(())
 }
@@ -414,7 +425,7 @@ async fn run_streaming(
         std::env::var("PATH").unwrap_or_else(|_| "/usr/bin:/bin:/usr/sbin:/sbin".to_string())
     );
 
-    info!("run_streaming: {} {:?}", cmd.display(), args);
+    debug!("run_streaming: {} {:?}", cmd.display(), args);
 
     let mut child = Command::new(cmd)
         .args(args)

@@ -36,17 +36,78 @@ pub fn render_katex(text: &str) -> String {
         .build()
         .unwrap();
 
-    scan_spans(text)
+    let rendered: String = scan_spans(text)
         .into_iter()
         .map(|span| match span {
-            Span::Plain(s) => s,
+            Span::Plain(s) => inline_markdown(&s),
             Span::Lean(s) => format!("`{s}`"),
             Span::LaTeX(math) => katex::render_with_opts(&math, inline_opts.clone())
                 .unwrap_or_else(|_| format!("${math}$")),
             Span::DisplayLatex(math) => katex::render_with_opts(&math, display_opts.clone())
                 .unwrap_or_else(|_| format!("$${math}$$")),
         })
-        .collect()
+        .collect();
+
+    // Convert paragraph breaks and line breaks to HTML so the {@html} display renders correctly.
+    // A line containing only "---" becomes a horizontal rule rather than a paragraph break.
+    let normalized = rendered.replace("\r\n", "\n");
+    let mut parts: Vec<String> = Vec::new();
+    let mut open_p = false;
+    for para in normalized.split("\n\n") {
+        let trimmed = para.trim();
+        if trimmed == "---" || trimmed == "***" || trimmed == "___" {
+            if open_p {
+                parts.push("</p>".to_string());
+                open_p = false;
+            }
+            parts.push("<hr>".to_string());
+        } else {
+            if open_p {
+                parts.push("</p>".to_string());
+            }
+            parts.push(format!("<p>{}", para.replace('\n', "<br>")));
+            open_p = true;
+        }
+    }
+    if open_p {
+        parts.push("</p>".to_string());
+    }
+    parts.join("")
+}
+
+/// Convert inline Markdown (`**bold**`, `*italic*`) in a plain-text segment to HTML.
+/// Applied only to `Plain` spans, never inside math or code.
+fn inline_markdown(s: &str) -> String {
+    // Bold before italic so **x** isn't partially matched by *x*.
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while !rest.is_empty() {
+        if let Some(after_open) = rest.strip_prefix("**") {
+            if let Some(close) = after_open.find("**") {
+                out.push_str("<strong>");
+                out.push_str(&after_open[..close]);
+                out.push_str("</strong>");
+                rest = &after_open[close + 2..];
+                continue;
+            }
+        }
+        if let Some(after_open) = rest.strip_prefix('*') {
+            if let Some(close) = after_open.find('*') {
+                out.push_str("<em>");
+                out.push_str(&after_open[..close]);
+                out.push_str("</em>");
+                rest = &after_open[close + 1..];
+                continue;
+            }
+        }
+        // Advance by one char.
+        let mut chars = rest.chars();
+        if let Some(c) = chars.next() {
+            out.push(c);
+            rest = chars.as_str();
+        }
+    }
+    out
 }
 
 /// Default translator prompt, loaded at compile time from `prompts/translator.md`.
@@ -108,7 +169,7 @@ mod tests {
 
     #[test]
     fn render_katex_leaves_plain_text_unchanged() {
-        assert_eq!(render_katex("hello world"), "hello world");
+        assert_eq!(render_katex("hello world"), "<p>hello world</p>");
     }
 
     #[test]
@@ -129,13 +190,51 @@ mod tests {
     fn render_katex_mixed_content() {
         let out = render_katex("Inline $a$ and display $$b$$.");
         assert!(!out.contains('$'));
-        assert!(out.starts_with("Inline "));
-        assert!(out.ends_with('.'));
+        assert!(out.contains("Inline "));
+        assert!(out.contains('.'));
     }
 
     #[test]
     fn render_katex_unclosed_delimiter_preserved() {
         let out = render_katex("broken $x + 1 here");
-        assert_eq!(out, "broken $x + 1 here");
+        assert_eq!(out, "<p>broken $x + 1 here</p>");
+    }
+
+    #[test]
+    fn render_katex_paragraph_breaks_become_html() {
+        let out = render_katex("first\n\nsecond");
+        assert_eq!(out, "<p>first</p><p>second</p>");
+    }
+
+    #[test]
+    fn render_katex_single_newline_becomes_br() {
+        let out = render_katex("line one\nline two");
+        assert_eq!(out, "<p>line one<br>line two</p>");
+    }
+
+    #[test]
+    fn render_katex_bold_markdown() {
+        let out = render_katex("**Theorem (Foo)**");
+        assert_eq!(out, "<p><strong>Theorem (Foo)</strong></p>");
+    }
+
+    #[test]
+    fn render_katex_italic_markdown() {
+        let out = render_katex("*Proof.*");
+        assert_eq!(out, "<p><em>Proof.</em></p>");
+    }
+
+    #[test]
+    fn render_katex_hr_becomes_hr_tag() {
+        let out = render_katex("first\n\n---\n\nsecond");
+        assert_eq!(out, "<p>first</p><hr><p>second</p>");
+    }
+
+    #[test]
+    fn render_katex_bold_not_applied_inside_math() {
+        // Math spans bypass inline_markdown — the ** inside $...$ must not become <strong>
+        let out = render_katex("$a**b**c$");
+        assert!(out.contains("katex"));
+        assert!(!out.contains("<strong>"));
     }
 }

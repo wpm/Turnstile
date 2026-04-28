@@ -11,7 +11,6 @@
   import { onMount } from "svelte";
   import { SvelteMap } from "svelte/reactivity";
   import { listen } from "@tauri-apps/api/event";
-  import { invoke } from "@tauri-apps/api/core";
 
   let proofView = $state<ProofView>("formal");
   let dark = $state(false);
@@ -61,6 +60,7 @@
     let unlistenProse: (() => void) | undefined;
     let unlistenLsp: (() => void) | undefined;
     let unlistenShowMessage: (() => void) | undefined;
+    let unlistenSessionLoaded: (() => void) | undefined;
 
     const setup = Promise.all([
       listen<string>("goal-state-updated", (e) => {
@@ -78,16 +78,15 @@
           e.payload.message,
         );
       }),
-    ]).then(([g, p, l, s]) => {
+      listen<{ prose: { text: string } }>("session-loaded", (e) => {
+        proseText = e.payload.prose.text;
+      }),
+    ]).then(([g, p, l, s, sl]) => {
       unlistenGoal = g;
       unlistenProse = p;
       unlistenLsp = l;
       unlistenShowMessage = s;
-      // Sync initial state: the lsp-status event may have fired before our
-      // listener was registered, so explicitly poll the current state.
-      void invoke<boolean>("get_lsp_ready").then((ready) => {
-        lspReady = ready;
-      });
+      unlistenSessionLoaded = sl;
     });
     void setup;
 
@@ -96,6 +95,7 @@
       unlistenProse?.();
       unlistenLsp?.();
       unlistenShowMessage?.();
+      unlistenSessionLoaded?.();
       for (const timer of toastTimers.values()) clearTimeout(timer);
       toastTimers.clear();
     };
