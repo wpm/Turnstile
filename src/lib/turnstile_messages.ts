@@ -32,10 +32,10 @@ export async function startMessageListener(): Promise<() => void> {
     const msg = e.payload;
     switch (msg.type) {
       case "fileProgress":
-        fileProgress.set(msg as unknown as FileProgressRange[]);
+        fileProgress.set(msg.items);
         break;
       case "annotationsUpdated":
-        annotations.set(msg as unknown as Annotation[]);
+        annotations.set(msg.items);
         break;
       case "lspStatus":
         lspStatus.set({ state: msg.state, message: msg.message });

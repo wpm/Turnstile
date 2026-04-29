@@ -173,11 +173,17 @@ pub enum TurnstileMessage {
     /// intercepts this variant, fuses the diagnostics into proof annotations,
     /// and emits `AnnotationsUpdated` instead. Tests in `lean/mod.rs` assert
     /// on this variant.
-    Diagnostics(Vec<DiagnosticInfo>),
+    Diagnostics {
+        items: Vec<DiagnosticInfo>,
+    },
     /// Proof annotations after fusion of LSP diagnostics with non-LSP
     /// annotations. This is what the frontend renders as squiggles and gutter marks.
-    AnnotationsUpdated(Vec<crate::proof::Annotation>),
-    FileProgress(Vec<FileProgressRange>),
+    AnnotationsUpdated {
+        items: Vec<crate::proof::Annotation>,
+    },
+    FileProgress {
+        items: Vec<FileProgressRange>,
+    },
     ElaborationDone,
     ShowMessage {
         severity: String,
@@ -185,7 +191,9 @@ pub enum TurnstileMessage {
     },
     LspStatus(LspStatus),
     SemanticTokenRefresh,
-    SemanticTokens(Vec<SemanticToken>),
+    SemanticTokens {
+        items: Vec<SemanticToken>,
+    },
     GoalStateUpdated(GoalStateInfo),
 }
 
@@ -194,18 +202,18 @@ pub enum TurnstileMessage {
 impl fmt::Display for TurnstileMessage {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Diagnostics(d) => write!(f, "diagnostics ({} items)", d.len()),
-            Self::AnnotationsUpdated(items) => {
+            Self::Diagnostics { items } => write!(f, "diagnostics ({} items)", items.len()),
+            Self::AnnotationsUpdated { items } => {
                 write!(f, "annotationsUpdated ({} items)", items.len())
             }
-            Self::FileProgress(ranges) => write!(f, "fileProgress ({} ranges)", ranges.len()),
+            Self::FileProgress { items } => write!(f, "fileProgress ({} ranges)", items.len()),
             Self::ElaborationDone => write!(f, "elaborationDone"),
             Self::ShowMessage { severity, message } => {
                 write!(f, "showMessage [{severity}]: {message}")
             }
             Self::LspStatus(s) => write!(f, "lspStatus [{}]: {}", s.state, s.message),
             Self::SemanticTokenRefresh => write!(f, "semanticTokenRefresh"),
-            Self::SemanticTokens(t) => write!(f, "semanticTokens ({} tokens)", t.len()),
+            Self::SemanticTokens { items } => write!(f, "semanticTokens ({} tokens)", items.len()),
             Self::GoalStateUpdated(_) => write!(f, "goalStateUpdated"),
         }
     }
@@ -755,15 +763,15 @@ const fn severity_str(typ: MessageType) -> &'static str {
 pub(in crate::lean) fn from_lean(msg: LeanMessage) -> Option<TurnstileMessage> {
     debug!("{msg}");
     Some(match msg {
-        LeanMessage::Diagnostics(params) => {
-            TurnstileMessage::Diagnostics(parse_diagnostics(params))
-        }
+        LeanMessage::Diagnostics(params) => TurnstileMessage::Diagnostics {
+            items: parse_diagnostics(params),
+        },
         LeanMessage::FileProgress(params) => {
             let ranges = parse_file_progress(params);
             if ranges.is_empty() {
                 TurnstileMessage::ElaborationDone
             } else {
-                TurnstileMessage::FileProgress(ranges)
+                TurnstileMessage::FileProgress { items: ranges }
             }
         }
         LeanMessage::LogMessage(p) => {

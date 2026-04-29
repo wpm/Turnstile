@@ -117,7 +117,7 @@ mod tests {
             "timed out waiting for ElaborationDone"
         );
         messages.lock().unwrap().iter().any(|m| {
-            if let TurnstileMessage::Diagnostics(diags) = m {
+            if let TurnstileMessage::Diagnostics { items: diags } = m {
                 diags.iter().any(|d| d.message.contains(needle))
             } else {
                 false
@@ -129,7 +129,7 @@ mod tests {
         let last_diagnostics = msgs
             .iter()
             .filter_map(|m| {
-                if let TurnstileMessage::Diagnostics(d) = m {
+                if let TurnstileMessage::Diagnostics { items: d } = m {
                     Some(d)
                 } else {
                     None
@@ -147,7 +147,7 @@ mod tests {
         );
         assert!(
             msgs.iter()
-                .any(|m| matches!(m, TurnstileMessage::FileProgress(_))),
+                .any(|m| matches!(m, TurnstileMessage::FileProgress { .. })),
             "expected at least one FileProgress message"
         );
     }
@@ -465,7 +465,7 @@ mod tests {
             &messages,
             |msgs| {
                 msgs.iter().any(|m| {
-                    if let TurnstileMessage::Diagnostics(d) = m {
+                    if let TurnstileMessage::Diagnostics { items: d } = m {
                         d.is_empty()
                     } else {
                         false
@@ -517,7 +517,7 @@ mod tests {
 
         // Now look for the type mismatch diagnostic in messages after the edit.
         let found = messages.lock().unwrap()[count_before..].iter().any(|m| {
-            if let TurnstileMessage::Diagnostics(diags) = m {
+            if let TurnstileMessage::Diagnostics { items: diags } = m {
                 diags.iter().any(|d| d.message.contains("Type mismatch"))
             } else {
                 false

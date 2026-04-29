@@ -148,7 +148,7 @@ fn dispatch_turnstile_message(app: &AppHandle, msg: TurnstileMessage) {
     use std::sync::atomic::Ordering;
 
     match msg {
-        TurnstileMessage::Diagnostics(diagnostics) => {
+        TurnstileMessage::Diagnostics { items: diagnostics } => {
             let state = app.state::<AppState>();
             state
                 .current_diagnostics
@@ -163,7 +163,7 @@ fn dispatch_turnstile_message(app: &AppHandle, msg: TurnstileMessage) {
                     guard.annotations.set_diagnostics(&diagnostics);
                     guard.annotations.items.clone()
                 };
-                emit_turnstile(&app, &TurnstileMessage::AnnotationsUpdated(items));
+                emit_turnstile(&app, &TurnstileMessage::AnnotationsUpdated { items });
             });
         }
         TurnstileMessage::ElaborationDone => {
@@ -176,11 +176,11 @@ fn dispatch_turnstile_message(app: &AppHandle, msg: TurnstileMessage) {
         TurnstileMessage::SemanticTokenRefresh => {
             spawn_semantic_token_refresh(app.clone());
         }
-        msg @ (TurnstileMessage::FileProgress(_)
+        msg @ (TurnstileMessage::FileProgress { .. }
         | TurnstileMessage::ShowMessage { .. }
-        | TurnstileMessage::AnnotationsUpdated(_)
+        | TurnstileMessage::AnnotationsUpdated { .. }
         | TurnstileMessage::LspStatus(_)
-        | TurnstileMessage::SemanticTokens(_)
+        | TurnstileMessage::SemanticTokens { .. }
         | TurnstileMessage::GoalStateUpdated(_)) => {
             emit_turnstile(app, &msg);
         }
@@ -250,7 +250,7 @@ fn apply_semantic_tokens(app: &AppHandle, tokens: &lsp_types::SemanticTokens) {
             guard.annotations.set_tokens(&decoded);
             guard.annotations.items.clone()
         };
-        emit_turnstile(&app_handle, &TurnstileMessage::AnnotationsUpdated(items));
+        emit_turnstile(&app_handle, &TurnstileMessage::AnnotationsUpdated { items });
     });
 }
 

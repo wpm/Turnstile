@@ -16,12 +16,12 @@ import type { SemanticToken } from "./SemanticToken";
  * own events directly and are not represented here.
  */
 export type TurnstileMessage =
-  | ({ type: "diagnostics" } & Array<DiagnosticInfo>)
-  | ({ type: "annotationsUpdated" } & Array<Annotation>)
-  | ({ type: "fileProgress" } & Array<FileProgressRange>)
+  | { type: "diagnostics"; items: Array<DiagnosticInfo> }
+  | { type: "annotationsUpdated"; items: Array<Annotation> }
+  | { type: "fileProgress"; items: Array<FileProgressRange> }
   | { type: "elaborationDone" }
   | { type: "showMessage"; severity: string; message: string }
   | ({ type: "lspStatus" } & LspStatus)
   | { type: "semanticTokenRefresh" }
-  | ({ type: "semanticTokens" } & Array<SemanticToken>)
+  | { type: "semanticTokens"; items: Array<SemanticToken> }
   | ({ type: "goalStateUpdated" } & GoalStateInfo);
