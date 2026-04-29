@@ -23,7 +23,9 @@ use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use lean::client::Client as LeanClient;
-use lean::messages::turnstile::{HoverInfo, LspStatus};
+use lean::messages::turnstile::{
+    emit_turnstile, GoalStateInfo, HoverInfo, LspStatus, TurnstileMessage,
+};
 use lean::messages::DisplayLspParams;
 use tauri::{AppHandle, Emitter, Manager};
 use tracing::debug;
@@ -142,8 +144,7 @@ fn apply_content_changes(source: &mut String, changes: &[ContentChange]) {
     }
 }
 
-fn dispatch_turnstile_message(app: &AppHandle, msg: lean::messages::turnstile::TurnstileMessage) {
-    use lean::messages::turnstile::{emit_turnstile, TurnstileMessage};
+fn dispatch_turnstile_message(app: &AppHandle, msg: TurnstileMessage) {
     use std::sync::atomic::Ordering;
 
     match msg {
@@ -191,14 +192,13 @@ async fn start_lsp(app: AppHandle) -> Result<(), String> {
 
     let lean_bin = setup::lean_bin();
 
-    app.emit(
-        "lsp-status",
-        LspStatus {
+    emit_turnstile(
+        &app,
+        &TurnstileMessage::LspStatus(LspStatus {
             state: String::new(),
             message: format!("initializing ({})...", lean_bin.display()),
-        },
-    )
-    .ok();
+        }),
+    );
 
     let app_for_dispatch = app.clone();
     let client = LeanClient::start("", move |msg| {
@@ -216,14 +216,13 @@ async fn start_lsp(app: AppHandle) -> Result<(), String> {
 
     *state.lsp_client.lock().await = Some(client);
 
-    app.emit(
-        "lsp-status",
-        LspStatus {
+    emit_turnstile(
+        &app,
+        &TurnstileMessage::LspStatus(LspStatus {
             state: "connected".to_string(),
             message: "connected".to_string(),
-        },
-    )
-    .ok();
+        }),
+    );
 
     Ok(())
 }
@@ -251,9 +250,7 @@ fn apply_semantic_tokens(app: &AppHandle, tokens: &lsp_types::SemanticTokens) {
             guard.annotations.set_tokens(&decoded);
             guard.annotations.items.clone()
         };
-        app_handle
-            .emit(proof::ANNOTATIONS_UPDATED_EVENT, &items)
-            .ok();
+        emit_turnstile(&app_handle, &TurnstileMessage::AnnotationsUpdated(items));
     });
 }
 
@@ -523,7 +520,7 @@ fn last_non_whitespace_position(source: &str) -> (u32, u32) {
 }
 
 /// Spawn a background task that, after a short debounce, fetches the
-/// whole-proof goal state and emits a [`proof::GOAL_STATE_UPDATED_EVENT`] to
+/// whole-proof goal state and emits a [`TurnstileMessage::GoalStateUpdated`] to
 /// the frontend.
 ///
 /// The task is sequence-guarded: if `state.goal_state_seq` advances before
@@ -562,9 +559,13 @@ fn spawn_goal_state_refresh(app: AppHandle, seq: u64) {
             (last, new)
         };
 
-        app.emit(proof::GOAL_STATE_UPDATED_EVENT, &full).ok();
+        let full_nonempty = !full.trim().is_empty();
+        emit_turnstile(
+            &app,
+            &TurnstileMessage::GoalStateUpdated(GoalStateInfo { full }),
+        );
 
-        if last_hash != new_hash && !full.trim().is_empty() {
+        if last_hash != new_hash && full_nonempty {
             state.prose_dirty.store(true, Ordering::SeqCst);
             let prose_seq = state.prose_generation_seq.fetch_add(1, Ordering::SeqCst) + 1;
             spawn_prose_regeneration(app.clone(), prose_seq);
