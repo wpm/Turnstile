@@ -22,6 +22,7 @@ use serde::Serialize;
 use serde_json::Value;
 use std::fmt;
 use tracing::{debug, error, instrument, warn};
+use ts_rs::TS;
 // ── Public DTO types for Tauri events ─────────────────────────────────
 
 #[derive(Clone, Debug, Serialize)]
@@ -43,7 +44,8 @@ pub struct SemanticToken {
     pub token_modifiers: Vec<String>,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, TS)]
+#[ts(export, export_to = "../../src/lib/")]
 pub struct LspStatus {
     pub state: String, // "connected", "error", ""
     pub message: String,

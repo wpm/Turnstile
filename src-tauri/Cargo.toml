@@ -34,6 +34,7 @@ async-trait = "0.1"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 thiserror = "2"
 lsp-types = "0.95"
+ts-rs = { version = "10", features = ["serde-compat"] }
 katex = "0.4.6"
 async-lsp = "0.2.3"
 tower = "0.5"
