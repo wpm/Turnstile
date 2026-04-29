@@ -11,6 +11,11 @@
   import { onMount } from "svelte";
   import { SvelteMap } from "svelte/reactivity";
   import { listen } from "@tauri-apps/api/event";
+  import {
+    goalState,
+    lspStatus as lspStatusStore,
+    showMessage,
+  } from "$lib/turnstile_messages";
 
   let proofView = $state<ProofView>("formal");
   let dark = $state(false);
@@ -56,45 +61,41 @@
   /* eslint-enable @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment */
 
   onMount(() => {
-    let unlistenGoal: (() => void) | undefined;
     let unlistenProse: (() => void) | undefined;
-    let unlistenLsp: (() => void) | undefined;
-    let unlistenShowMessage: (() => void) | undefined;
     let unlistenSessionLoaded: (() => void) | undefined;
 
+    // Subscribe to turnstile_messages stores.
+    const unsubscribeGoal = goalState.subscribe((text) => {
+      goalText = text;
+    });
+
+    const unsubscribeLsp = lspStatusStore.subscribe((status) => {
+      lspReady = status?.state === "connected";
+    });
+
+    const unsubscribeShowMessage = showMessage.subscribe((msg) => {
+      if (msg === null) return;
+      addToast(msg.severity as ToastItem["severity"], msg.message);
+    });
+
     const setup = Promise.all([
-      listen<string>("goal-state-updated", (e) => {
-        goalText = e.payload;
-      }),
       listen<{ text: string; hash: string | null }>("prose-updated", (e) => {
         proseText = e.payload.text;
-      }),
-      listen<{ state: string; message: string }>("lsp-status", (e) => {
-        lspReady = e.payload.state === "connected";
-      }),
-      listen<{ severity: string; message: string }>("lsp-show-message", (e) => {
-        addToast(
-          e.payload.severity as ToastItem["severity"],
-          e.payload.message,
-        );
       }),
       listen<{ prose: { text: string } }>("session-loaded", (e) => {
         proseText = e.payload.prose.text;
       }),
-    ]).then(([g, p, l, s, sl]) => {
-      unlistenGoal = g;
+    ]).then(([p, sl]) => {
       unlistenProse = p;
-      unlistenLsp = l;
-      unlistenShowMessage = s;
       unlistenSessionLoaded = sl;
     });
     void setup;
 
     return () => {
-      unlistenGoal?.();
+      unsubscribeGoal();
+      unsubscribeLsp();
+      unsubscribeShowMessage();
       unlistenProse?.();
-      unlistenLsp?.();
-      unlistenShowMessage?.();
       unlistenSessionLoaded?.();
       for (const timer of toastTimers.values()) clearTimeout(timer);
       toastTimers.clear();

@@ -20,7 +20,6 @@
     annotationField,
     diagnosticGutter,
     setAnnotations,
-    type Annotation,
   } from "./annotations";
   import { lspHoverTooltip } from "./hover";
   import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
@@ -31,6 +30,10 @@
   import { oneDark } from "@codemirror/theme-one-dark";
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
+  import {
+    fileProgress,
+    annotations as annotationsStore,
+  } from "./turnstile_messages";
 
   const setProgressLines = StateEffect.define<{ from: number; to: number }[]>();
 
@@ -74,8 +77,8 @@
   const themeCompartment = new Compartment();
   const editableCompartment = new Compartment();
 
-  let unlistenProgress: (() => void) | undefined;
-  let unlistenAnnotations: (() => void) | undefined;
+  let unsubscribeProgress: (() => void) | undefined;
+  let unsubscribeAnnotations: (() => void) | undefined;
   let unlistenSessionLoaded: (() => void) | undefined;
 
   type LspPosition = { line: number; character: number };
@@ -129,25 +132,19 @@
       parent: container,
     });
 
-    unlistenProgress = await listen<{ start_line: number; end_line: number }[]>(
-      "lsp-file-progress",
-      (e) => {
-        if (!view) return;
-        view.dispatch({
-          effects: setProgressLines.of(
-            e.payload.map((r) => ({ from: r.start_line, to: r.end_line })),
-          ),
-        });
-      },
-    );
+    unsubscribeProgress = fileProgress.subscribe((ranges) => {
+      if (!view) return;
+      view.dispatch({
+        effects: setProgressLines.of(
+          ranges.map((r) => ({ from: r.start_line, to: r.end_line })),
+        ),
+      });
+    });
 
-    unlistenAnnotations = await listen<Annotation[]>(
-      "annotations-updated",
-      (e) => {
-        if (!view) return;
-        view.dispatch({ effects: setAnnotations.of(e.payload) });
-      },
-    );
+    unsubscribeAnnotations = annotationsStore.subscribe((anns) => {
+      if (!view) return;
+      view.dispatch({ effects: setAnnotations.of(anns) });
+    });
 
     unlistenSessionLoaded = await listen<{ proof_lean: string }>(
       "session-loaded",
@@ -166,8 +163,8 @@
   });
 
   onDestroy(() => {
-    unlistenProgress?.();
-    unlistenAnnotations?.();
+    unsubscribeProgress?.();
+    unsubscribeAnnotations?.();
     unlistenSessionLoaded?.();
     view?.destroy();
   });
