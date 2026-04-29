@@ -42,7 +42,6 @@ pub enum TokenType {
     Regexp,
     Operator,
     Decorator,
-    #[serde(other)]
     Unknown,
 }
 
