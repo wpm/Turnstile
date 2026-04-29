@@ -87,12 +87,8 @@ fn log_lsp(method: &str, params: &impl DisplayLspParams) {
 }
 
 impl Client {
-    /// Translate a [`LeanMessage`] from `lean --server` into a [`TurnstileMessage`].
-    ///
-    /// Returns `None` for server-internal notifications (e.g. `LogMessage`) that
-    /// carry no frontend payload.
-    pub fn translate(msg: LeanMessage) -> Option<TurnstileMessage> {
-        crate::lean::messages::turnstile::translate(msg)
+    fn translate(msg: LeanMessage) -> Option<TurnstileMessage> {
+        crate::lean::messages::turnstile::from_lean(msg)
     }
 
     /// Spawn `lean --server` against a fresh temporary project and complete the

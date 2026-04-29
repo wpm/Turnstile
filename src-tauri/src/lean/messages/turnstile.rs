@@ -25,7 +25,8 @@ use tracing::{debug, error, instrument, warn};
 use ts_rs::TS;
 // ── Public DTO types for Tauri events ─────────────────────────────────
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export, export_to = "../../src/lib/")]
 pub struct DiagnosticInfo {
     pub start_line: u32,
     pub start_col: u32,
@@ -35,7 +36,8 @@ pub struct DiagnosticInfo {
     pub message: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, TS)]
+#[ts(export, export_to = "../../src/lib/")]
 pub struct SemanticToken {
     pub line: u32,
     pub col: u32,
@@ -44,7 +46,7 @@ pub struct SemanticToken {
     pub token_modifiers: Vec<String>,
 }
 
-#[derive(Clone, Serialize, TS)]
+#[derive(Clone, Debug, Serialize, TS)]
 #[ts(export, export_to = "../../src/lib/")]
 pub struct LspStatus {
     pub state: String, // "connected", "error", ""
@@ -64,7 +66,8 @@ pub struct CompletionItem {
 
 /// A range of lines currently being elaborated by the Lean server.
 /// Emitted via the `$/lean/fileProgress` notification.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export, export_to = "../../src/lib/")]
 pub struct FileProgressRange {
     pub start_line: u32, // 1-indexed (converted from 0-indexed LSP)
     pub end_line: u32,   // 1-indexed
@@ -148,23 +151,42 @@ pub struct DocumentSymbolInfo {
     pub children: Vec<Self>,
 }
 
-/// A Turnstile-layer message destined for the frontend.
+/// Goal state returned by Lean at the end of the document.
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export, export_to = "../../src/lib/")]
+pub struct GoalStateInfo {
+    pub full: String,
+}
+
+/// Wire format from the Rust backend to the JS frontend for the Lean / LSP
+/// layer. All in-scope `app.emit` calls go through `emit_turnstile`, which
+/// logs the message at `debug` level and emits it under the
+/// `"turnstile-message"` event name.
 ///
-/// Produced by translating a [`LeanMessage`]: raw LSP types are mapped
-/// to DTO types, positions are normalized to the frontend's convention, and
-/// server-internal notifications (e.g. `LogMessage`) that carry no frontend
-/// payload are dropped entirely.
-#[derive(Clone, Debug, Serialize)]
+/// Other subsystems (LLM, session, setup, prose, menu) currently emit their
+/// own events directly and are not represented here.
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export, export_to = "../../src/lib/")]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum TurnstileMessage {
+    /// Raw diagnostics from the Lean server. In production, `dispatch`
+    /// intercepts this variant, fuses the diagnostics into proof annotations,
+    /// and emits `AnnotationsUpdated` instead. Tests in `lean/mod.rs` assert
+    /// on this variant.
     Diagnostics(Vec<DiagnosticInfo>),
+    /// Proof annotations after fusion of LSP diagnostics with non-LSP
+    /// annotations. This is what the frontend renders as squiggles and gutter marks.
+    AnnotationsUpdated(Vec<crate::proof::Annotation>),
     FileProgress(Vec<FileProgressRange>),
     ElaborationDone,
     ShowMessage {
-        severity: &'static str,
+        severity: String,
         message: String,
     },
+    LspStatus(LspStatus),
     SemanticTokenRefresh,
+    SemanticTokens(Vec<SemanticToken>),
+    GoalStateUpdated(GoalStateInfo),
 }
 
 // ── Display implementations ────────────────────────────────────────────
@@ -172,28 +194,21 @@ pub enum TurnstileMessage {
 impl fmt::Display for TurnstileMessage {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Diagnostics(diags) => fmt_list(f, "diagnostics", "items", diags),
-            Self::FileProgress(ranges) => fmt_list(f, "fileProgress", "ranges", ranges),
+            Self::Diagnostics(d) => write!(f, "diagnostics ({} items)", d.len()),
+            Self::AnnotationsUpdated(items) => {
+                write!(f, "annotationsUpdated ({} items)", items.len())
+            }
+            Self::FileProgress(ranges) => write!(f, "fileProgress ({} ranges)", ranges.len()),
             Self::ElaborationDone => write!(f, "elaborationDone"),
             Self::ShowMessage { severity, message } => {
                 write!(f, "showMessage [{severity}]: {message}")
             }
+            Self::LspStatus(s) => write!(f, "lspStatus [{}]: {}", s.state, s.message),
             Self::SemanticTokenRefresh => write!(f, "semanticTokenRefresh"),
+            Self::SemanticTokens(t) => write!(f, "semanticTokens ({} tokens)", t.len()),
+            Self::GoalStateUpdated(_) => write!(f, "goalStateUpdated"),
         }
     }
-}
-
-fn fmt_list(
-    f: &mut fmt::Formatter<'_>,
-    label: &str,
-    unit: &str,
-    items: &[impl fmt::Display],
-) -> fmt::Result {
-    write!(f, "{label} ({} {unit})", items.len())?;
-    for item in items {
-        write!(f, "\n  {item}")?;
-    }
-    Ok(())
 }
 
 impl fmt::Display for DiagnosticInfo {
@@ -702,9 +717,22 @@ fn document_symbol_to_dto(sym: DocumentSymbol) -> DocumentSymbolInfo {
 
 // ── Tauri event name constants ─────────────────────────────────────────
 
+pub const TURNSTILE_MESSAGE_EVENT: &str = "turnstile-message";
+
 pub const FILE_PROGRESS_EVENT: &str = "lsp-file-progress";
 pub const ELABORATION_DONE_EVENT: &str = "lsp-elaboration-done";
 pub const SHOW_MESSAGE_EVENT: &str = "lsp-show-message";
+
+/// The single emit site for Lean/LSP-layer messages going from the Rust
+/// backend to the JS frontend. Logs the message at `debug` level using its
+/// `Display` impl, then emits it on `TURNSTILE_MESSAGE_EVENT`.
+pub fn emit_turnstile(app: &tauri::AppHandle, msg: &TurnstileMessage) {
+    use tauri::Emitter;
+    tracing::debug!("→ frontend: {msg}");
+    if let Err(e) = app.emit(TURNSTILE_MESSAGE_EVENT, msg) {
+        tracing::warn!("frontend emit failed: {e}");
+    }
+}
 
 fn server_log(typ: MessageType, message: &str) {
     match typ {
@@ -714,7 +742,7 @@ fn server_log(typ: MessageType, message: &str) {
     }
 }
 
-const fn message_type_severity(typ: MessageType) -> &'static str {
+const fn severity_str(typ: MessageType) -> &'static str {
     match typ {
         MessageType::ERROR => "error",
         MessageType::WARNING => "warning",
@@ -723,40 +751,38 @@ const fn message_type_severity(typ: MessageType) -> &'static str {
     }
 }
 
-/// Translate a [`LeanMessage`] into zero or more [`TurnstileMessage`]s.
+/// Map a raw [`LeanMessage`] from the LSP server to its wire-format counterpart.
 ///
 /// Returns `None` for server-internal notifications (`LogMessage`) that carry
-/// no frontend payload. `TokenRefresh` and `ElaborationDone` produce a
-/// [`TurnstileMessage::SemanticTokenRefresh`] or
-/// [`TurnstileMessage::ElaborationDone`] respectively; they do not emit
-/// multiple messages, so a single `Option` is sufficient.
-pub(in crate::lean) fn translate(msg: LeanMessage) -> Option<TurnstileMessage> {
+/// no frontend payload. The `Protocol::keep_notification` filter is expected
+/// to have already dropped stale-version messages before this is called.
+pub(in crate::lean) fn from_lean(msg: LeanMessage) -> Option<TurnstileMessage> {
     debug!("{msg}");
-    match msg {
+    Some(match msg {
         LeanMessage::Diagnostics(params) => {
-            Some(TurnstileMessage::Diagnostics(parse_diagnostics(params)))
+            TurnstileMessage::Diagnostics(parse_diagnostics(params))
         }
         LeanMessage::FileProgress(params) => {
             let ranges = parse_file_progress(params);
             if ranges.is_empty() {
-                Some(TurnstileMessage::ElaborationDone)
+                TurnstileMessage::ElaborationDone
             } else {
-                Some(TurnstileMessage::FileProgress(ranges))
+                TurnstileMessage::FileProgress(ranges)
             }
         }
         LeanMessage::LogMessage(p) => {
             server_log(p.typ, &p.message);
-            None
+            return None;
         }
         LeanMessage::ShowMessage(p) => {
             server_log(p.typ, &p.message);
-            Some(TurnstileMessage::ShowMessage {
-                severity: message_type_severity(p.typ),
+            TurnstileMessage::ShowMessage {
+                severity: severity_str(p.typ).to_string(),
                 message: p.message,
-            })
+            }
         }
-        LeanMessage::TokenRefresh => Some(TurnstileMessage::SemanticTokenRefresh),
-    }
+        LeanMessage::TokenRefresh => TurnstileMessage::SemanticTokenRefresh,
+    })
 }
 
 #[cfg(test)]

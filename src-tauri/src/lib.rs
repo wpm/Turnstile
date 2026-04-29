@@ -187,6 +187,12 @@ fn dispatch_turnstile_message(app: &AppHandle, msg: lean::messages::turnstile::T
         TurnstileMessage::SemanticTokenRefresh => {
             spawn_semantic_token_refresh(app.clone());
         }
+        // New variants produced elsewhere in the backend (not via the Lean
+        // callback); full wiring happens in PR-3/PR-4.
+        TurnstileMessage::AnnotationsUpdated(_)
+        | TurnstileMessage::LspStatus(_)
+        | TurnstileMessage::SemanticTokens(_)
+        | TurnstileMessage::GoalStateUpdated(_) => {}
     }
 }
 

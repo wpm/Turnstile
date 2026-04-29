@@ -10,11 +10,13 @@
 pub mod translator;
 
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
 use crate::lean::messages::turnstile::{DiagnosticInfo, SemanticToken};
 
 /// Semantic token type, mirroring the LSP token type legend.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../src/lib/")]
 #[serde(rename_all = "camelCase")]
 pub enum TokenType {
     Namespace,
@@ -78,7 +80,8 @@ impl std::str::FromStr for TokenType {
 }
 
 /// Diagnostic severity level.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../src/lib/")]
 #[serde(rename_all = "camelCase")]
 pub enum DiagnosticSeverity {
     Error,
@@ -103,7 +106,8 @@ impl DiagnosticSeverity {
 ///
 /// Either a semantic token (for syntax highlighting) or a diagnostic
 /// (for error/warning squiggles). All line numbers are 1-indexed.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../src/lib/")]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum Annotation {
     #[serde(rename_all = "camelCase")]
