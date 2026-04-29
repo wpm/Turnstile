@@ -143,7 +143,7 @@ fn apply_content_changes(source: &mut String, changes: &[ContentChange]) {
 }
 
 fn dispatch_turnstile_message(app: &AppHandle, msg: lean::messages::turnstile::TurnstileMessage) {
-    use lean::messages::turnstile::TurnstileMessage;
+    use lean::messages::turnstile::{emit_turnstile, TurnstileMessage};
     use std::sync::atomic::Ordering;
 
     match msg {
@@ -162,37 +162,27 @@ fn dispatch_turnstile_message(app: &AppHandle, msg: lean::messages::turnstile::T
                     guard.annotations.set_diagnostics(&diagnostics);
                     guard.annotations.items.clone()
                 };
-                app.emit(proof::ANNOTATIONS_UPDATED_EVENT, &items).ok();
+                emit_turnstile(&app, &TurnstileMessage::AnnotationsUpdated(items));
             });
-        }
-        TurnstileMessage::FileProgress(ranges) => {
-            app.emit(lean::messages::turnstile::FILE_PROGRESS_EVENT, ranges)
-                .ok();
         }
         TurnstileMessage::ElaborationDone => {
             let state = app.state::<AppState>();
             let seq = state.goal_state_seq.fetch_add(1, Ordering::SeqCst) + 1;
             spawn_goal_state_refresh(app.clone(), seq);
             spawn_semantic_token_refresh(app.clone());
-            app.emit(lean::messages::turnstile::ELABORATION_DONE_EVENT, ())
-                .ok();
-        }
-        TurnstileMessage::ShowMessage { severity, message } => {
-            app.emit(
-                lean::messages::turnstile::SHOW_MESSAGE_EVENT,
-                serde_json::json!({ "severity": severity, "message": message }),
-            )
-            .ok();
+            emit_turnstile(app, &TurnstileMessage::ElaborationDone);
         }
         TurnstileMessage::SemanticTokenRefresh => {
             spawn_semantic_token_refresh(app.clone());
         }
-        // New variants produced elsewhere in the backend (not via the Lean
-        // callback); full wiring happens in PR-3/PR-4.
-        TurnstileMessage::AnnotationsUpdated(_)
+        msg @ (TurnstileMessage::FileProgress(_)
+        | TurnstileMessage::ShowMessage { .. }
+        | TurnstileMessage::AnnotationsUpdated(_)
         | TurnstileMessage::LspStatus(_)
         | TurnstileMessage::SemanticTokens(_)
-        | TurnstileMessage::GoalStateUpdated(_) => {}
+        | TurnstileMessage::GoalStateUpdated(_)) => {
+            emit_turnstile(app, &msg);
+        }
     }
 }
 

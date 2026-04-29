@@ -51,7 +51,6 @@ fn client_capabilities() -> ClientCapabilities {
     capabilities
 }
 use super::server::{Server, ServerStarted};
-use crate::lean::messages::lean::LeanMessage;
 use crate::lean::messages::turnstile::TurnstileMessage;
 use crate::lean::messages::DisplayLspParams;
 use crate::lean::protocol::Protocol;
@@ -87,10 +86,6 @@ fn log_lsp(method: &str, params: &impl DisplayLspParams) {
 }
 
 impl Client {
-    fn translate(msg: LeanMessage) -> Option<TurnstileMessage> {
-        crate::lean::messages::turnstile::from_lean(msg)
-    }
-
     /// Spawn `lean --server` against a fresh temporary project and complete the
     /// LSP initialization handshake. The `on_message` callback is called for
     /// every [`TurnstileMessage`] produced by the server.
@@ -122,8 +117,8 @@ impl Client {
 
         let mut server_rx = server_rx;
         tokio::spawn(async move {
-            while let Some(msg) = server_rx.recv().await {
-                if let Some(t) = Self::translate(msg) {
+            while let Some(lean_msg) = server_rx.recv().await {
+                if let Some(t) = crate::lean::messages::turnstile::from_lean(lean_msg) {
                     on_message(t);
                 }
             }
