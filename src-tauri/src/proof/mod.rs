@@ -191,7 +191,7 @@ pub struct ProseProof {
 /// `full` is what Lean reports at the end of the document (the "whole-proof"
 /// goal state, independent of cursor position).
 ///
-/// Populated on-demand and delivered to the UI via [`TurnstileMessage::GoalStateUpdated`].
+/// Populated on-demand and delivered to the UI via [`crate::lean::messages::turnstile::TurnstileMessage::GoalStateUpdated`].
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GoalState {
     pub full: String,
