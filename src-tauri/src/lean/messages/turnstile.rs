@@ -719,10 +719,6 @@ fn document_symbol_to_dto(sym: DocumentSymbol) -> DocumentSymbolInfo {
 
 pub const TURNSTILE_MESSAGE_EVENT: &str = "turnstile-message";
 
-pub const FILE_PROGRESS_EVENT: &str = "lsp-file-progress";
-pub const ELABORATION_DONE_EVENT: &str = "lsp-elaboration-done";
-pub const SHOW_MESSAGE_EVENT: &str = "lsp-show-message";
-
 /// The single emit site for Lean/LSP-layer messages going from the Rust
 /// backend to the JS frontend. Logs the message at `debug` level using its
 /// `Display` impl, then emits it on `TURNSTILE_MESSAGE_EVENT`.

@@ -191,8 +191,7 @@ pub struct ProseProof {
 /// `full` is what Lean reports at the end of the document (the "whole-proof"
 /// goal state, independent of cursor position).
 ///
-/// Populated on-demand and delivered to the UI via the
-/// [`GOAL_STATE_UPDATED_EVENT`] Tauri event.
+/// Populated on-demand and delivered to the UI via [`TurnstileMessage::GoalStateUpdated`].
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GoalState {
     pub full: String,
@@ -222,13 +221,6 @@ pub struct ProsePayload {
 /// Emitted when the prose draft changes — by the translator, by a PA tool
 /// call, or by a session load.  Payload: [`ProsePayload`].
 pub const PROSE_UPDATED_EVENT: &str = "prose-updated";
-
-/// Emitted when the whole-proof goal state has been refreshed.
-pub const GOAL_STATE_UPDATED_EVENT: &str = "goal-state-updated";
-
-/// Emitted when span annotations (tokens or diagnostics) change.
-/// Payload: the full [`Vec<Annotation>`] after the update.
-pub const ANNOTATIONS_UPDATED_EVENT: &str = "annotations-updated";
 
 /// Compute a fast hash of a string for change detection (not cryptographic).
 #[must_use]
