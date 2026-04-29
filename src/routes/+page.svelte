@@ -64,7 +64,6 @@
     let unlistenProse: (() => void) | undefined;
     let unlistenSessionLoaded: (() => void) | undefined;
 
-    // Subscribe to turnstile_messages stores.
     const unsubscribeGoal = goalState.subscribe((text) => {
       goalText = text;
     });

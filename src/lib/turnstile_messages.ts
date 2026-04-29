@@ -5,8 +5,6 @@ import type { Annotation } from "./Annotation";
 import type { FileProgressRange } from "./FileProgressRange";
 import type { LspStatus } from "./LspStatus";
 
-// Stores for each stream a component cares about.
-
 /** Current file progress ranges (lines being elaborated). */
 export const fileProgress = writable<FileProgressRange[]>([]);
 
@@ -28,12 +26,7 @@ export const showMessage = writable<{
   message: string;
 } | null>(null);
 
-/**
- * Start listening for `"turnstile-message"` Tauri events and dispatch
- * each message to the appropriate store.
- *
- * Call this once from the app root (e.g. `+layout.svelte` onMount).
- */
+/** Register the single `"turnstile-message"` Tauri listener. Returns an unlisten function. */
 export async function startMessageListener(): Promise<() => void> {
   return listen<TurnstileMessage>("turnstile-message", (e) => {
     const msg = e.payload;
@@ -57,19 +50,11 @@ export async function startMessageListener(): Promise<() => void> {
         showMessage.set({ severity: msg.severity, message: msg.message });
         break;
       case "diagnostics":
-        console.warn("unhandled TurnstileMessage", msg);
-        break;
       case "semanticTokenRefresh":
-        console.warn("unhandled TurnstileMessage", msg);
-        break;
       case "semanticTokens":
-        console.warn(
-          "unhandled TurnstileMessage (no frontend consumer yet)",
-          msg,
-        );
+        console.warn("unhandled TurnstileMessage", msg);
         break;
       default: {
-        // Exhaustiveness check
         const _exhaustive: never = msg;
         console.warn("unknown TurnstileMessage", _exhaustive);
       }
