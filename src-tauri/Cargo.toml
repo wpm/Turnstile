@@ -1,8 +1,8 @@
 [package]
 name = "turnstile"
-version = "0.1.0"
-description = "A Tauri App"
-authors = []
+version = "1.0.0"
+description = "Turnstile - a Lean proof assistant pairing formal proofs with prose"
+authors = ["W.P. McNeill <billmcn@gmail.com>"]
 edition = "2021"
 
 [lib]

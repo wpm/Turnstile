@@ -1,12 +1,18 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "turnstile",
-  "version": "0.1.0",
+  "productName": "Turnstile",
+  "version": "1.0.0",
   "identifier": "com.ontical.turnstile",
   "build": {
-    "beforeDevCommand": { "script": "pnpm run dev", "cwd": ".." },
+    "beforeDevCommand": {
+      "script": "pnpm run dev",
+      "cwd": ".."
+    },
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": { "script": "pnpm run build", "cwd": ".." },
+    "beforeBuildCommand": {
+      "script": "pnpm run build",
+      "cwd": ".."
+    },
     "frontendDist": "../build"
   },
   "app": {
