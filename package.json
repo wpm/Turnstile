@@ -1,7 +1,7 @@
 {
   "name": "turnstile",
   "version": "1.0.0",
-  "description": "Turnstile \u2014 a Lean proof assistant pairing formal proofs with prose",
+  "description": "Turnstile — a Lean proof assistant pairing formal proofs with prose",
   "type": "module",
   "scripts": {
     "dev": "vite dev",
