@@ -19,7 +19,7 @@ pub mod settings;
 mod setup;
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use lean::client::Client as LeanClient;
@@ -32,8 +32,6 @@ use tracing::debug;
 
 pub struct AppState {
     pub lsp_client: Arc<tokio::sync::Mutex<Option<LeanClient>>>,
-    /// Document version counter (starts at 2; didOpen uses version 1)
-    doc_version: AtomicI64,
     /// The proof currently being developed — formal + prose + goal state.
     pub proof: Arc<tokio::sync::Mutex<proof::Proof>>,
     /// Assistant conversation state.
@@ -200,8 +198,12 @@ async fn start_lsp(app: AppHandle) -> Result<(), String> {
         }),
     );
 
+    // Open the document with whatever source the app already holds (e.g. a
+    // session restored before the LSP came up) so server and editor agree.
+    let initial_source = state.proof.lock().await.formal.source.clone();
+
     let app_for_dispatch = app.clone();
-    let client = LeanClient::start("", move |msg| {
+    let client = LeanClient::start(&initial_source, move |msg| {
         dispatch_turnstile_message(&app_for_dispatch, msg);
     })
     .await
@@ -257,14 +259,9 @@ fn apply_semantic_tokens(app: &AppHandle, tokens: &lsp_types::SemanticTokens) {
 #[tauri::command]
 #[tracing::instrument(level = "debug", skip_all)]
 async fn update_document(app: AppHandle, changes: Vec<ContentChange>) -> Result<(), String> {
-    use lsp_types::{
-        DidChangeTextDocumentParams, TextDocumentContentChangeEvent,
-        VersionedTextDocumentIdentifier,
-    };
+    use lsp_types::TextDocumentContentChangeEvent;
 
     let state = app.state::<AppState>();
-    let version =
-        i32::try_from(state.doc_version.fetch_add(1, Ordering::SeqCst)).unwrap_or(i32::MAX);
 
     // Apply incremental changes to the stored source so `read_lean_source` stays in sync.
     {
@@ -291,8 +288,6 @@ async fn update_document(app: AppHandle, changes: Vec<ContentChange>) -> Result<
         return Ok(());
     };
 
-    let doc_uri = state.doc_uri().await?;
-
     let content_changes: Vec<TextDocumentContentChangeEvent> = changes
         .iter()
         .map(|c| TextDocumentContentChangeEvent {
@@ -314,15 +309,13 @@ async fn update_document(app: AppHandle, changes: Vec<ContentChange>) -> Result<
     {
         let lock = client_arc.lock().await;
         if let Some(client) = lock.as_ref() {
-            let params = DidChangeTextDocumentParams {
-                text_document: VersionedTextDocumentIdentifier {
-                    uri: doc_uri.clone(),
-                    version,
-                },
-                content_changes,
-            };
-            debug!("{}", params.display());
-            client.did_change(params).map_err(|e| e.to_string())?;
+            // change_document bumps the Protocol version counter — the same
+            // counter the staleness filters compare against — and sends the
+            // didChange. Routing the version through Protocol is what makes
+            // stale fileProgress/diagnostics notifications detectable.
+            client
+                .change_document(content_changes)
+                .map_err(|e| e.to_string())?;
         }
     }
 
@@ -704,7 +697,6 @@ pub fn run() {
 
             app.manage(AppState {
                 lsp_client: Arc::new(tokio::sync::Mutex::new(None)),
-                doc_version: AtomicI64::new(2),
                 proof: Arc::new(tokio::sync::Mutex::new(proof::Proof::default())),
                 transcript: Arc::new(tokio::sync::Mutex::new(assistant::Transcript::default())),
                 llm: llm_backend,
@@ -820,7 +812,7 @@ macro_rules! init_tracing {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::sync::Mutex;
 
     use super::{
@@ -829,20 +821,6 @@ mod tests {
     };
     use crate::lean;
     use std::sync::Arc;
-
-    #[test]
-    fn doc_version_strictly_increasing_after_did_open() {
-        let doc_version = AtomicI64::new(2);
-        let did_open_version: i64 = 1;
-
-        let v1 = doc_version.fetch_add(1, Ordering::SeqCst);
-        let v2 = doc_version.fetch_add(1, Ordering::SeqCst);
-        let v3 = doc_version.fetch_add(1, Ordering::SeqCst);
-
-        assert!(v1 > did_open_version);
-        assert!(v2 > v1);
-        assert!(v3 > v2);
-    }
 
     #[test]
     fn end_of_document_position_basic() {
@@ -969,7 +947,6 @@ mod tests {
     fn make_state() -> AppState {
         AppState {
             lsp_client: Arc::new(tokio::sync::Mutex::new(None)),
-            doc_version: AtomicI64::new(1),
             proof: Arc::new(tokio::sync::Mutex::new(proof::Proof::default())),
             transcript: Arc::new(tokio::sync::Mutex::new(assistant::Transcript::default())),
             llm: Arc::new(llm::MockBackend::echo()),

@@ -163,6 +163,29 @@ impl Client {
         Ok(())
     }
 
+    /// Apply a batch of incremental edits to `Proof.lean`. Bumps the document
+    /// version and sends an incremental `didChange` to the server. Returns
+    /// the new version.
+    ///
+    /// All edits to the document must go through this method (or
+    /// [`Client::replace_document`]) so that [`Protocol`]'s version counter —
+    /// the one used for staleness filtering — matches what the server sees.
+    pub fn change_document(
+        &self,
+        content_changes: Vec<lsp_types::TextDocumentContentChangeEvent>,
+    ) -> Result<i32> {
+        use lsp_types::{DidChangeTextDocumentParams, VersionedTextDocumentIdentifier};
+        let version = self.protocol.next_version();
+        self.did_change(DidChangeTextDocumentParams {
+            text_document: VersionedTextDocumentIdentifier {
+                uri: self.proof_uri.clone(),
+                version,
+            },
+            content_changes,
+        })?;
+        Ok(version)
+    }
+
     /// Replace the entire content of `Proof.lean` with `new_text`. Bumps the
     /// document version and sends a full-sync `didChange` to the server.
     pub fn replace_document(&self, new_text: String) -> Result<i32> {

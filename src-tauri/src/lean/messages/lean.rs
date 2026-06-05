@@ -236,7 +236,7 @@ impl DisplayLspParams for FileProgressParams {
         struct D<'a>(&'a FileProgressParams);
         impl fmt::Display for D<'_> {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                match self.0.version {
+                match self.0.version() {
                     Some(v) => write!(
                         f,
                         "fileProgress {} v{} ({} ranges)",

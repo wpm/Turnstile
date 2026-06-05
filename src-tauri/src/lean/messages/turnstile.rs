@@ -522,9 +522,18 @@ pub fn parse_file_progress(params: FileProgressParams) -> Vec<FileProgressRange>
     params
         .processing
         .into_iter()
-        .map(|interval| FileProgressRange {
-            start_line: interval.range.start.line + 1, // 0-indexed → 1-indexed
-            end_line: interval.range.end.line + 1,
+        .map(|interval| {
+            let start_line = interval.range.start.line + 1; // 0-indexed → 1-indexed
+            // LSP ranges are end-exclusive: an end position at character 0
+            // means that line itself is not being processed.
+            let mut end_line = interval.range.end.line + 1;
+            if interval.range.end.character == 0 && end_line > start_line {
+                end_line -= 1;
+            }
+            FileProgressRange {
+                start_line,
+                end_line,
+            }
         })
         .collect()
 }
@@ -986,7 +995,7 @@ mod tests {
         let ranges = file_progress_from_value(params);
         assert_eq!(ranges.len(), 1);
         assert_eq!(ranges[0].start_line, 1); // 0-indexed → 1-indexed
-        assert_eq!(ranges[0].end_line, 11);
+        assert_eq!(ranges[0].end_line, 10); // end char 0 → end line exclusive
     }
 
     #[test]
@@ -1001,9 +1010,63 @@ mod tests {
         let ranges = file_progress_from_value(params);
         assert_eq!(ranges.len(), 2);
         assert_eq!(ranges[0].start_line, 1);
-        assert_eq!(ranges[0].end_line, 6);
+        assert_eq!(ranges[0].end_line, 5);
         assert_eq!(ranges[1].start_line, 9);
-        assert_eq!(ranges[1].end_line, 13);
+        assert_eq!(ranges[1].end_line, 12);
+    }
+
+    #[test]
+    fn parse_file_progress_keeps_end_line_when_end_is_mid_line() {
+        let params = json!({
+            "textDocument": { "uri": "file:///test.lean" },
+            "processing": [{
+                "range": {
+                    "start": { "line": 2, "character": 0 },
+                    "end": { "line": 4, "character": 7 }
+                }
+            }]
+        });
+        let ranges = file_progress_from_value(params);
+        assert_eq!(ranges[0].start_line, 3);
+        assert_eq!(ranges[0].end_line, 5); // end char > 0 → line still processing
+    }
+
+    #[test]
+    fn parse_file_progress_single_line_range_not_trimmed_to_zero() {
+        let params = json!({
+            "textDocument": { "uri": "file:///test.lean" },
+            "processing": [{
+                "range": {
+                    "start": { "line": 3, "character": 0 },
+                    "end": { "line": 3, "character": 0 }
+                }
+            }]
+        });
+        let ranges = file_progress_from_value(params);
+        assert_eq!(ranges[0].start_line, 4);
+        assert_eq!(ranges[0].end_line, 4); // never trimmed below start
+    }
+
+    #[test]
+    fn file_progress_version_read_from_text_document() {
+        // Lean nests the version inside textDocument (a
+        // VersionedTextDocumentIdentifier), not at the top level.
+        let params: FileProgressParams = serde_json::from_value(json!({
+            "textDocument": { "uri": "file:///test.lean", "version": 7 },
+            "processing": []
+        }))
+        .expect("valid FileProgressParams");
+        assert_eq!(params.version(), Some(7));
+    }
+
+    #[test]
+    fn file_progress_version_absent_is_none() {
+        let params: FileProgressParams = serde_json::from_value(json!({
+            "textDocument": { "uri": "file:///test.lean" },
+            "processing": []
+        }))
+        .expect("valid FileProgressParams");
+        assert_eq!(params.version(), None);
     }
 
     #[test]

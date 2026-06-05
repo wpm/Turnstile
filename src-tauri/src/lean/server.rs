@@ -15,9 +15,7 @@ use async_lsp::router::Router;
 use async_lsp::tracing::TracingLayer;
 use async_lsp::Error::ServiceStopped;
 use async_lsp::{LanguageClient, MainLoop, ResponseError, Result, ServerSocket};
-use lsp_types::{
-    LogMessageParams, PublishDiagnosticsParams, Range, ShowMessageParams, TextDocumentIdentifier,
-};
+use lsp_types::{LogMessageParams, PublishDiagnosticsParams, Range, ShowMessageParams};
 use serde::{Deserialize, Serialize};
 use std::ops::ControlFlow;
 use std::process::Stdio;
@@ -35,15 +33,34 @@ pub struct FileProgressInterval {
     pub range: Range,
 }
 
+/// The `textDocument` field of a `$/lean/fileProgress` notification.
+///
+/// Lean sends a `VersionedTextDocumentIdentifier` whose `version` field is
+/// optional (`version? : Nat` on the Lean side), so this is a bespoke type
+/// rather than `lsp_types::VersionedTextDocumentIdentifier` (which requires
+/// `version`).
+#[derive(Debug, Serialize, Deserialize)]
+pub struct FileProgressTextDocument {
+    pub uri: Url,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<i32>,
+}
+
 /// `$/lean/fileProgress` notification params.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct FileProgressParams {
     #[serde(rename = "textDocument")]
-    pub text_document: TextDocumentIdentifier,
+    pub text_document: FileProgressTextDocument,
     pub processing: Vec<FileProgressInterval>,
-    /// Version from `textDocument.version` in Lean's notification payload.
-    #[serde(default, rename = "version", skip_serializing)]
-    pub version: Option<i32>,
+}
+
+impl FileProgressParams {
+    /// The document version this progress report was computed against,
+    /// if Lean included one.
+    #[must_use]
+    pub const fn version(&self) -> Option<i32> {
+        self.text_document.version
+    }
 }
 
 enum FileProgress {}

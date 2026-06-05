@@ -52,7 +52,7 @@ impl Protocol {
         let cur = self.current_version();
         match msg {
             LeanMessage::Diagnostics(p) => p.version.is_none_or(|v| v >= cur),
-            LeanMessage::FileProgress(p) => p.version.is_none_or(|v| v >= cur),
+            LeanMessage::FileProgress(p) => p.version().is_none_or(|v| v >= cur),
             LeanMessage::LogMessage(_)
             | LeanMessage::ShowMessage(_)
             | LeanMessage::TokenRefresh => true,
@@ -187,8 +187,10 @@ mod tests {
     // 3. Notification filter — stale fileProgress dropped
     #[test]
     fn keep_notification_file_progress() {
-        use crate::lean::server::{FileProgressInterval, FileProgressParams};
-        use lsp_types::{Range, TextDocumentIdentifier};
+        use crate::lean::server::{
+            FileProgressInterval, FileProgressParams, FileProgressTextDocument,
+        };
+        use lsp_types::Range;
         let p = Protocol::new();
         for _ in 0..5 {
             p.next_version();
@@ -196,13 +198,13 @@ mod tests {
 
         let make = |v: Option<i32>| {
             LeanMessage::FileProgress(FileProgressParams {
-                text_document: TextDocumentIdentifier {
+                text_document: FileProgressTextDocument {
                     uri: "file:///Proof.lean".parse().unwrap(),
+                    version: v,
                 },
                 processing: vec![FileProgressInterval {
                     range: Range::default(),
                 }],
-                version: v,
             })
         };
 
