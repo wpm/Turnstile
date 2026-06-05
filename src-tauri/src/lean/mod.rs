@@ -499,30 +499,26 @@ mod tests {
             .replace_document(r#"def x : Nat := "hello""#.into())
             .expect("replace_document failed");
 
-        // Wait for a second ElaborationDone (after the replace).
-        let elaborated2 = wait_for(
+        // Wait for the type mismatch diagnostic itself. Praxis note
+        // (praxis/recordings/sqrt2-session.json): Lean can publish the final
+        // diagnostics *after* the empty fileProgress that signals elaboration
+        // done — observed ~1.5 s late in recorded traffic — so waiting for
+        // ElaborationDone and then asserting on already-received diagnostics
+        // is a race, not a guarantee.
+        let found = wait_for(
             &messages,
             |msgs| {
-                msgs[count_before..]
-                    .iter()
-                    .any(|m| matches!(m, TurnstileMessage::ElaborationDone))
+                msgs[count_before..].iter().any(|m| {
+                    if let TurnstileMessage::Diagnostics { items: diags } = m {
+                        diags.iter().any(|d| d.message.contains("Type mismatch"))
+                    } else {
+                        false
+                    }
+                })
             },
             Duration::from_mins(2),
         )
         .await;
-        assert!(
-            elaborated2,
-            "timed out waiting for ElaborationDone after edit"
-        );
-
-        // Now look for the type mismatch diagnostic in messages after the edit.
-        let found = messages.lock().unwrap()[count_before..].iter().any(|m| {
-            if let TurnstileMessage::Diagnostics { items: diags } = m {
-                diags.iter().any(|d| d.message.contains("Type mismatch"))
-            } else {
-                false
-            }
-        });
         assert!(
             found,
             "expected type mismatch diagnostic after introducing error"

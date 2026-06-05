@@ -524,8 +524,8 @@ pub fn parse_file_progress(params: FileProgressParams) -> Vec<FileProgressRange>
         .into_iter()
         .map(|interval| {
             let start_line = interval.range.start.line + 1; // 0-indexed → 1-indexed
-            // LSP ranges are end-exclusive: an end position at character 0
-            // means that line itself is not being processed.
+                                                            // LSP ranges are end-exclusive: an end position at character 0
+                                                            // means that line itself is not being processed.
             let mut end_line = interval.range.end.line + 1;
             if interval.range.end.character == 0 && end_line > start_line {
                 end_line -= 1;
