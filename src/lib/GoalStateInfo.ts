@@ -3,4 +3,4 @@
 /**
  * Goal state returned by Lean at the end of the document.
  */
-export type GoalStateInfo = { full: string };
+export type GoalStateInfo = { full: string, };

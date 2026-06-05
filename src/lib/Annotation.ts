@@ -8,21 +8,4 @@ import type { TokenType } from "./TokenType";
  * Either a semantic token (for syntax highlighting) or a diagnostic
  * (for error/warning squiggles). All line numbers are 1-indexed.
  */
-export type Annotation =
-  | {
-      kind: "token";
-      line: number;
-      col: number;
-      length: number;
-      tokenType: TokenType;
-      modifiers: Array<string>;
-    }
-  | {
-      kind: "diagnostic";
-      startLine: number;
-      startCol: number;
-      endLine: number;
-      endCol: number;
-      severity: DiagnosticSeverity;
-      message: string;
-    };
+export type Annotation = { "kind": "token", line: number, col: number, length: number, tokenType: TokenType, modifiers: Array<string>, } | { "kind": "diagnostic", startLine: number, startCol: number, endLine: number, endCol: number, severity: DiagnosticSeverity, message: string, };

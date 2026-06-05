@@ -15,13 +15,4 @@ import type { SemanticToken } from "./SemanticToken";
  * Other subsystems (LLM, session, setup, prose, menu) currently emit their
  * own events directly and are not represented here.
  */
-export type TurnstileMessage =
-  | { type: "diagnostics"; items: Array<DiagnosticInfo> }
-  | { type: "annotationsUpdated"; items: Array<Annotation> }
-  | { type: "fileProgress"; items: Array<FileProgressRange> }
-  | { type: "elaborationDone" }
-  | { type: "showMessage"; severity: string; message: string }
-  | ({ type: "lspStatus" } & LspStatus)
-  | { type: "semanticTokenRefresh" }
-  | { type: "semanticTokens"; items: Array<SemanticToken> }
-  | ({ type: "goalStateUpdated" } & GoalStateInfo);
+export type TurnstileMessage = { "type": "diagnostics", items: Array<DiagnosticInfo>, } | { "type": "annotationsUpdated", items: Array<Annotation>, } | { "type": "fileProgress", items: Array<FileProgressRange>, } | { "type": "elaborationDone" } | { "type": "showMessage", severity: string, message: string, } | { "type": "lspStatus" } & LspStatus | { "type": "semanticTokenRefresh" } | { "type": "semanticTokens", items: Array<SemanticToken>, } | { "type": "goalStateUpdated" } & GoalStateInfo;

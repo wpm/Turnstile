@@ -3,28 +3,4 @@
 /**
  * Semantic token type, mirroring the LSP token type legend.
  */
-export type TokenType =
-  | "namespace"
-  | "type"
-  | "class"
-  | "enum"
-  | "interface"
-  | "struct"
-  | "typeParameter"
-  | "parameter"
-  | "variable"
-  | "property"
-  | "enumMember"
-  | "event"
-  | "function"
-  | "method"
-  | "macro"
-  | "keyword"
-  | "modifier"
-  | "comment"
-  | "string"
-  | "number"
-  | "regexp"
-  | "operator"
-  | "decorator"
-  | "unknown";
+export type TokenType = "namespace" | "type" | "class" | "enum" | "interface" | "struct" | "typeParameter" | "parameter" | "variable" | "property" | "enumMember" | "event" | "function" | "method" | "macro" | "keyword" | "modifier" | "comment" | "string" | "number" | "regexp" | "operator" | "decorator" | "unknown";

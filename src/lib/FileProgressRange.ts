@@ -4,4 +4,4 @@
  * A range of lines currently being elaborated by the Lean server.
  * Emitted via the `$/lean/fileProgress` notification.
  */
-export type FileProgressRange = { start_line: number; end_line: number };
+export type FileProgressRange = { start_line: number, end_line: number, };

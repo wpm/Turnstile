@@ -8,3 +8,16 @@ src/app.css
 src-tauri/
 docs/
 praxis/recordings/
+
+# ts-rs generated bindings (src-tauri cargo test exports these in ts-rs's
+# own formatting; prettier must not fight it or every cargo test dirties
+# the tree)
+src/lib/Annotation.ts
+src/lib/DiagnosticInfo.ts
+src/lib/DiagnosticSeverity.ts
+src/lib/FileProgressRange.ts
+src/lib/GoalStateInfo.ts
+src/lib/LspStatus.ts
+src/lib/SemanticToken.ts
+src/lib/TokenType.ts
+src/lib/TurnstileMessage.ts
