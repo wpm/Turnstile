@@ -1,0 +1,1569 @@
+[
+  {
+    "t": 1780621529830,
+    "method": "$/lean/fileProgress",
+    "params": {
+      "processing": [
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 0,
+              "line": 13
+            },
+            "start": {
+              "character": 0,
+              "line": 0
+            }
+          }
+        }
+      ],
+      "textDocument": {
+        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-praxis-q9ol3h/Proof.lean",
+        "version": 0
+      }
+    }
+  },
+  {
+    "t": 1780621529896,
+    "method": "textDocument/publishDiagnostics",
+    "params": {
+      "diagnostics": [],
+      "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-praxis-q9ol3h/Proof.lean",
+      "version": 0
+    }
+  },
+  {
+    "t": 1780621530066,
+    "method": "$/lean/fileProgress",
+    "params": {
+      "processing": [
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 50,
+              "line": 4
+            },
+            "start": {
+              "character": 0,
+              "line": 0
+            }
+          }
+        },
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 0,
+              "line": 13
+            },
+            "start": {
+              "character": 0,
+              "line": 6
+            }
+          }
+        }
+      ],
+      "textDocument": {
+        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-praxis-q9ol3h/Proof.lean",
+        "version": 0
+      }
+    }
+  },
+  {
+    "t": 1780621530066,
+    "method": "textDocument/publishDiagnostics",
+    "params": {
+      "diagnostics": [],
+      "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-praxis-q9ol3h/Proof.lean",
+      "version": 0
+    }
+  },
+  {
+    "t": 1780621530068,
+    "method": "$/lean/fileProgress",
+    "params": {
+      "processing": [
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 0,
+              "line": 1
+            },
+            "start": {
+              "character": 0,
+              "line": 1
+            }
+          }
+        },
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 50,
+              "line": 4
+            },
+            "start": {
+              "character": 2,
+              "line": 2
+            }
+          }
+        },
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 0,
+              "line": 13
+            },
+            "start": {
+              "character": 0,
+              "line": 6
+            }
+          }
+        }
+      ],
+      "textDocument": {
+        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-praxis-q9ol3h/Proof.lean",
+        "version": 0
+      }
+    }
+  },
+  {
+    "t": 1780621530068,
+    "method": "$/lean/fileProgress",
+    "params": {
+      "processing": [
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 0,
+              "line": 1
+            },
+            "start": {
+              "character": 0,
+              "line": 1
+            }
+          }
+        },
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 50,
+              "line": 4
+            },
+            "start": {
+              "character": 2,
+              "line": 2
+            }
+          }
+        },
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 0,
+              "line": 13
+            },
+            "start": {
+              "character": 0,
+              "line": 6
+            }
+          }
+        }
+      ],
+      "textDocument": {
+        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-praxis-q9ol3h/Proof.lean",
+        "version": 0
+      }
+    }
+  },
+  {
+    "t": 1780621530068,
+    "method": "$/lean/fileProgress",
+    "params": {
+      "processing": [
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 0,
+              "line": 1
+            },
+            "start": {
+              "character": 0,
+              "line": 1
+            }
+          }
+        },
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 50,
+              "line": 4
+            },
+            "start": {
+              "character": 2,
+              "line": 2
+            }
+          }
+        },
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 0,
+              "line": 13
+            },
+            "start": {
+              "character": 0,
+              "line": 6
+            }
+          }
+        }
+      ],
+      "textDocument": {
+        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-praxis-q9ol3h/Proof.lean",
+        "version": 0
+      }
+    }
+  },
+  {
+    "t": 1780621530068,
+    "method": "$/lean/fileProgress",
+    "params": {
+      "processing": [
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 0,
+              "line": 1
+            },
+            "start": {
+              "character": 0,
+              "line": 1
+            }
+          }
+        },
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 50,
+              "line": 4
+            },
+            "start": {
+              "character": 2,
+              "line": 2
+            }
+          }
+        },
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 9,
+              "line": 12
+            },
+            "start": {
+              "character": 0,
+              "line": 6
+            }
+          }
+        },
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 0,
+              "line": 13
+            },
+            "start": {
+              "character": 0,
+              "line": 13
+            }
+          }
+        }
+      ],
+      "textDocument": {
+        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-praxis-q9ol3h/Proof.lean",
+        "version": 0
+      }
+    }
+  },
+  {
+    "t": 1780621530070,
+    "method": "$/lean/fileProgress",
+    "params": {
+      "processing": [
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 0,
+              "line": 1
+            },
+            "start": {
+              "character": 0,
+              "line": 1
+            }
+          }
+        },
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 50,
+              "line": 4
+            },
+            "start": {
+              "character": 2,
+              "line": 2
+            }
+          }
+        },
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 9,
+              "line": 12
+            },
+            "start": {
+              "character": 0,
+              "line": 6
+            }
+          }
+        },
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 0,
+              "line": 13
+            },
+            "start": {
+              "character": 0,
+              "line": 13
+            }
+          }
+        }
+      ],
+      "textDocument": {
+        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-praxis-q9ol3h/Proof.lean",
+        "version": 0
+      }
+    }
+  },
+  {
+    "t": 1780621530070,
+    "method": "$/lean/fileProgress",
+    "params": {
+      "processing": [
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 0,
+              "line": 1
+            },
+            "start": {
+              "character": 0,
+              "line": 1
+            }
+          }
+        },
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 22,
+              "line": 3
+            },
+            "start": {
+              "character": 2,
+              "line": 3
+            }
+          }
+        },
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 50,
+              "line": 4
+            },
+            "start": {
+              "character": 2,
+              "line": 4
+            }
+          }
+        },
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 9,
+              "line": 12
+            },
+            "start": {
+              "character": 0,
+              "line": 6
+            }
+          }
+        },
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 0,
+              "line": 13
+            },
+            "start": {
+              "character": 0,
+              "line": 13
+            }
+          }
+        }
+      ],
+      "textDocument": {
+        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-praxis-q9ol3h/Proof.lean",
+        "version": 0
+      }
+    }
+  },
+  {
+    "t": 1780621530070,
+    "method": "$/lean/fileProgress",
+    "params": {
+      "processing": [
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 0,
+              "line": 1
+            },
+            "start": {
+              "character": 0,
+              "line": 1
+            }
+          }
+        },
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 22,
+              "line": 3
+            },
+            "start": {
+              "character": 14,
+              "line": 3
+            }
+          }
+        },
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 50,
+              "line": 4
+            },
+            "start": {
+              "character": 2,
+              "line": 4
+            }
+          }
+        },
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 9,
+              "line": 12
+            },
+            "start": {
+              "character": 0,
+              "line": 6
+            }
+          }
+        },
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 0,
+              "line": 13
+            },
+            "start": {
+              "character": 0,
+              "line": 13
+            }
+          }
+        }
+      ],
+      "textDocument": {
+        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-praxis-q9ol3h/Proof.lean",
+        "version": 0
+      }
+    }
+  },
+  {
+    "t": 1780621530070,
+    "method": "$/lean/fileProgress",
+    "params": {
+      "processing": [
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 0,
+              "line": 1
+            },
+            "start": {
+              "character": 0,
+              "line": 1
+            }
+          }
+        },
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 50,
+              "line": 4
+            },
+            "start": {
+              "character": 2,
+              "line": 4
+            }
+          }
+        },
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 9,
+              "line": 12
+            },
+            "start": {
+              "character": 0,
+              "line": 6
+            }
+          }
+        },
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 0,
+              "line": 13
+            },
+            "start": {
+              "character": 0,
+              "line": 13
+            }
+          }
+        }
+      ],
+      "textDocument": {
+        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-praxis-q9ol3h/Proof.lean",
+        "version": 0
+      }
+    }
+  },
+  {
+    "t": 1780621530071,
+    "method": "$/lean/fileProgress",
+    "params": {
+      "processing": [
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 0,
+              "line": 1
+            },
+            "start": {
+              "character": 0,
+              "line": 1
+            }
+          }
+        },
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 50,
+              "line": 4
+            },
+            "start": {
+              "character": 2,
+              "line": 4
+            }
+          }
+        },
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 9,
+              "line": 12
+            },
+            "start": {
+              "character": 0,
+              "line": 6
+            }
+          }
+        },
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 0,
+              "line": 13
+            },
+            "start": {
+              "character": 0,
+              "line": 13
+            }
+          }
+        }
+      ],
+      "textDocument": {
+        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-praxis-q9ol3h/Proof.lean",
+        "version": 0
+      }
+    }
+  },
+  {
+    "t": 1780621530071,
+    "method": "$/lean/fileProgress",
+    "params": {
+      "processing": [
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 0,
+              "line": 1
+            },
+            "start": {
+              "character": 0,
+              "line": 1
+            }
+          }
+        },
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 50,
+              "line": 4
+            },
+            "start": {
+              "character": 2,
+              "line": 4
+            }
+          }
+        },
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 9,
+              "line": 12
+            },
+            "start": {
+              "character": 0,
+              "line": 6
+            }
+          }
+        },
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 0,
+              "line": 13
+            },
+            "start": {
+              "character": 0,
+              "line": 13
+            }
+          }
+        }
+      ],
+      "textDocument": {
+        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-praxis-q9ol3h/Proof.lean",
+        "version": 0
+      }
+    }
+  },
+  {
+    "t": 1780621530071,
+    "method": "$/lean/fileProgress",
+    "params": {
+      "processing": [
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 0,
+              "line": 1
+            },
+            "start": {
+              "character": 0,
+              "line": 1
+            }
+          }
+        },
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 50,
+              "line": 4
+            },
+            "start": {
+              "character": 14,
+              "line": 4
+            }
+          }
+        },
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 9,
+              "line": 12
+            },
+            "start": {
+              "character": 0,
+              "line": 6
+            }
+          }
+        },
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 0,
+              "line": 13
+            },
+            "start": {
+              "character": 0,
+              "line": 13
+            }
+          }
+        }
+      ],
+      "textDocument": {
+        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-praxis-q9ol3h/Proof.lean",
+        "version": 0
+      }
+    }
+  },
+  {
+    "t": 1780621530075,
+    "method": "$/lean/fileProgress",
+    "params": {
+      "processing": [
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 0,
+              "line": 1
+            },
+            "start": {
+              "character": 0,
+              "line": 1
+            }
+          }
+        },
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 50,
+              "line": 4
+            },
+            "start": {
+              "character": 14,
+              "line": 4
+            }
+          }
+        },
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 9,
+              "line": 12
+            },
+            "start": {
+              "character": 0,
+              "line": 6
+            }
+          }
+        },
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 0,
+              "line": 13
+            },
+            "start": {
+              "character": 0,
+              "line": 13
+            }
+          }
+        }
+      ],
+      "textDocument": {
+        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-praxis-q9ol3h/Proof.lean",
+        "version": 0
+      }
+    }
+  },
+  {
+    "t": 1780621530075,
+    "method": "$/lean/fileProgress",
+    "params": {
+      "processing": [
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 0,
+              "line": 1
+            },
+            "start": {
+              "character": 0,
+              "line": 1
+            }
+          }
+        },
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 50,
+              "line": 4
+            },
+            "start": {
+              "character": 14,
+              "line": 4
+            }
+          }
+        },
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 9,
+              "line": 12
+            },
+            "start": {
+              "character": 0,
+              "line": 6
+            }
+          }
+        },
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 0,
+              "line": 13
+            },
+            "start": {
+              "character": 0,
+              "line": 13
+            }
+          }
+        }
+      ],
+      "textDocument": {
+        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-praxis-q9ol3h/Proof.lean",
+        "version": 0
+      }
+    }
+  },
+  {
+    "t": 1780621530075,
+    "method": "$/lean/fileProgress",
+    "params": {
+      "processing": [
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 0,
+              "line": 1
+            },
+            "start": {
+              "character": 0,
+              "line": 1
+            }
+          }
+        },
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 50,
+              "line": 4
+            },
+            "start": {
+              "character": 14,
+              "line": 4
+            }
+          }
+        },
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 0,
+              "line": 7
+            },
+            "start": {
+              "character": 0,
+              "line": 7
+            }
+          }
+        },
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 9,
+              "line": 12
+            },
+            "start": {
+              "character": 2,
+              "line": 8
+            }
+          }
+        },
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 0,
+              "line": 13
+            },
+            "start": {
+              "character": 0,
+              "line": 13
+            }
+          }
+        }
+      ],
+      "textDocument": {
+        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-praxis-q9ol3h/Proof.lean",
+        "version": 0
+      }
+    }
+  },
+  {
+    "t": 1780621530075,
+    "method": "$/lean/fileProgress",
+    "params": {
+      "processing": [
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 0,
+              "line": 1
+            },
+            "start": {
+              "character": 0,
+              "line": 1
+            }
+          }
+        },
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 50,
+              "line": 4
+            },
+            "start": {
+              "character": 14,
+              "line": 4
+            }
+          }
+        },
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 0,
+              "line": 7
+            },
+            "start": {
+              "character": 0,
+              "line": 7
+            }
+          }
+        },
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 9,
+              "line": 8
+            },
+            "start": {
+              "character": 2,
+              "line": 8
+            }
+          }
+        },
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 9,
+              "line": 12
+            },
+            "start": {
+              "character": 2,
+              "line": 9
+            }
+          }
+        },
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 0,
+              "line": 13
+            },
+            "start": {
+              "character": 0,
+              "line": 13
+            }
+          }
+        }
+      ],
+      "textDocument": {
+        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-praxis-q9ol3h/Proof.lean",
+        "version": 0
+      }
+    }
+  },
+  {
+    "t": 1780621530075,
+    "method": "$/lean/fileProgress",
+    "params": {
+      "processing": [
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 0,
+              "line": 1
+            },
+            "start": {
+              "character": 0,
+              "line": 1
+            }
+          }
+        },
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 50,
+              "line": 4
+            },
+            "start": {
+              "character": 14,
+              "line": 4
+            }
+          }
+        },
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 0,
+              "line": 7
+            },
+            "start": {
+              "character": 0,
+              "line": 7
+            }
+          }
+        },
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 9,
+              "line": 12
+            },
+            "start": {
+              "character": 2,
+              "line": 9
+            }
+          }
+        }
+      ],
+      "textDocument": {
+        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-praxis-q9ol3h/Proof.lean",
+        "version": 0
+      }
+    }
+  },
+  {
+    "t": 1780621530077,
+    "method": "$/lean/fileProgress",
+    "params": {
+      "processing": [
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 0,
+              "line": 1
+            },
+            "start": {
+              "character": 0,
+              "line": 1
+            }
+          }
+        },
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 50,
+              "line": 4
+            },
+            "start": {
+              "character": 14,
+              "line": 4
+            }
+          }
+        },
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 0,
+              "line": 7
+            },
+            "start": {
+              "character": 0,
+              "line": 7
+            }
+          }
+        }
+      ],
+      "textDocument": {
+        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-praxis-q9ol3h/Proof.lean",
+        "version": 0
+      }
+    }
+  },
+  {
+    "t": 1780621530077,
+    "method": "$/lean/fileProgress",
+    "params": {
+      "processing": [
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 0,
+              "line": 1
+            },
+            "start": {
+              "character": 0,
+              "line": 1
+            }
+          }
+        },
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 50,
+              "line": 4
+            },
+            "start": {
+              "character": 41,
+              "line": 4
+            }
+          }
+        },
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 0,
+              "line": 7
+            },
+            "start": {
+              "character": 0,
+              "line": 7
+            }
+          }
+        }
+      ],
+      "textDocument": {
+        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-praxis-q9ol3h/Proof.lean",
+        "version": 0
+      }
+    }
+  },
+  {
+    "t": 1780621530078,
+    "method": "$/lean/fileProgress",
+    "params": {
+      "processing": [
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 0,
+              "line": 1
+            },
+            "start": {
+              "character": 0,
+              "line": 1
+            }
+          }
+        },
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 0,
+              "line": 7
+            },
+            "start": {
+              "character": 0,
+              "line": 7
+            }
+          }
+        }
+      ],
+      "textDocument": {
+        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-praxis-q9ol3h/Proof.lean",
+        "version": 0
+      }
+    }
+  },
+  {
+    "t": 1780621530078,
+    "method": "$/lean/fileProgress",
+    "params": {
+      "processing": [
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 0,
+              "line": 1
+            },
+            "start": {
+              "character": 0,
+              "line": 1
+            }
+          }
+        },
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 0,
+              "line": 7
+            },
+            "start": {
+              "character": 0,
+              "line": 7
+            }
+          }
+        }
+      ],
+      "textDocument": {
+        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-praxis-q9ol3h/Proof.lean",
+        "version": 0
+      }
+    }
+  },
+  {
+    "t": 1780621530078,
+    "method": "$/lean/fileProgress",
+    "params": {
+      "processing": [
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 0,
+              "line": 1
+            },
+            "start": {
+              "character": 0,
+              "line": 1
+            }
+          }
+        },
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 0,
+              "line": 7
+            },
+            "start": {
+              "character": 0,
+              "line": 7
+            }
+          }
+        }
+      ],
+      "textDocument": {
+        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-praxis-q9ol3h/Proof.lean",
+        "version": 0
+      }
+    }
+  },
+  {
+    "t": 1780621530078,
+    "method": "$/lean/fileProgress",
+    "params": {
+      "processing": [
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 0,
+              "line": 1
+            },
+            "start": {
+              "character": 0,
+              "line": 1
+            }
+          }
+        },
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 0,
+              "line": 7
+            },
+            "start": {
+              "character": 0,
+              "line": 7
+            }
+          }
+        }
+      ],
+      "textDocument": {
+        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-praxis-q9ol3h/Proof.lean",
+        "version": 0
+      }
+    }
+  },
+  {
+    "t": 1780621530078,
+    "method": "$/lean/fileProgress",
+    "params": {
+      "processing": [
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 0,
+              "line": 1
+            },
+            "start": {
+              "character": 0,
+              "line": 1
+            }
+          }
+        },
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 0,
+              "line": 7
+            },
+            "start": {
+              "character": 0,
+              "line": 7
+            }
+          }
+        }
+      ],
+      "textDocument": {
+        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-praxis-q9ol3h/Proof.lean",
+        "version": 0
+      }
+    }
+  },
+  {
+    "t": 1780621530081,
+    "method": "textDocument/publishDiagnostics",
+    "params": {
+      "diagnostics": [],
+      "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-praxis-q9ol3h/Proof.lean",
+      "version": 0
+    }
+  },
+  {
+    "t": 1780621530081,
+    "method": "$/lean/fileProgress",
+    "params": {
+      "processing": [
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 0,
+              "line": 1
+            },
+            "start": {
+              "character": 0,
+              "line": 1
+            }
+          }
+        },
+        {
+          "kind": 1,
+          "range": {
+            "end": {
+              "character": 0,
+              "line": 7
+            },
+            "start": {
+              "character": 0,
+              "line": 7
+            }
+          }
+        }
+      ],
+      "textDocument": {
+        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-praxis-q9ol3h/Proof.lean",
+        "version": 0
+      }
+    }
+  },
+  {
+    "t": 1780621530081,
+    "method": "textDocument/publishDiagnostics",
+    "params": {
+      "diagnostics": [
+        {
+          "fullRange": {
+            "end": {
+              "character": 24,
+              "line": 7
+            },
+            "start": {
+              "character": 8,
+              "line": 7
+            }
+          },
+          "message": "declaration uses `sorry`",
+          "range": {
+            "end": {
+              "character": 24,
+              "line": 7
+            },
+            "start": {
+              "character": 8,
+              "line": 7
+            }
+          },
+          "severity": 2,
+          "source": "Lean 4"
+        }
+      ],
+      "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-praxis-q9ol3h/Proof.lean",
+      "version": 0
+    }
+  },
+  {
+    "t": 1780621530081,
+    "method": "$/lean/fileProgress",
+    "params": {
+      "processing": [],
+      "textDocument": {
+        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-praxis-q9ol3h/Proof.lean",
+        "version": 0
+      }
+    }
+  },
+  {
+    "t": 1780621530081,
+    "method": "$/lean/fileProgress",
+    "params": {
+      "processing": [],
+      "textDocument": {
+        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-praxis-q9ol3h/Proof.lean",
+        "version": 0
+      }
+    }
+  },
+  {
+    "t": 1780621530338,
+    "method": "$/lean/fileProgress",
+    "params": {
+      "processing": [],
+      "textDocument": {
+        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-praxis-q9ol3h/Proof.lean",
+        "version": 1
+      }
+    }
+  },
+  {
+    "t": 1780621530338,
+    "method": "$/lean/fileProgress",
+    "params": {
+      "processing": [],
+      "textDocument": {
+        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-praxis-q9ol3h/Proof.lean",
+        "version": 1
+      }
+    }
+  },
+  {
+    "t": 1780621530338,
+    "method": "textDocument/publishDiagnostics",
+    "params": {
+      "diagnostics": [],
+      "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-praxis-q9ol3h/Proof.lean",
+      "version": 1
+    }
+  },
+  {
+    "t": 1780621531853,
+    "method": "textDocument/publishDiagnostics",
+    "params": {
+      "diagnostics": [],
+      "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-praxis-q9ol3h/Proof.lean",
+      "version": 1
+    }
+  }
+]

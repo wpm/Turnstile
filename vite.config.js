@@ -5,8 +5,21 @@ import tailwindcss from "@tailwindcss/vite";
 const host = /** @type {string | undefined} */ (process.env["TAURI_DEV_HOST"]);
 
 // https://vite.dev/config/
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   plugins: [tailwindcss(), sveltekit()],
+
+  // In `e2e` mode the Tauri IPC modules are replaced by an in-browser fake
+  // backend (src/lib/fake/) so Playwright can drive the real UI in a plain
+  // browser. `vite dev --mode e2e` or `vite build --mode e2e`.
+  resolve:
+    mode === "e2e"
+      ? {
+          alias: {
+            "@tauri-apps/api/core": "/src/lib/fake/core.ts",
+            "@tauri-apps/api/event": "/src/lib/fake/event.ts",
+          },
+        }
+      : undefined,
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
@@ -31,4 +44,4 @@ export default defineConfig({
       ignored: ["**/src-tauri/**", "**/.svelte-kit/generated/**"],
     },
   },
-});
+}));
