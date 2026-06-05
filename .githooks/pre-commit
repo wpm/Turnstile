@@ -32,11 +32,10 @@ if [[ -n "$RUST_FILES" ]]; then
   git add $RUST_FILES
 
   echo "▶ Rust: linting (clippy)..."
+  # Lint selection lives in src-tauri/Cargo.toml [lints]; here we only
+  # escalate warnings to errors.
   cargo clippy --manifest-path "$ROOT/src-tauri/Cargo.toml" --all-targets -- \
-    -D warnings \
-    -D clippy::pedantic \
-    -D clippy::nursery \
-    -A clippy::module_name_repetitions
+    -D warnings
 fi
 
 echo "✓ Pre-commit checks passed"

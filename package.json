@@ -15,8 +15,10 @@
     "format:check": "prettier --check .",
     "test": "vitest run",
     "tauri": "tauri",
-    "test:e2e": "playwright test",
-    "test:praxis": "node praxis/lean-lsp-harness.mjs"
+    "test:e2e": "playwright install chromium && playwright test",
+    "test:praxis": "vitest run --config vitest.praxis.config.ts",
+    "verify": "pnpm run test && pnpm run check && pnpm run lint && pnpm run format:check && pnpm run verify:rust && pnpm run test:e2e && pnpm run test:praxis",
+    "verify:rust": "cd src-tauri && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test"
   },
   "license": "MIT",
   "dependencies": {

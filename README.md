@@ -30,12 +30,14 @@ pnpm tauri build    # release bundle
 ## Testing
 
 ```sh
+pnpm verify         # the whole gate, in order (frontend, Rust, e2e, praxis)
+
 pnpm test           # frontend unit tests (vitest)
 pnpm check          # svelte-check
 pnpm lint           # eslint
-cargo test          # backend unit tests (in src-tauri/)
+pnpm verify:rust    # cargo fmt --check, clippy -D warnings, cargo test
 pnpm test:e2e       # Playwright against the real UI + fake backend
-pnpm test:praxis    # drive a real lean --server through a √2 proof
+pnpm test:praxis    # vitest suite driving a real lean --server (√2 proof)
 ```
 
 The last two are the praxis layer (see `praxis/README.md`): the

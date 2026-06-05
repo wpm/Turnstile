@@ -1,4 +1,3 @@
-#![warn(unused_qualifications)]
 //! Tauri app glue: command handlers, app state, and LSP message dispatch.
 //!
 //! # Data flows
