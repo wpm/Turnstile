@@ -44,6 +44,10 @@ export async function startMessageListener(): Promise<() => void> {
         goalState.set(msg.full);
         break;
       case "elaborationDone":
+        // Elaboration finished: no lines are being processed any more.
+        // Lean signals this with an empty fileProgress, which the backend
+        // folds into elaborationDone — so clear the highlight ranges here.
+        fileProgress.set([]);
         elaborationDone.update((n) => n + 1);
         break;
       case "showMessage":
@@ -52,7 +56,8 @@ export async function startMessageListener(): Promise<() => void> {
       case "diagnostics":
       case "semanticTokenRefresh":
       case "semanticTokens":
-        console.warn("unhandled TurnstileMessage", msg);
+        // Backend-internal messages; the backend folds these into
+        // annotationsUpdated before they reach the frontend.
         break;
       default: {
         const _exhaustive: never = msg;

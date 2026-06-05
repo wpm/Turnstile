@@ -34,8 +34,10 @@
     fileProgress,
     annotations as annotationsStore,
   } from "./turnstile_messages";
+  import { progressHighlightLines } from "./progress";
+  import type { FileProgressRange } from "./FileProgressRange";
 
-  const setProgressLines = StateEffect.define<{ from: number; to: number }[]>();
+  const setProgressLines = StateEffect.define<FileProgressRange[]>();
 
   const progressDecoration = Decoration.line({ class: "cm-elaborating" });
 
@@ -46,16 +48,12 @@
         for (const effect of tr.effects) {
           if (effect.is(setProgressLines)) {
             if (effect.value.length === 0) return Decoration.none;
-            const marks = effect.value.flatMap(({ from, to }) => {
-              const ranges = [];
-              for (let line = Math.max(1, from); line <= to; line++) {
-                if (line > tr.state.doc.lines) break;
-                ranges.push(
-                  progressDecoration.range(tr.state.doc.line(line).from),
-                );
-              }
-              return ranges;
-            });
+            const marks = progressHighlightLines(
+              effect.value,
+              tr.state.doc.lines,
+            ).map((line) =>
+              progressDecoration.range(tr.state.doc.line(line).from),
+            );
             return Decoration.set(marks, true);
           }
         }
@@ -134,11 +132,7 @@
 
     unsubscribeProgress = fileProgress.subscribe((ranges) => {
       if (!view) return;
-      view.dispatch({
-        effects: setProgressLines.of(
-          ranges.map((r) => ({ from: r.start_line, to: r.end_line })),
-        ),
-      });
+      view.dispatch({ effects: setProgressLines.of(ranges) });
     });
 
     unsubscribeAnnotations = annotationsStore.subscribe((anns) => {
