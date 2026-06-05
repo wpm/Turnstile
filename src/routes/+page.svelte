@@ -6,27 +6,51 @@
   import ProseProof from "$lib/ProseProof.svelte";
   import Assistant from "$lib/Assistant.svelte";
   import Divider from "$lib/Divider.svelte";
+  import StatusBar from "$lib/StatusBar.svelte";
+  import SettingsDialog from "$lib/SettingsDialog.svelte";
   import Toast, { type ToastItem } from "$lib/Toast.svelte";
   import type { ProofView } from "$lib/types";
   import { onMount } from "svelte";
   import { SvelteMap } from "svelte/reactivity";
+  import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
   import {
     goalState,
     lspStatus as lspStatusStore,
     showMessage,
   } from "$lib/turnstile_messages";
+  import {
+    proseHash,
+    proseText,
+    settings as settingsStore,
+    setupProgress,
+    startSetupProgressListener,
+    wordWrap,
+    type Settings,
+  } from "$lib/appState";
+  import {
+    autoSaveSession,
+    newSession,
+    openSession,
+    refreshWindowTitle,
+    saveSession,
+    saveSessionAs,
+    type UiLayout,
+  } from "$lib/session";
 
   let proofView = $state<ProofView>("formal");
   let dark = $state(false);
   let goalText = $state("");
-  let proseText = $state("");
+  let prose = $state("");
   let lspReady = $state(false);
+  let settingsOpen = $state(false);
+  let restorePromptOpen = $state(false);
 
   let toasts = $state<ToastItem[]>([]);
   let toastSeq = 0;
   const AUTO_DISMISS_MS = 5000;
   const MAX_ERROR_TOASTS = 5;
+  const AUTOSAVE_INTERVAL_MS = 30_000;
   const toastTimers = new SvelteMap<number, ReturnType<typeof setTimeout>>();
 
   /* eslint-disable @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment -- $state<T[]> proxy loses generic in ESLint Svelte plugin */
@@ -60,9 +84,65 @@
   }
   /* eslint-enable @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment */
 
+  function currentLayout(): UiLayout {
+    return {
+      assistantWidthPct: 100 - leftWidth,
+      proofView,
+      goalPanelPct: 100 - topHeight,
+    };
+  }
+
+  async function handleMenuEvent(id: string) {
+    try {
+      switch (id) {
+        case "new_session":
+          await newSession();
+          await refreshWindowTitle();
+          break;
+        case "open_session":
+          await openSession();
+          await refreshWindowTitle();
+          break;
+        case "save_session":
+          await saveSession(currentLayout());
+          await refreshWindowTitle();
+          break;
+        case "save_session_as":
+          await saveSessionAs(currentLayout());
+          await refreshWindowTitle();
+          break;
+        case "settings":
+          settingsOpen = true;
+          break;
+        case "toggle_word_wrap":
+          wordWrap.update((w) => !w);
+          break;
+        default:
+          console.warn("unhandled menu event", id);
+      }
+    } catch (e) {
+      addToast("error", String(e));
+    }
+  }
+
+  async function restoreAutosave(restore: boolean) {
+    restorePromptOpen = false;
+    try {
+      if (restore) {
+        await invoke("restore_auto_save");
+      } else {
+        await invoke("delete_auto_save");
+      }
+    } catch (e) {
+      addToast("error", String(e));
+    }
+  }
+
   onMount(() => {
     let unlistenProse: (() => void) | undefined;
     let unlistenSessionLoaded: (() => void) | undefined;
+    let unlistenMenu: (() => void) | undefined;
+    let unlistenSetup: (() => void) | undefined;
 
     const unsubscribeGoal = goalState.subscribe((text) => {
       goalText = text;
@@ -77,25 +157,75 @@
       addToast(msg.severity as ToastItem["severity"], msg.message);
     });
 
+    const unsubscribeSetup = setupProgress.subscribe((progress) => {
+      if (progress?.phase === "error") {
+        addToast("error", progress.message);
+      }
+    });
+
+    const unsubscribeProse = proseText.subscribe((text) => {
+      prose = text;
+    });
+
     const setup = Promise.all([
       listen<{ text: string; hash: string | null }>("prose-updated", (e) => {
-        proseText = e.payload.text;
+        proseText.set(e.payload.text);
+        proseHash.set(e.payload.hash);
       }),
-      listen<{ prose: { text: string } }>("session-loaded", (e) => {
-        proseText = e.payload.prose.text;
+      listen<{ prose: { text: string; tactic_state_hash: string | null } }>(
+        "session-loaded",
+        (e) => {
+          proseText.set(e.payload.prose.text);
+          proseHash.set(e.payload.prose.tactic_state_hash);
+        },
+      ),
+      listen<string>("menu-event", (e) => {
+        void handleMenuEvent(e.payload);
       }),
-    ]).then(([p, sl]) => {
+      startSetupProgressListener(),
+    ]).then(([p, sl, m, sp]) => {
       unlistenProse = p;
       unlistenSessionLoaded = sl;
+      unlistenMenu = m;
+      unlistenSetup = sp;
     });
     void setup;
+
+    // Load persisted settings; enable Save; offer autosave recovery.
+    void (async () => {
+      try {
+        settingsStore.set(await invoke<Settings>("get_settings"));
+      } catch {
+        // Defaults apply when settings can't be loaded.
+      }
+      void invoke("set_menu_item_enabled", {
+        id: "save_session",
+        enabled: true,
+      }).catch(() => undefined);
+      try {
+        if (await invoke<boolean>("check_auto_save")) {
+          restorePromptOpen = true;
+        }
+      } catch {
+        // No autosave to offer.
+      }
+    })();
+
+    const autosaveTimer = setInterval(() => {
+      autoSaveSession(currentLayout()).catch(() => undefined);
+    }, AUTOSAVE_INTERVAL_MS);
 
     return () => {
       unsubscribeGoal();
       unsubscribeLsp();
       unsubscribeShowMessage();
+      unsubscribeSetup();
+      unsubscribeProse();
       unlistenProse?.();
       unlistenSessionLoaded?.();
+      unlistenMenu?.();
+      unlistenSetup?.();
+      clearInterval(autosaveTimer);
       for (const timer of toastTimers.values()) clearTimeout(timer);
       toastTimers.clear();
     };
@@ -147,70 +277,127 @@
     draggingHorizontal = false;
     dragRect = null;
   }
+
+  const goalFontSize = $derived($settingsStore?.goal_state_font_size);
+  const proseFontSize = $derived($settingsStore?.prose_proof_font_size);
+  const assistantFontSize = $derived($settingsStore?.assistant_font_size);
 </script>
 
-<!-- svelte-ignore a11y_no_static_element_interactions -->
-<div
-  class="app-container"
-  bind:this={containerEl}
-  onmousemove={onMouseMove}
-  onmouseup={onMouseUp}
-  onmouseleave={onMouseUp}
->
-  <div class="column" style="width: {leftWidth}%">
-    <div class="panel" style="height: {topHeight}%">
-      <div class="panel-header">Formal Proof</div>
-      <div class="panel-content">
-        <FormalProof {dark} {lspReady} />
+<div class="app-shell">
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div
+    class="app-container"
+    bind:this={containerEl}
+    onmousemove={onMouseMove}
+    onmouseup={onMouseUp}
+    onmouseleave={onMouseUp}
+  >
+    <div class="column" style="width: {leftWidth}%">
+      <div class="panel" style="height: {topHeight}%">
+        <div class="panel-header">Formal Proof</div>
+        <div class="panel-content">
+          <FormalProof {dark} {lspReady} />
+        </div>
+      </div>
+
+      <Divider orientation="horizontal" onDragStart={onHorizontalDragStart} />
+
+      <div class="panel" style="height: {100 - topHeight}%">
+        <div class="panel-header">
+          {proofView === "formal" ? "Goal State" : "Prose Proof"}
+          <ProofViewToggle
+            view={proofView}
+            onToggle={() =>
+              (proofView = proofView === "formal" ? "prose" : "formal")}
+          />
+        </div>
+        <div
+          class="panel-content"
+          style={proofView === "formal"
+            ? goalFontSize
+              ? `font-size: ${String(goalFontSize)}pt`
+              : ""
+            : proseFontSize
+              ? `font-size: ${String(proseFontSize)}pt`
+              : ""}
+        >
+          {#if proofView === "formal"}
+            <GoalState content={goalText} />
+          {:else}
+            <ProseProof content={prose} />
+          {/if}
+        </div>
       </div>
     </div>
 
-    <Divider orientation="horizontal" onDragStart={onHorizontalDragStart} />
+    <Divider orientation="vertical" onDragStart={onVerticalDragStart} />
 
-    <div class="panel" style="height: {100 - topHeight}%">
+    <div class="column" style="width: {100 - leftWidth}%">
       <div class="panel-header">
-        {proofView === "formal" ? "Goal State" : "Prose Proof"}
-        <ProofViewToggle
-          view={proofView}
-          onToggle={() =>
-            (proofView = proofView === "formal" ? "prose" : "formal")}
-        />
+        Proof Assistant
+        <ThemeToggle {dark} onToggle={toggleTheme} />
       </div>
-      <div class="panel-content">
-        {#if proofView === "formal"}
-          <GoalState content={goalText} />
-        {:else}
-          <ProseProof content={proseText} />
-        {/if}
+      <div
+        class="panel-content"
+        style={assistantFontSize
+          ? `font-size: ${String(assistantFontSize)}pt`
+          : ""}
+      >
+        <Assistant />
       </div>
     </div>
+
+    <Toast {toasts} onDismiss={dismissToast} />
   </div>
 
-  <Divider orientation="vertical" onDragStart={onVerticalDragStart} />
+  <StatusBar />
 
-  <div class="column" style="width: {100 - leftWidth}%">
-    <div class="panel-header">
-      Proof Assistant
-      <ThemeToggle {dark} onToggle={toggleTheme} />
-    </div>
-    <div class="panel-content">
-      <Assistant />
-    </div>
-  </div>
+  {#if settingsOpen}
+    <SettingsDialog onClose={() => (settingsOpen = false)} />
+  {/if}
 
-  <Toast {toasts} onDismiss={dismissToast} />
+  {#if restorePromptOpen}
+    <div class="overlay" role="presentation">
+      <div
+        class="confirm"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Restore session"
+      >
+        <p>
+          Turnstile closed with unsaved work. Restore the autosaved session?
+        </p>
+        <div class="confirm-buttons">
+          <button class="secondary" onclick={() => void restoreAutosave(false)}>
+            Discard
+          </button>
+          <button class="primary" onclick={() => void restoreAutosave(true)}>
+            Restore
+          </button>
+        </div>
+      </div>
+    </div>
+  {/if}
 </div>
 
 <style>
-  .app-container {
+  .app-shell {
     display: flex;
-    flex-direction: row;
+    flex-direction: column;
     width: 100vw;
     height: 100vh;
     overflow: hidden;
     background: var(--color-bg);
     color: var(--color-text);
     font-family: system-ui, sans-serif;
+  }
+
+  .app-container {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: row;
+    overflow: hidden;
     user-select: none;
   }
 
@@ -249,5 +436,57 @@
     overflow: hidden;
     display: flex;
     flex-direction: column;
+  }
+
+  .overlay {
+    position: fixed;
+    inset: 0;
+    background: rgb(0 0 0 / 40%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+  }
+
+  .confirm {
+    width: min(26rem, calc(100vw - 4rem));
+    background: var(--color-bg);
+    color: var(--color-text);
+    border: 1px solid var(--color-border);
+    border-radius: 0.75rem;
+    box-shadow: 0 20px 50px rgb(0 0 0 / 30%);
+    padding: 1.25rem;
+    font-size: 0.875rem;
+  }
+
+  .confirm p {
+    margin: 0 0 1rem;
+  }
+
+  .confirm-buttons {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.5rem;
+  }
+
+  .confirm button {
+    padding: 0.375rem 1rem;
+    border-radius: 0.5rem;
+    font-size: 0.8125rem;
+  }
+
+  .confirm button.primary {
+    background: var(--color-accent);
+    color: var(--color-accent-text);
+  }
+
+  .confirm button.primary:hover {
+    background: var(--color-accent-hover);
+  }
+
+  .confirm button.secondary {
+    background: var(--color-surface);
+    color: var(--color-text);
+    border: 1px solid var(--color-border);
   }
 </style>

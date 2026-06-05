@@ -156,7 +156,11 @@
     {/each}
     {#if busy}
       <div class="bubble-row assistant">
-        <div class="bubble assistant" role="article" aria-label="Proof Assistant">
+        <div
+          class="bubble assistant"
+          role="article"
+          aria-label="Proof Assistant"
+        >
           {#if streamingText}
             <!-- eslint-disable-next-line svelte/no-at-html-tags -- markdown+KaTeX rendered from our own backend -->
             {@html renderMathInMarkdown(streamingText)}

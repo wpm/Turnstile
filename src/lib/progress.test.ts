@@ -25,9 +25,9 @@ describe("progressHighlightLines", () => {
   });
 
   it("clamps start lines below 1", () => {
-    expect(progressHighlightLines([{ start_line: 0, end_line: 2 }], 10)).toEqual(
-      [1, 2],
-    );
+    expect(
+      progressHighlightLines([{ start_line: 0, end_line: 2 }], 10),
+    ).toEqual([1, 2]);
   });
 
   it("merges overlapping ranges without duplicates", () => {

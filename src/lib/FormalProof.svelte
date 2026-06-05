@@ -36,6 +36,7 @@
   } from "./turnstile_messages";
   import { progressHighlightLines } from "./progress";
   import type { FileProgressRange } from "./FileProgressRange";
+  import { cursorPosition, proofSource, settings, wordWrap } from "./appState";
 
   const setProgressLines = StateEffect.define<FileProgressRange[]>();
 
@@ -74,6 +75,14 @@
   let view = $state<EditorView | undefined>(undefined);
   const themeCompartment = new Compartment();
   const editableCompartment = new Compartment();
+  const wrapCompartment = new Compartment();
+  const fontCompartment = new Compartment();
+
+  function fontTheme(size: number) {
+    return EditorView.theme({
+      "&": { fontSize: `${String(size)}pt` },
+    });
+  }
 
   let unsubscribeProgress: (() => void) | undefined;
   let unsubscribeAnnotations: (() => void) | undefined;
@@ -105,13 +114,24 @@
           lspHoverTooltip,
           syntaxHighlighting(defaultHighlightStyle),
           editableCompartment.of(EditorView.editable.of(false)),
+          wrapCompartment.of([]),
+          fontCompartment.of([]),
           themeCompartment.of(dark ? oneDark : []),
           EditorView.theme({
             "&": { height: "100%" },
             ".cm-scroller": { overflow: "auto" },
           }),
           EditorView.updateListener.of((update) => {
+            if (update.selectionSet || update.docChanged) {
+              const head = update.state.selection.main.head;
+              const line = update.state.doc.lineAt(head);
+              cursorPosition.set({
+                line: line.number - 1,
+                col: head - line.from,
+              });
+            }
             if (!update.docChanged) return;
+            proofSource.set(update.state.doc.toString());
             const oldDoc = update.startState.doc;
             const changes: ContentChange[] = [];
             update.changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
@@ -176,6 +196,23 @@
       effects: editableCompartment.reconfigure(
         EditorView.editable.of(lspReady),
       ),
+    });
+  });
+
+  $effect(() => {
+    if (!view) return;
+    view.dispatch({
+      effects: wrapCompartment.reconfigure(
+        $wordWrap ? EditorView.lineWrapping : [],
+      ),
+    });
+  });
+
+  $effect(() => {
+    if (!view) return;
+    const size = $settings?.editor_font_size;
+    view.dispatch({
+      effects: fontCompartment.reconfigure(size ? fontTheme(size) : []),
     });
   });
 </script>
