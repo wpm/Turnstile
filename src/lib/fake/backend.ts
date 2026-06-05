@@ -272,7 +272,17 @@ const SAMPLE_SESSION = {
   summary: null as string | null,
 };
 
-let hasAutosave = false;
+// Survives page reloads so tests can exercise the recovery prompt.
+let hasAutosave =
+  typeof sessionStorage !== "undefined" &&
+  sessionStorage.getItem("fake-autosave") === "1";
+
+function setAutosave(v: boolean) {
+  hasAutosave = v;
+  if (typeof sessionStorage !== "undefined") {
+    sessionStorage.setItem("fake-autosave", v ? "1" : "0");
+  }
+}
 
 // ── Command dispatch ────────────────────────────────────────────────────
 
@@ -342,11 +352,12 @@ export async function fakeInvoke(
     case "check_auto_save":
       return hasAutosave;
     case "restore_auto_save":
-      hasAutosave = false;
+      setAutosave(false);
+      source = SAMPLE_SESSION.proof_lean;
       emit("session-loaded", SAMPLE_SESSION);
       return null;
     case "delete_auto_save":
-      hasAutosave = false;
+      setAutosave(false);
       return null;
     case "get_last_session":
       return null;
@@ -375,8 +386,6 @@ if (typeof window !== "undefined") {
   window.__turnstileFake = {
     emit,
     getSource: () => source,
-    setAutosave: (v: boolean) => {
-      hasAutosave = v;
-    },
+    setAutosave,
   };
 }

@@ -29,10 +29,17 @@ export default ts.config(
   },
   // Config files live outside the tsconfig project — disable rules that need full type info
   {
-    files: ["*.config.js", "*.config.ts"],
+    files: ["*.config.js", "*.config.ts", "e2e/**/*.ts", "praxis/**/*.mjs"],
     extends: [ts.configs.disableTypeChecked],
   },
   {
-    ignores: [".svelte-kit/", "build/", "dist/", "src-tauri/target/"],
+    ignores: [
+      ".svelte-kit/",
+      "build/",
+      "dist/",
+      "src-tauri/target/",
+      "test-results/",
+      "playwright-report/",
+    ],
   },
 );

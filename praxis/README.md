@@ -1,6 +1,6 @@
 # Praxis
 
-Theory says what the code *should* do; praxis checks it against reality.
+Theory says what the code _should_ do; praxis checks it against reality.
 This directory holds harnesses that exercise Turnstile's two external
 realities — the Lean LSP server and a browser driving the real UI — on a
 real problem: proving the irrationality of √2 (no Mathlib, infinite
@@ -31,7 +31,7 @@ from live runs that shaped the backend:
 - Elaboration completion is an **empty** `processing` array; the backend
   folds it into `TurnstileMessage::ElaborationDone` and the frontend
   clears the progress highlights on it.
-- `$/lean/plainGoal` answers at the *start* of a tactic token (character
+- `$/lean/plainGoal` answers at the _start_ of a tactic token (character
   4 of `    sorry`), and may return nothing for positions inside the
   token — relevant to how goal positions are chosen.
 

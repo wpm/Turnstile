@@ -50,7 +50,9 @@ theorem sqrt2_irrational : ∀ d n : Nat, d ≠ 0 → n * n ≠ 2 * (d * d) := b
 `;
 
 /** First draft: the descent argument is still a `sorry`. */
-const DRAFT = PROOF_HEADER + `    sorry
+const DRAFT =
+  PROOF_HEADER +
+  `    sorry
 `;
 
 /** The tactic block that replaces the `sorry` — the "typed" completion. */
@@ -143,7 +145,9 @@ class LspClient {
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
       this.pending.set(id, (msg) =>
-        msg.error ? reject(new Error(JSON.stringify(msg.error))) : resolve(msg.result),
+        msg.error
+          ? reject(new Error(JSON.stringify(msg.error)))
+          : resolve(msg.result),
       );
       this.write({ jsonrpc: "2.0", id, method, params });
     });
@@ -210,7 +214,10 @@ async function main() {
   lsp.on("$/lean/fileProgress", (p) => progressEvents.push(p));
   lsp.on("textDocument/publishDiagnostics", (p) => diagnosticsEvents.push(p));
   lsp.on("*", (method, params) => {
-    if (method.startsWith("$/lean/") || method === "textDocument/publishDiagnostics")
+    if (
+      method.startsWith("$/lean/") ||
+      method === "textDocument/publishDiagnostics"
+    )
       log.push({ t: Date.now(), method, params });
   });
 
@@ -278,10 +285,14 @@ async function main() {
     endChars.some((c) => c === 0),
   );
 
-  const sorryDiag = await waitFor(() => {
-    const d = diagnosticsEvents.findLast((e) => e.diagnostics.length > 0);
-    return d ? d : undefined;
-  }, 60_000, "sorry diagnostic");
+  const sorryDiag = await waitFor(
+    () => {
+      const d = diagnosticsEvents.findLast((e) => e.diagnostics.length > 0);
+      return d ? d : undefined;
+    },
+    60_000,
+    "sorry diagnostic",
+  );
   check(
     "draft produces a 'sorry' warning diagnostic",
     sorryDiag.diagnostics.some((d) => /sorry/i.test(d.message)),
@@ -340,7 +351,9 @@ async function main() {
   await waitFor(
     () =>
       progressEvents.length > progressBefore &&
-      progressEvents.slice(progressBefore).some((p) => p.processing.length === 0)
+      progressEvents
+        .slice(progressBefore)
+        .some((p) => p.processing.length === 0)
         ? true
         : undefined,
     120_000,
@@ -362,12 +375,13 @@ async function main() {
   check(
     "completed proof has zero diagnostics",
     finalDiags.diagnostics.length === 0,
-    finalDiags.diagnostics.map((d) => d.message.slice(0, 40)).join(" | ") || "clean",
+    finalDiags.diagnostics.map((d) => d.message.slice(0, 40)).join(" | ") ||
+      "clean",
   );
 
   // The backend reads the whole-proof goal state at end-of-document
   // (fetch_full_proof_goal_state); mirror that here.
-  const finalText = DRAFT.replace(/^    sorry\n/m, COMPLETION);
+  const finalText = DRAFT.replace(/^ {4}sorry\n/m, COMPLETION);
   const lastLine = finalText.split("\n").length - 1;
   const goalAfter = await lsp.request("$/lean/plainGoal", {
     textDocument: { uri },
