@@ -206,6 +206,19 @@ pub struct Proof {
     pub annotations: Annotations,
 }
 
+impl Proof {
+    /// Clear everything derived from the formal source: the goal state, the
+    /// prose proof, and the prose's source hash. Used when the formal proof is
+    /// deleted, so the goal-state and prose panels don't keep showing output
+    /// for source that no longer exists. Leaves `formal` and `annotations`
+    /// untouched (the caller owns the source; annotations clear via the LSP).
+    pub fn clear_derived(&mut self) {
+        self.goal_state.full.clear();
+        self.prose.text.clear();
+        self.prose.goal_state_hash.clear();
+    }
+}
+
 /// Payload for the [`PROSE_UPDATED_EVENT`] Tauri event.
 ///
 /// `hash` is `Some` when the prose was generated from a specific formal
@@ -281,6 +294,24 @@ mod tests {
         assert!(p.prose.text.is_empty());
         assert!(p.prose.goal_state_hash.is_empty());
         assert!(p.goal_state.full.is_empty());
+    }
+
+    #[test]
+    fn clear_derived_empties_goal_and_prose_but_keeps_source() {
+        let mut p = Proof::default();
+        p.formal.source = "theorem t : True := trivial".to_string();
+        p.goal_state.full = "⊢ True".to_string();
+        p.prose.text = "It is trivially true.".to_string();
+        p.prose.goal_state_hash = "abc123".to_string();
+
+        p.clear_derived();
+
+        // Derived state is gone — the panels will show nothing.
+        assert!(p.goal_state.full.is_empty());
+        assert!(p.prose.text.is_empty());
+        assert!(p.prose.goal_state_hash.is_empty());
+        // The formal source is the caller's; clear_derived must not touch it.
+        assert_eq!(p.formal.source, "theorem t : True := trivial");
     }
 
     #[test]

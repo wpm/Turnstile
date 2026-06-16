@@ -272,17 +272,31 @@ async fn update_document(app: AppHandle, changes: Vec<ContentChange>) -> Result<
     let state = app.state::<AppState>();
 
     // Apply incremental changes to the stored source so `read_lean_source` stays in sync.
-    {
+    let source_is_empty = {
         let mut proof = state.proof.lock().await;
         apply_content_changes(&mut proof.formal.source, &changes);
-    }
+        proof.formal.source.trim().is_empty()
+    };
 
-    // Invalidate any in-flight goal-state refresh task and schedule a fresh one.
-    // The fileProgress-based refresh in events.rs handles the post-elaboration
-    // case; this ensures goal state updates even when Lean sends no fileProgress
-    // (e.g. a paste into an idle editor that was opened with empty content).
+    // Bump the goal-state sequence so any in-flight refresh from a prior edit
+    // is invalidated and won't repopulate the panels.
     let goal_seq = state.goal_state_seq.fetch_add(1, Ordering::SeqCst) + 1;
-    spawn_goal_state_refresh(app.clone(), goal_seq);
+
+    if source_is_empty {
+        // The proof was deleted: the goal state and prose have nothing to
+        // describe. Elaborating an empty document produces no goal state, and
+        // the refresh paths deliberately don't overwrite with an empty value
+        // (they can't tell "still elaborating" from "empty"), so they would
+        // leave the stale panels on screen. Clear both explicitly instead of
+        // scheduling a refresh. The didChange below still goes out so the
+        // server's view stays in sync.
+        clear_goal_state_and_prose(&app, &state).await;
+    } else {
+        // Schedule a fresh goal-state refresh. The fileProgress-based refresh
+        // handles the post-elaboration case; this also covers edits where Lean
+        // sends no fileProgress (e.g. a paste into an idle, empty editor).
+        spawn_goal_state_refresh(app.clone(), goal_seq);
+    }
 
     let client_arc = {
         let lock = state.lsp_client.lock().await;
@@ -525,6 +539,36 @@ fn last_non_whitespace_position(source: &str) -> (u32, u32) {
         }
     }
     (0, 0)
+}
+
+/// Clear the goal state and prose proof, persist the cleared values, and emit
+/// both to the frontend so the panels empty out. Called when the formal proof
+/// is deleted — there is nothing left to describe.
+///
+/// Bumps `prose_generation_seq` first so any in-flight prose generation is
+/// discarded and cannot repopulate the panel after this clear.
+async fn clear_goal_state_and_prose(app: &AppHandle, state: &AppState) {
+    state.prose_generation_seq.fetch_add(1, Ordering::SeqCst);
+
+    state.proof.lock().await.clear_derived();
+    state.prose_dirty.store(false, Ordering::SeqCst);
+
+    emit_turnstile(
+        app,
+        &TurnstileMessage::GoalStateUpdated(GoalStateInfo {
+            full: String::new(),
+        }),
+    );
+    app.emit(
+        proof::PROSE_UPDATED_EVENT,
+        &proof::ProsePayload {
+            text: String::new(),
+            hash: None,
+        },
+    )
+    .ok();
+
+    state.session_dirty.store(true, Ordering::SeqCst);
 }
 
 /// Spawn a background task that, after a short debounce, fetches the
