@@ -66,17 +66,6 @@ pub struct AppState {
     pub token_modifiers: Arc<Mutex<Vec<String>>>,
 }
 
-impl AppState {
-    async fn doc_uri(&self) -> Result<lsp_types::Url, String> {
-        self.lsp_client
-            .lock()
-            .await
-            .as_ref()
-            .map(|c| c.proof_uri.clone())
-            .ok_or_else(|| "LSP client not connected".to_string())
-    }
-}
-
 /// An LSP `Position` as sent by the frontend.
 #[derive(serde::Deserialize)]
 struct LspPosition {
@@ -467,12 +456,19 @@ async fn fetch_full_proof_goal_state(state: &AppState) -> Result<String, String>
     let source = state.proof.lock().await.formal.source.clone();
     let (end_line, end_col) = end_of_document_position(&source);
 
-    let lock = state.lsp_client.lock().await;
-    let Some(client) = lock.as_ref() else {
-        return Err("LSP not connected".to_string());
+    // Clone a lock-free handle and drop the mutex guard before issuing any
+    // request. Holding `lsp_client` across `plain_goal`/`plain_term_goal` would
+    // deadlock every other LSP call (e.g. a paste's didChange) if the query
+    // stalls mid-elaboration.
+    let handle = {
+        let lock = state.lsp_client.lock().await;
+        let Some(client) = lock.as_ref() else {
+            return Err("LSP not connected".to_string());
+        };
+        client.handle()
     };
 
-    let doc_uri = state.doc_uri().await?;
+    let doc_uri = handle.proof_uri.clone();
 
     let end_params = TextDocumentPositionParams {
         text_document: TextDocumentIdentifier {
@@ -484,7 +480,7 @@ async fn fetch_full_proof_goal_state(state: &AppState) -> Result<String, String>
         },
     };
 
-    let tactic = client
+    let tactic = handle
         .plain_goal(end_params)
         .await
         .map_err(|e| e.to_string())?;
@@ -505,7 +501,7 @@ async fn fetch_full_proof_goal_state(state: &AppState) -> Result<String, String>
         },
     };
 
-    let term = client
+    let term = handle
         .plain_term_goal(term_params)
         .await
         .map_err(|e| e.to_string())?;
@@ -595,30 +591,26 @@ fn spawn_semantic_token_refresh(app: AppHandle) {
         use lsp_types::{SemanticTokensParams, TextDocumentIdentifier};
 
         let state = app.state::<AppState>();
-        let (doc_uri, client_arc) = {
+        // Clone a lock-free handle and drop the guard before requesting tokens.
+        // Holding `lsp_client` across the request would block didChange/hover.
+        let handle = {
             let lock = state.lsp_client.lock().await;
             match lock.as_ref() {
-                Some(c) => (c.proof_uri.clone(), state.lsp_client.clone()),
+                Some(c) => c.handle(),
                 None => return,
             }
         };
+        let doc_uri = handle.proof_uri.clone();
         debug!("semantic token refresh: requesting tokens");
-        let tokens_result = {
-            let lock = client_arc.lock().await;
-            if let Some(client) = lock.as_ref() {
-                client
-                    .semantic_tokens_full(SemanticTokensParams {
-                        text_document: TextDocumentIdentifier { uri: doc_uri },
-                        work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
-                        partial_result_params: lsp_types::PartialResultParams::default(),
-                    })
-                    .await
-                    .ok()
-                    .flatten()
-            } else {
-                None
-            }
-        };
+        let tokens_result = handle
+            .semantic_tokens_full(SemanticTokensParams {
+                text_document: TextDocumentIdentifier { uri: doc_uri },
+                work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
+                partial_result_params: lsp_types::PartialResultParams::default(),
+            })
+            .await
+            .ok()
+            .flatten();
         match tokens_result {
             Some(lsp_types::SemanticTokensResult::Tokens(tokens)) => {
                 apply_semantic_tokens(&app, &tokens);
@@ -650,12 +642,16 @@ async fn lsp_hover(app: AppHandle, line: u32, character: u32) -> Result<Option<H
     use lsp_types::{HoverParams, Position, TextDocumentIdentifier};
 
     let state = app.state::<AppState>();
-    let lock = state.lsp_client.lock().await;
-    let Some(client) = lock.as_ref() else {
-        return Ok(None);
+    // Clone a lock-free handle and drop the guard before the hover request.
+    let handle = {
+        let lock = state.lsp_client.lock().await;
+        match lock.as_ref() {
+            Some(client) => client.handle(),
+            None => return Ok(None),
+        }
     };
-    let doc_uri = state.doc_uri().await?;
-    let raw = client
+    let doc_uri = handle.proof_uri.clone();
+    let raw = handle
         .hover(HoverParams {
             text_document_position_params: lsp_types::TextDocumentPositionParams {
                 text_document: TextDocumentIdentifier { uri: doc_uri },
@@ -665,7 +661,6 @@ async fn lsp_hover(app: AppHandle, line: u32, character: u32) -> Result<Option<H
         })
         .await
         .map_err(|e| e.to_string())?;
-    drop(lock);
     Ok(lean::messages::turnstile::parse_hover(raw))
 }
 

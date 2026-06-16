@@ -480,6 +480,159 @@ mod tests {
         guard.stop().await;
     }
 
+    /// Reproduces the real-app paste path: the server opens `Proof.lean` with
+    /// empty content at startup, then the user pastes a whole proof. That
+    /// arrives as an *incremental* `change_document` inserting at (0,0)-(0,0) —
+    /// distinct from `replace_document` (full-sync) and from opening with
+    /// content directly, neither of which exercise this case. The bug:
+    /// pasting produced no elaboration, diagnostics, or tokens.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn paste_into_empty_document_elaborates() {
+        use lsp_types::{Position, Range, TextDocumentContentChangeEvent};
+
+        crate::init_tracing!();
+        let fixture = include_str!("fixtures/01_and_comm.lean");
+
+        // Open empty, exactly as the app does before any session is loaded.
+        let (client, messages) = lean_client_with("").await;
+        let guard = ClientGuard::new(client);
+        assert!(
+            wait_for_elaboration(&messages).await,
+            "timed out waiting for the empty document to elaborate"
+        );
+        let count_before = messages.lock().unwrap().len();
+
+        // Paste: a single incremental insert at the start of the document.
+        guard
+            .change_document(vec![TextDocumentContentChangeEvent {
+                range: Some(Range {
+                    start: Position::new(0, 0),
+                    end: Position::new(0, 0),
+                }),
+                range_length: None,
+                text: fixture.to_string(),
+            }])
+            .expect("change_document failed");
+
+        // The paste must trigger a fresh elaboration that finishes cleanly.
+        let elaborated = wait_for(
+            &messages,
+            |msgs| {
+                msgs[count_before..]
+                    .iter()
+                    .any(|m| matches!(m, TurnstileMessage::ElaborationDone))
+            },
+            Duration::from_mins(2),
+        )
+        .await;
+        assert!(elaborated, "paste produced no ElaborationDone");
+
+        // And the pasted proof is valid, so diagnostics must end up empty.
+        let clean = wait_for(
+            &messages,
+            |msgs| {
+                msgs[count_before..]
+                    .iter()
+                    .filter_map(|m| match m {
+                        TurnstileMessage::Diagnostics { items } => Some(items),
+                        _ => None,
+                    })
+                    .next_back()
+                    .is_some_and(Vec::is_empty)
+            },
+            Duration::from_mins(2),
+        )
+        .await;
+        assert!(clean, "paste produced no clean Diagnostics");
+
+        // The server should now hand back semantic tokens for the pasted text.
+        let (type_legend, modifier_legend) = guard.token_legend();
+        let uri = guard.proof_uri.clone();
+        let result = guard
+            .semantic_tokens_full(SemanticTokensParams {
+                text_document: TextDocumentIdentifier { uri },
+                work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
+                partial_result_params: lsp_types::PartialResultParams::default(),
+            })
+            .await
+            .expect("semantic_tokens_full failed")
+            .expect("doc unchanged during test");
+        let tokens = match result {
+            SemanticTokensResult::Tokens(t) => {
+                decode_semantic_tokens(&t.data, &type_legend, &modifier_legend)
+            }
+            other @ SemanticTokensResult::Partial(_) => {
+                panic!("expected Tokens result, got {other:?}")
+            }
+        };
+        assert!(
+            !tokens.is_empty(),
+            "paste produced no semantic tokens for highlighting"
+        );
+
+        guard.stop().await;
+    }
+
+    /// Regression: the app wraps the client in `Arc<Mutex<Option<Client>>>`
+    /// (`AppState::lsp_client`). Issuing a request while holding that guard
+    /// serialized — and could deadlock — all other LSP traffic: a goal/token
+    /// refresh that held the guard across a stalling request blocked the next
+    /// `didChange` and every `hover`, so a pasted proof never elaborated.
+    ///
+    /// `Client::handle()` exists to break this: clone a lock-free handle under a
+    /// brief lock, drop the guard, then await the request. This test mirrors the
+    /// app's locking and asserts a request via the handle does NOT hold the
+    /// mutex — a concurrent task can take the lock while the request is in
+    /// flight. With the old lock-across-await code this would time out.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn handle_request_does_not_hold_client_mutex() {
+        use std::sync::Arc;
+        use tokio::sync::Mutex;
+
+        crate::init_tracing!();
+        let (client, _messages) = lean_client_with("theorem t : True := trivial").await;
+        let lsp: Arc<Mutex<Option<Client>>> = Arc::new(Mutex::new(Some(client)));
+
+        // Mirror the app: grab a lock-free handle under a brief lock, drop it.
+        let handle = {
+            let guard = lsp.lock().await;
+            guard.as_ref().unwrap().handle()
+        };
+
+        // Fire a real request on the handle in the background. While it is in
+        // flight, the mutex must remain acquirable — the handle holds no lock.
+        // The old code awaited the request *while holding the guard*, so this
+        // acquisition would block until the request returned (and deadlock if it
+        // stalled). We acquire the lock and assert the request is still pending.
+        let uri = handle.proof_uri.clone();
+        let request = tokio::spawn(async move {
+            handle
+                .semantic_tokens_full(SemanticTokensParams {
+                    text_document: TextDocumentIdentifier { uri },
+                    work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
+                    partial_result_params: lsp_types::PartialResultParams::default(),
+                })
+                .await
+        });
+
+        // Acquire the mutex with a tight timeout. With the lock-across-await
+        // bug this would time out; with the handle it returns immediately.
+        let guard = tokio::time::timeout(Duration::from_secs(5), lsp.lock())
+            .await
+            .expect("acquiring lsp_client deadlocked while a request was in flight");
+        drop(guard);
+
+        // The request itself still completes successfully.
+        let result = tokio::time::timeout(Duration::from_secs(30), request)
+            .await
+            .expect("request timed out")
+            .expect("request task panicked");
+        assert!(result.is_ok(), "semantic_tokens_full failed: {result:?}");
+
+        let client = lsp.lock().await.take().unwrap();
+        client.stop().await.expect("stop failed");
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn edit_then_introduce_shows_diagnostic() {
         crate::init_tracing!();

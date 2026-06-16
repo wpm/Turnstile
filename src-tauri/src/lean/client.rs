@@ -85,6 +85,35 @@ fn log_lsp(method: &str, params: &impl DisplayLspParams) {
     }
 }
 
+/// A lock-free, clonable view over a [`Client`]'s request channel. Holds clones
+/// of the [`ServerSocket`] (whose requests are routed by the main-loop task,
+/// not the caller), the `Proof.lean` URI, and the [`Protocol`] version counter.
+///
+/// Exists so request-issuing code never holds the `Client` mutex across an
+/// `.await`. See [`Client::handle`]. The named request wrappers (`hover`,
+/// `semantic_tokens_full`, `plain_goal`, …) are implemented on this type in
+/// [`crate::lean::messages`]; `Client` delegates to a transient handle.
+#[derive(Clone)]
+pub struct LspHandle {
+    pub(super) socket: ServerSocket,
+    /// URI of the `Proof.lean` file opened in this session.
+    pub proof_uri: Url,
+    pub(super) protocol: Arc<Protocol>,
+}
+
+impl LspHandle {
+    /// Send an LSP request to `lean --server` and await the response. The
+    /// returned future holds no lock — only the cloned socket.
+    pub async fn request<R>(&self, params: R::Params) -> Result<R::Result>
+    where
+        R: Request,
+        R::Params: Send + DisplayLspParams,
+    {
+        log_lsp(R::METHOD, &params);
+        self.socket.request::<R>(params).await
+    }
+}
+
 impl Client {
     /// Spawn `lean --server` against a fresh temporary project and complete the
     /// LSP initialization handshake. The `on_message` callback is called for
@@ -235,6 +264,21 @@ impl Client {
                 extract(&o.semantic_tokens_options.legend)
             }
             None => (vec![], vec![]),
+        }
+    }
+
+    /// A cheap, clonable handle for issuing LSP requests **without** holding the
+    /// `Arc<Mutex<Option<Client>>>` guard across the `.await`. Holding that guard
+    /// across a server round-trip deadlocks: the request can stall arbitrarily
+    /// (e.g. a goal query mid-elaboration), and meanwhile every other LSP call
+    /// — `update_document`'s `didChange`, `lsp_hover` — blocks on the same lock.
+    /// Callers should `client.handle()` under a brief lock, drop the guard, then
+    /// issue requests on the returned handle.
+    pub fn handle(&self) -> LspHandle {
+        LspHandle {
+            socket: self.socket.clone(),
+            proof_uri: self.proof_uri.clone(),
+            protocol: Arc::clone(&self.protocol),
         }
     }
 
