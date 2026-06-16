@@ -20,10 +20,12 @@
     showMessage,
   } from "$lib/turnstile_messages";
   import {
+    proseGenerating,
     proseHash,
     proseText,
     settings as settingsStore,
     setupProgress,
+    startProseGeneratingListener,
     startSetupProgressListener,
     wordWrap,
     type Settings,
@@ -143,6 +145,7 @@
     let unlistenSessionLoaded: (() => void) | undefined;
     let unlistenMenu: (() => void) | undefined;
     let unlistenSetup: (() => void) | undefined;
+    let unlistenProseGenerating: (() => void) | undefined;
 
     const unsubscribeGoal = goalState.subscribe((text) => {
       goalText = text;
@@ -183,11 +186,13 @@
         void handleMenuEvent(e.payload);
       }),
       startSetupProgressListener(),
-    ]).then(([p, sl, m, sp]) => {
+      startProseGeneratingListener(),
+    ]).then(([p, sl, m, sp, pg]) => {
       unlistenProse = p;
       unlistenSessionLoaded = sl;
       unlistenMenu = m;
       unlistenSetup = sp;
+      unlistenProseGenerating = pg;
     });
     void setup;
 
@@ -225,6 +230,7 @@
       unlistenSessionLoaded?.();
       unlistenMenu?.();
       unlistenSetup?.();
+      unlistenProseGenerating?.();
       clearInterval(autosaveTimer);
       for (const timer of toastTimers.values()) clearTimeout(timer);
       toastTimers.clear();
@@ -324,7 +330,7 @@
           {#if proofView === "formal"}
             <GoalState content={goalText} />
           {:else}
-            <ProseProof content={prose} />
+            <ProseProof content={prose} generating={$proseGenerating} />
           {/if}
         </div>
       </div>

@@ -86,6 +86,9 @@ let elaborationSeq = 0;
 /** How long simulated elaboration holds the progress highlight (ms). */
 export const ELABORATION_MS = 300;
 
+/** How long the simulated prose-generation busy indicator stays lit (ms). */
+export const PROSE_GEN_MS = 300;
+
 // ── Lean-ish elaboration ────────────────────────────────────────────────
 
 interface LspPosition {
@@ -229,6 +232,26 @@ function elaborate(): void {
       type: "goalStateUpdated",
       full: goalState,
     });
+
+    // Mirror the real backend: a clean, non-empty goal state triggers a prose
+    // regeneration. Drive the busy indicator (prose-generating) around a short
+    // simulated LLM delay, then deliver the prose. computeGoalState already
+    // returns "" for the empty-doc and error ("oops") cases, so a non-empty
+    // goal state here means a clean proof worth translating.
+    if (goalState.trim() !== "") {
+      emit("prose-generating", true);
+      setTimeout(() => {
+        if (seq !== elaborationSeq) {
+          emit("prose-generating", false);
+          return;
+        }
+        emit("prose-updated", {
+          text: `Prose for goal: ${goalState.split("⊢").pop()?.trim() ?? goalState}`,
+          hash: "fake-prose-hash",
+        });
+        emit("prose-generating", false);
+      }, PROSE_GEN_MS);
+    }
   }, ELABORATION_MS);
 }
 

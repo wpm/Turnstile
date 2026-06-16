@@ -24,6 +24,10 @@ export const cursorPosition = writable<{ line: number; col: number }>({
 /** Word wrap state for the editor (View → Toggle Word Wrap). */
 export const wordWrap = writable<boolean>(false);
 
+/** True while a prose-translation LLM call is in flight (drives the Prose
+ * Proof busy indicator). */
+export const proseGenerating = writable<boolean>(false);
+
 /** Latest setup progress message, or null once setup is done. */
 export interface SetupProgress {
   phase: string;
@@ -49,5 +53,12 @@ export const settings = writable<Settings | null>(null);
 export async function startSetupProgressListener(): Promise<() => void> {
   return listen<SetupProgress>("setup-progress", (e) => {
     setupProgress.set(e.payload.phase === "ready" ? null : e.payload);
+  });
+}
+
+/** Register the prose-generating listener. Returns an unlisten function. */
+export async function startProseGeneratingListener(): Promise<() => void> {
+  return listen<boolean>("prose-generating", (e) => {
+    proseGenerating.set(e.payload);
   });
 }

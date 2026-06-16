@@ -365,7 +365,9 @@ enum ShouldGenerate {
 /// operations except the proof clone which needs the async mutex on `proof`.
 async fn should_generate_prose(state: &AppState, seq: u64) -> ShouldGenerate {
     // A newer goal-state change has superseded us.
-    if state.prose_generation_seq.load(Ordering::SeqCst) != seq {
+    let cur_seq = state.prose_generation_seq.load(Ordering::SeqCst);
+    if cur_seq != seq {
+        debug!("prose: abort — stale seq (have {seq}, current {cur_seq})");
         return ShouldGenerate::Abort;
     }
 
@@ -375,6 +377,7 @@ async fn should_generate_prose(state: &AppState, seq: u64) -> ShouldGenerate {
         diags.iter().any(|d| d.severity == 1)
     };
     if has_errors {
+        debug!("prose: abort — diagnostics contain an error");
         return ShouldGenerate::Abort;
     }
 
@@ -390,14 +393,17 @@ async fn should_generate_prose(state: &AppState, seq: u64) -> ShouldGenerate {
 
     // Goal state hasn't changed since the last prose generation.
     if last_hash == hash {
+        debug!("prose: abort — goal-state hash unchanged ({hash})");
         return ShouldGenerate::Abort;
     }
 
     // Nothing to translate.
     if goal_state_text.trim().is_empty() {
+        debug!("prose: abort — goal state is empty");
         return ShouldGenerate::Abort;
     }
 
+    debug!("prose: proceed — goal state changed, generating");
     ShouldGenerate::Proceed { source, hash }
 }
 
@@ -420,11 +426,23 @@ fn spawn_prose_regeneration(app: AppHandle, seq: u64) {
             state.prose_dirty.store(false, Ordering::SeqCst);
 
             let backend = state.llm.clone();
+            debug!("prose: calling run_translator (seq {seq})");
+            // Drive the Prose Proof busy indicator for the duration of the LLM
+            // call. The `false` below fires on every outcome (Ok, Err, or a
+            // newer edit superseding this task) because it sits before any
+            // early return.
+            app.emit(proof::PROSE_GENERATING_EVENT, true).ok();
             let result = proof::translator::run_translator(backend.as_ref(), &source, &app).await;
+            app.emit(proof::PROSE_GENERATING_EVENT, false).ok();
+            match &result {
+                Ok(raw) => debug!("prose: run_translator returned Ok ({} chars)", raw.len()),
+                Err(e) => debug!("prose: run_translator returned Err: {e}"),
+            }
 
             // Discard the result if a newer edit superseded us during the
             // (potentially long) LLM call.
             if state.prose_generation_seq.load(Ordering::SeqCst) != seq {
+                debug!("prose: superseded after generation (seq {seq}), discarding");
                 return;
             }
 
@@ -617,9 +635,16 @@ fn spawn_goal_state_refresh(app: AppHandle, seq: u64) {
             &TurnstileMessage::GoalStateUpdated(GoalStateInfo { full }),
         );
 
+        debug!(
+            "goal-state refresh: full={:?} last_hash={last_hash} new_hash={new_hash} \
+             trigger_prose={}",
+            full_nonempty,
+            last_hash != new_hash && full_nonempty
+        );
         if last_hash != new_hash && full_nonempty {
             state.prose_dirty.store(true, Ordering::SeqCst);
             let prose_seq = state.prose_generation_seq.fetch_add(1, Ordering::SeqCst) + 1;
+            debug!("prose: scheduling regeneration with seq {prose_seq}");
             spawn_prose_regeneration(app.clone(), prose_seq);
         }
     });

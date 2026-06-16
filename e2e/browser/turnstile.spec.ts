@@ -181,6 +181,25 @@ test("word wrap toggles via the View menu", async ({ page }) => {
     .toBeLessThan(before - 100);
 });
 
+test("prose proof blinks while generation is in flight, then settles", async ({
+  page,
+}) => {
+  await openApp(page);
+  // Switch the bottom panel to the Prose Proof view.
+  await page.getByRole("button", { name: "Switch to Prose Proof" }).click();
+
+  // Typing a valid proof triggers a prose regeneration; the panel blinks…
+  await typeInEditor(page, "theorem t : True := trivial");
+  await expect(page.locator(".prose-generating")).toBeVisible({
+    timeout: 5_000,
+  });
+  // …and stops blinking once the (fake) translation completes, with prose shown.
+  await expect(page.locator(".prose-generating")).toHaveCount(0, {
+    timeout: 5_000,
+  });
+  await expect(page.locator(".prose-proof")).toContainText("Prose for goal");
+});
+
 test("opening a session loads the proof and prose", async ({ page }) => {
   await openApp(page);
   await page.evaluate(() => {

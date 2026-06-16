@@ -234,6 +234,13 @@ pub struct ProsePayload {
 /// call, or by a session load.  Payload: [`ProsePayload`].
 pub const PROSE_UPDATED_EVENT: &str = "prose-updated";
 
+/// Drives the Prose Proof busy indicator.
+///
+/// Emitted around a prose-translation LLM call so the UI can show a busy
+/// indicator. Payload: a bare `bool` (`true` when generation starts, `false`
+/// when it finishes — whether it succeeded, failed, or was superseded).
+pub const PROSE_GENERATING_EVENT: &str = "prose-generating";
+
 /// Compute a fast hash of a string for change detection (not cryptographic).
 #[must_use]
 pub fn compute_source_hash(source: &str) -> String {

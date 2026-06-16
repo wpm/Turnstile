@@ -439,6 +439,12 @@ async fn apply_loaded_session(
     *state.current_session_path.lock().await = session_path;
     state.session_dirty.store(false, Ordering::SeqCst);
 
+    tracing::debug!(
+        "session-loaded: emitting (proof {} chars, prose {} chars, hash {:?})",
+        session.proof_lean.len(),
+        session.prose.text.len(),
+        session.prose.tactic_state_hash
+    );
     // Emit so frontend can restore editor/prose UI.
     emit_session_loaded(app, session);
 }
