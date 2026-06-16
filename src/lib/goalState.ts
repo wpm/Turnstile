@@ -4,6 +4,17 @@ export interface GoalBlock {
   conclusion: string;
 }
 
+/**
+ * True when the goal text means the proof is finished (no remaining goals).
+ * Lean's `$/lean/plainGoal` renders this as the bare string "no goals" — with
+ * no `⊢` turnstile — so it must not be parsed as a goal whose conclusion is
+ * the words "no goals" (that would render a meaningless `⊢ no goals`). The
+ * check is case-insensitive to be robust to casing differences.
+ */
+export function isProofComplete(raw: string): boolean {
+  return raw.trim().toLowerCase() === "no goals";
+}
+
 export function parseGoalText(raw: string): GoalBlock[] {
   if (!raw.trim()) return [];
 

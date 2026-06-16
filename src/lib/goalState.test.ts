@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseGoalText } from "./goalState";
+import { isProofComplete, parseGoalText } from "./goalState";
 
 describe("parseGoalText", () => {
   it("returns empty array for empty string", () => {
@@ -86,5 +86,26 @@ describe("parseGoalText", () => {
     const [goal] = parseGoalText(input);
     expect(goal.hypotheses).toEqual(["h : P"]);
     expect(goal.conclusion).toBe("  ⊢ P");
+  });
+});
+
+describe("isProofComplete", () => {
+  it("is true for Lean's bare 'no goals'", () => {
+    expect(isProofComplete("no goals")).toBe(true);
+  });
+
+  it("is true regardless of casing or surrounding whitespace", () => {
+    expect(isProofComplete("No goals")).toBe(true);
+    expect(isProofComplete("  no goals\n")).toBe(true);
+  });
+
+  it("is false for an empty or whitespace-only goal state", () => {
+    expect(isProofComplete("")).toBe(false);
+    expect(isProofComplete("   ")).toBe(false);
+  });
+
+  it("is false for a real goal, even one mentioning 'no goals'", () => {
+    expect(isProofComplete("⊢ True")).toBe(false);
+    expect(isProofComplete("h : p\n⊢ no goals here")).toBe(false);
   });
 });

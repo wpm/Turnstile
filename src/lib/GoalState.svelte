@@ -1,13 +1,16 @@
 <script lang="ts">
-  import { parseGoalText } from "./goalState";
+  import { isProofComplete, parseGoalText } from "./goalState";
 
   let { content = "" }: { content?: string } = $props();
 
-  const goals = $derived(parseGoalText(content));
+  const complete = $derived(isProofComplete(content));
+  const goals = $derived(complete ? [] : parseGoalText(content));
 </script>
 
 <div class="goal-state">
-  {#if goals.length === 0}
+  {#if complete}
+    <div class="goal-complete">No goals — proof complete.</div>
+  {:else if goals.length === 0}
     <div class="goal-empty">No goal state available.</div>
   {:else}
     {#each goals as goal, i (i)}
@@ -45,6 +48,11 @@
   .goal-empty {
     color: var(--color-text-muted);
     font-style: italic;
+  }
+
+  .goal-complete {
+    color: #16a34a;
+    font-weight: 600;
   }
 
   .goal-block {

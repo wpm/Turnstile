@@ -85,6 +85,23 @@ test("sorry produces a warning annotation and the goal state", async ({
   await expect(page.locator(".goal-turnstile")).toBeVisible();
 });
 
+test("a completed proof shows 'proof complete', not a bare ⊢ no goals", async ({
+  page,
+}) => {
+  await openApp(page);
+  // A proof with no `sorry` elaborates to no goals (fake returns "no goals").
+  await typeInEditor(page, "theorem t : True := trivial");
+
+  // The panel reports completion…
+  await expect(page.locator(".goal-complete")).toContainText("proof complete", {
+    timeout: 5_000,
+  });
+  // …and does NOT render a dangling turnstile or the literal "no goals" as a
+  // goal conclusion (the bug: ⊢ no goals).
+  await expect(page.locator(".goal-turnstile")).toHaveCount(0);
+  await expect(page.locator(".goal-conclusion")).toHaveCount(0);
+});
+
 test("assistant chat: streams a reply about the goal and renders math", async ({
   page,
 }) => {

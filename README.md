@@ -56,7 +56,7 @@ There's no single launcher because Playwright is a separate test runner from
 vitest; the two vitest types share one config via vitest **projects**.
 
 | Type          | Files                           | Runner & config                                      | Script                  |
-|---------------|---------------------------------|------------------------------------------------------|-------------------------|
+| ------------- | ------------------------------- | ---------------------------------------------------- | ----------------------- |
 | Unit          | `src/**/*.test.ts`              | vitest — `unit` project in `vitest.config.ts`        | `pnpm test`             |
 | LSP contract  | `e2e/lean-server/**/*.test.mjs` | vitest — `lean-server` project in `vitest.config.ts` | `pnpm test:lean-server` |
 | Browser (e2e) | `e2e/browser/**/*.spec.ts`      | Playwright — `playwright.config.ts`                  | `pnpm test:e2e`         |

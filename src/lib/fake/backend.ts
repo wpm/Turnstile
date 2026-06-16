@@ -200,7 +200,9 @@ function computeGoalState(doc: string): string {
     return "case h\nn d : ℕ\nhd : d ≠ 0\n⊢ n * n ≠ 2 * (d * d)";
   }
   if (doc.includes("oops")) return "";
-  return "No goals";
+  // Match what `lean --server`'s $/lean/plainGoal renders for a finished
+  // proof: the bare lowercase string "no goals", no ⊢.
+  return "no goals";
 }
 
 /** Simulate Lean elaborating the current document. */
