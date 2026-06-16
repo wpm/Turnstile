@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 /// A single model entry shown in the Settings UI.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ModelInfo {
-    /// The model ID sent to the Anthropic API (e.g. `"claude-opus-4-6"`).
+    /// The model ID sent to the Anthropic API (e.g. `"claude-opus-4-8"`).
     pub id: &'static str,
     /// Human-readable display name shown in the dropdown.
     pub display_name: &'static str,
@@ -19,8 +19,8 @@ pub struct ModelInfo {
 /// The first entry is the default.
 pub const MODELS: &[ModelInfo] = &[
     ModelInfo {
-        id: "claude-opus-4-6",
-        display_name: "Claude Opus 4.6",
+        id: "claude-opus-4-8",
+        display_name: "Claude Opus 4.8",
     },
     ModelInfo {
         id: "claude-sonnet-4-6",
