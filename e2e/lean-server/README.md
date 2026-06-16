@@ -1,10 +1,10 @@
-# Praxis
+# Lean LSP-contract tests
 
-Theory says what the code _should_ do; praxis checks it against reality.
-This directory holds harnesses that exercise Turnstile's two external
-realities — the Lean LSP server and a browser driving the real UI — on a
-real problem: proving the irrationality of √2 (no Mathlib, infinite
-descent on naturals).
+Theory says what the code _should_ do; these tests check it against reality.
+This suite exercises one of Turnstile's external realities — the Lean LSP
+server — on a real problem: proving the irrationality of √2 (no Mathlib,
+infinite descent on naturals). The browser specs that drive the real UI live
+alongside it in [`../browser/`](../browser/).
 
 ## The √2 scenario
 
@@ -15,8 +15,9 @@ argument with an incremental didChange, and confirm clean
 re-elaboration. Two consumers:
 
 ```sh
-pnpm test:praxis        # the assertions, as a vitest suite
-node praxis/lean-lsp-harness.mjs --record praxis/recordings/out.json
+pnpm test:lean-server   # the assertions, as a vitest suite
+node e2e/lean-server/lean-lsp-harness.mjs \
+  --record e2e/lean-server/recordings/out.json
                         # ad-hoc CLI; records notification fixtures
 ```
 
@@ -52,14 +53,15 @@ fixtures. `sqrt2-session.json` is the √2 session described above.
   that signals elaboration done (observed ~1.5 s late), so consumers
   must wait for diagnostics, never assume they precede ElaborationDone.
 
-## Frontend praxis
+## Browser specs
 
-The Playwright suite in `e2e/` drives the built UI in a real browser
-against the fake backend (`src/lib/fake/`), which simulates the Rust
-side's event contracts. Run with `pnpm test:e2e`.
+The Playwright suite in [`../browser/`](../browser/) drives the built UI
+in a real browser against the fake backend (`src/lib/fake/`), which
+simulates the Rust side's event contracts. Run with `pnpm test:e2e`.
 
 ## One command
 
 `pnpm verify` runs the entire gate in order: unit tests, svelte-check,
 eslint, prettier, `cargo fmt --check` + clippy (lint set in
-`src-tauri/Cargo.toml [lints]`) + `cargo test`, Playwright, praxis.
+`src-tauri/Cargo.toml [lints]`) + `cargo test`, the browser suite, and
+this Lean LSP-contract suite.

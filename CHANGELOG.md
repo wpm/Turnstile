@@ -31,9 +31,9 @@ First stable release.
 - View → Toggle Word Wrap.
 - A status bar showing Lean server state and first-run setup progress.
 - A fake backend (`vite dev --mode e2e`) that runs the full UI in a
-  plain browser, a Playwright end-to-end suite over it, and a praxis
-  harness that drives a real `lean --server` through an irrationality
-  proof of √2.
+  plain browser, a Playwright end-to-end suite over it, and a Lean
+  LSP-contract suite that drives a real `lean --server` through an
+  irrationality proof of √2.
 
 ### Changed
 

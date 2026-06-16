@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 /**
- * CLI wrapper around the praxis scenario (see lean-lsp.mjs). The checks
- * themselves live in sqrt2.praxis.test.mjs and run under vitest via
- * `pnpm test:praxis`; this entry point exists for ad-hoc runs and for
+ * CLI wrapper around the √2 scenario (see lean-lsp.mjs). The checks
+ * themselves live in sqrt2.test.mjs and run under vitest via
+ * `pnpm test:lean-server`; this entry point exists for ad-hoc runs and for
  * recording notification fixtures:
  *
- *   node praxis/lean-lsp-harness.mjs [--record praxis/recordings/out.json]
+ *   node e2e/lean-server/lean-lsp-harness.mjs \
+ *     [--record e2e/lean-server/recordings/out.json]
  *
  * Env: TURNSTILE_LSP_CMD — lean binary (default: ~/.elan/bin/lean)
  */

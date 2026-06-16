@@ -1,11 +1,13 @@
 /**
- * Praxis library: a minimal LSP client and the √2 scenario it drives
- * against a real `lean --server`.
+ * A minimal LSP client and the √2 scenario it drives against a real
+ * `lean --server`. Checks the protocol contracts the Rust backend encodes
+ * against the live server — theory says what the code should do; this checks
+ * it against reality.
  *
  * Consumed two ways:
- * - `praxis/sqrt2.praxis.test.mjs` — vitest suite (`pnpm test:praxis`)
- * - `praxis/lean-lsp-harness.mjs`  — CLI with `--record` for capturing
- *   notification fixtures
+ * - `e2e/lean-server/sqrt2.test.mjs` — vitest suite (`pnpm test:lean-server`)
+ * - `e2e/lean-server/lean-lsp-harness.mjs` — CLI with `--record` for
+ *   capturing notification fixtures
  *
  * The scenario mirrors how the Rust backend drives Lean: didOpen a draft
  * proof of the irrationality of √2 (no Mathlib) ending in `sorry`, read
@@ -192,7 +194,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
  * Pure data out; assertions live in the callers (vitest spec or CLI).
  */
 export async function runSqrt2Scenario(leanBin, { onLog } = {}) {
-  const dir = mkdtempSync(join(tmpdir(), "turnstile-praxis-"));
+  const dir = mkdtempSync(join(tmpdir(), "turnstile-lean-server-"));
   const file = join(dir, "Proof.lean");
   writeFileSync(file, DRAFT);
   const uri = pathToFileURL(file).toString();
@@ -219,7 +221,9 @@ export async function runSqrt2Scenario(leanBin, { onLog } = {}) {
   const initResult = await lsp.request("initialize", {
     processId: process.pid,
     capabilities: {},
-    workspaceFolders: [{ uri: pathToFileURL(dir).toString(), name: "praxis" }],
+    workspaceFolders: [
+      { uri: pathToFileURL(dir).toString(), name: "turnstile-lean-server" },
+    ],
   });
   lsp.notify("initialized", {});
   log(`initialized: ${initResult.serverInfo?.name ?? "lean"}`);
@@ -245,7 +249,7 @@ export async function runSqrt2Scenario(leanBin, { onLog } = {}) {
   );
 
   // Phase 2: goal at the sorry. Probe several characters — which positions
-  // answer is itself praxis data.
+  // answer is itself an observation about the server's behavior.
   log("phase 2: plainGoal at the sorry");
   const sorryLine = DRAFT.split("\n").findIndex((l) => l.includes("sorry"));
   let goalAtSorry = null;
@@ -289,8 +293,8 @@ export async function runSqrt2Scenario(leanBin, { onLog } = {}) {
     120_000,
     "re-elaboration",
   );
-  // Praxis finding: final diagnostics may arrive AFTER the empty
-  // fileProgress (observed ~1.5 s late) — wait for them, don't assume.
+  // Observed against the live server: final diagnostics may arrive AFTER the
+  // empty fileProgress (~1.5 s late) — wait for them, don't assume.
   await waitFor(
     () =>
       diagnosticsEvents.length > diagsBefore &&

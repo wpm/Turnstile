@@ -652,10 +652,10 @@ mod tests {
             .replace_document(r#"def x : Nat := "hello""#.into())
             .expect("replace_document failed");
 
-        // Wait for the type mismatch diagnostic itself. Praxis note
-        // (praxis/recordings/sqrt2-session.json): Lean can publish the final
-        // diagnostics *after* the empty fileProgress that signals elaboration
-        // done — observed ~1.5 s late in recorded traffic — so waiting for
+        // Wait for the type mismatch diagnostic itself. Recorded live traffic
+        // (e2e/lean-server/recordings/sqrt2-session.json) shows Lean can
+        // publish the final diagnostics *after* the empty fileProgress that
+        // signals elaboration done — observed ~1.5 s late — so waiting for
         // ElaborationDone and then asserting on already-received diagnostics
         // is a race, not a guarantee.
         let found = wait_for(

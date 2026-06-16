@@ -29,7 +29,7 @@ export default ts.config(
   },
   // Config files live outside the tsconfig project — disable rules that need full type info
   {
-    files: ["*.config.js", "*.config.ts", "e2e/**/*.ts", "praxis/**/*.mjs"],
+    files: ["*.config.js", "*.config.ts", "e2e/**/*.ts", "e2e/**/*.mjs"],
     extends: [ts.configs.disableTypeChecked],
   },
   {

@@ -1,8 +1,9 @@
 /**
- * Praxis suite: protocol contracts checked against a real `lean --server`,
- * exercised on a real problem (the irrationality of √2, no Mathlib).
+ * Lean LSP-contract suite: protocol contracts checked against a real
+ * `lean --server`, exercised on a real problem (the irrationality of √2,
+ * no Mathlib).
  *
- * Run with `pnpm test:praxis`. Skipped (loudly) when no lean binary is
+ * Run with `pnpm test:lean-server`. Skipped (loudly) when no lean binary is
  * available — set TURNSTILE_LSP_CMD or install via elan. Each assertion
  * names the backend code that depends on the contract.
  */
@@ -59,7 +60,7 @@ describe.skipIf(!leanBin)("lean --server protocol contracts (sqrt 2)", () => {
   });
 
   it("records the end-character distribution (informational)", () => {
-    // Praxis observation, not a contract: across runs Lean's progress
+    // An observation, not a contract: across runs Lean's progress
     // snapshots sometimes end ranges at character 0 (whole-line) and
     // sometimes mid-line — the mix is timing-dependent. This is why
     // parse_file_progress trims the final line only when the end character

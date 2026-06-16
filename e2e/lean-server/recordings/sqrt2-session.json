@@ -19,7 +19,7 @@
         }
       ],
       "textDocument": {
-        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-praxis-q9ol3h/Proof.lean",
+        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-lean-server-q9ol3h/Proof.lean",
         "version": 0
       }
     }
@@ -29,7 +29,7 @@
     "method": "textDocument/publishDiagnostics",
     "params": {
       "diagnostics": [],
-      "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-praxis-q9ol3h/Proof.lean",
+      "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-lean-server-q9ol3h/Proof.lean",
       "version": 0
     }
   },
@@ -66,7 +66,7 @@
         }
       ],
       "textDocument": {
-        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-praxis-q9ol3h/Proof.lean",
+        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-lean-server-q9ol3h/Proof.lean",
         "version": 0
       }
     }
@@ -76,7 +76,7 @@
     "method": "textDocument/publishDiagnostics",
     "params": {
       "diagnostics": [],
-      "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-praxis-q9ol3h/Proof.lean",
+      "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-lean-server-q9ol3h/Proof.lean",
       "version": 0
     }
   },
@@ -126,7 +126,7 @@
         }
       ],
       "textDocument": {
-        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-praxis-q9ol3h/Proof.lean",
+        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-lean-server-q9ol3h/Proof.lean",
         "version": 0
       }
     }
@@ -177,7 +177,7 @@
         }
       ],
       "textDocument": {
-        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-praxis-q9ol3h/Proof.lean",
+        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-lean-server-q9ol3h/Proof.lean",
         "version": 0
       }
     }
@@ -228,7 +228,7 @@
         }
       ],
       "textDocument": {
-        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-praxis-q9ol3h/Proof.lean",
+        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-lean-server-q9ol3h/Proof.lean",
         "version": 0
       }
     }
@@ -292,7 +292,7 @@
         }
       ],
       "textDocument": {
-        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-praxis-q9ol3h/Proof.lean",
+        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-lean-server-q9ol3h/Proof.lean",
         "version": 0
       }
     }
@@ -356,7 +356,7 @@
         }
       ],
       "textDocument": {
-        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-praxis-q9ol3h/Proof.lean",
+        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-lean-server-q9ol3h/Proof.lean",
         "version": 0
       }
     }
@@ -433,7 +433,7 @@
         }
       ],
       "textDocument": {
-        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-praxis-q9ol3h/Proof.lean",
+        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-lean-server-q9ol3h/Proof.lean",
         "version": 0
       }
     }
@@ -510,7 +510,7 @@
         }
       ],
       "textDocument": {
-        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-praxis-q9ol3h/Proof.lean",
+        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-lean-server-q9ol3h/Proof.lean",
         "version": 0
       }
     }
@@ -574,7 +574,7 @@
         }
       ],
       "textDocument": {
-        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-praxis-q9ol3h/Proof.lean",
+        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-lean-server-q9ol3h/Proof.lean",
         "version": 0
       }
     }
@@ -638,7 +638,7 @@
         }
       ],
       "textDocument": {
-        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-praxis-q9ol3h/Proof.lean",
+        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-lean-server-q9ol3h/Proof.lean",
         "version": 0
       }
     }
@@ -702,7 +702,7 @@
         }
       ],
       "textDocument": {
-        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-praxis-q9ol3h/Proof.lean",
+        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-lean-server-q9ol3h/Proof.lean",
         "version": 0
       }
     }
@@ -766,7 +766,7 @@
         }
       ],
       "textDocument": {
-        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-praxis-q9ol3h/Proof.lean",
+        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-lean-server-q9ol3h/Proof.lean",
         "version": 0
       }
     }
@@ -830,7 +830,7 @@
         }
       ],
       "textDocument": {
-        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-praxis-q9ol3h/Proof.lean",
+        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-lean-server-q9ol3h/Proof.lean",
         "version": 0
       }
     }
@@ -894,7 +894,7 @@
         }
       ],
       "textDocument": {
-        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-praxis-q9ol3h/Proof.lean",
+        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-lean-server-q9ol3h/Proof.lean",
         "version": 0
       }
     }
@@ -971,7 +971,7 @@
         }
       ],
       "textDocument": {
-        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-praxis-q9ol3h/Proof.lean",
+        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-lean-server-q9ol3h/Proof.lean",
         "version": 0
       }
     }
@@ -1061,7 +1061,7 @@
         }
       ],
       "textDocument": {
-        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-praxis-q9ol3h/Proof.lean",
+        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-lean-server-q9ol3h/Proof.lean",
         "version": 0
       }
     }
@@ -1125,7 +1125,7 @@
         }
       ],
       "textDocument": {
-        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-praxis-q9ol3h/Proof.lean",
+        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-lean-server-q9ol3h/Proof.lean",
         "version": 0
       }
     }
@@ -1176,7 +1176,7 @@
         }
       ],
       "textDocument": {
-        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-praxis-q9ol3h/Proof.lean",
+        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-lean-server-q9ol3h/Proof.lean",
         "version": 0
       }
     }
@@ -1227,7 +1227,7 @@
         }
       ],
       "textDocument": {
-        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-praxis-q9ol3h/Proof.lean",
+        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-lean-server-q9ol3h/Proof.lean",
         "version": 0
       }
     }
@@ -1265,7 +1265,7 @@
         }
       ],
       "textDocument": {
-        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-praxis-q9ol3h/Proof.lean",
+        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-lean-server-q9ol3h/Proof.lean",
         "version": 0
       }
     }
@@ -1303,7 +1303,7 @@
         }
       ],
       "textDocument": {
-        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-praxis-q9ol3h/Proof.lean",
+        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-lean-server-q9ol3h/Proof.lean",
         "version": 0
       }
     }
@@ -1341,7 +1341,7 @@
         }
       ],
       "textDocument": {
-        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-praxis-q9ol3h/Proof.lean",
+        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-lean-server-q9ol3h/Proof.lean",
         "version": 0
       }
     }
@@ -1379,7 +1379,7 @@
         }
       ],
       "textDocument": {
-        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-praxis-q9ol3h/Proof.lean",
+        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-lean-server-q9ol3h/Proof.lean",
         "version": 0
       }
     }
@@ -1417,7 +1417,7 @@
         }
       ],
       "textDocument": {
-        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-praxis-q9ol3h/Proof.lean",
+        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-lean-server-q9ol3h/Proof.lean",
         "version": 0
       }
     }
@@ -1427,7 +1427,7 @@
     "method": "textDocument/publishDiagnostics",
     "params": {
       "diagnostics": [],
-      "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-praxis-q9ol3h/Proof.lean",
+      "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-lean-server-q9ol3h/Proof.lean",
       "version": 0
     }
   },
@@ -1464,7 +1464,7 @@
         }
       ],
       "textDocument": {
-        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-praxis-q9ol3h/Proof.lean",
+        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-lean-server-q9ol3h/Proof.lean",
         "version": 0
       }
     }
@@ -1500,7 +1500,7 @@
           "source": "Lean 4"
         }
       ],
-      "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-praxis-q9ol3h/Proof.lean",
+      "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-lean-server-q9ol3h/Proof.lean",
       "version": 0
     }
   },
@@ -1510,7 +1510,7 @@
     "params": {
       "processing": [],
       "textDocument": {
-        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-praxis-q9ol3h/Proof.lean",
+        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-lean-server-q9ol3h/Proof.lean",
         "version": 0
       }
     }
@@ -1521,7 +1521,7 @@
     "params": {
       "processing": [],
       "textDocument": {
-        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-praxis-q9ol3h/Proof.lean",
+        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-lean-server-q9ol3h/Proof.lean",
         "version": 0
       }
     }
@@ -1532,7 +1532,7 @@
     "params": {
       "processing": [],
       "textDocument": {
-        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-praxis-q9ol3h/Proof.lean",
+        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-lean-server-q9ol3h/Proof.lean",
         "version": 1
       }
     }
@@ -1543,7 +1543,7 @@
     "params": {
       "processing": [],
       "textDocument": {
-        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-praxis-q9ol3h/Proof.lean",
+        "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-lean-server-q9ol3h/Proof.lean",
         "version": 1
       }
     }
@@ -1553,7 +1553,7 @@
     "method": "textDocument/publishDiagnostics",
     "params": {
       "diagnostics": [],
-      "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-praxis-q9ol3h/Proof.lean",
+      "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-lean-server-q9ol3h/Proof.lean",
       "version": 1
     }
   },
@@ -1562,7 +1562,7 @@
     "method": "textDocument/publishDiagnostics",
     "params": {
       "diagnostics": [],
-      "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-praxis-q9ol3h/Proof.lean",
+      "uri": "file:///sessions/wonderful-friendly-keller/tmp/turnstile-lean-server-q9ol3h/Proof.lean",
       "version": 1
     }
   }

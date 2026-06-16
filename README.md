@@ -23,28 +23,60 @@ the Mathlib cache automatically — the status bar tracks progress.
 
 ```sh
 pnpm install
-pnpm tauri dev      # development app
-pnpm tauri build    # release bundle
+# development app
+pnpm tauri dev
+# release bundle
+pnpm tauri build
 ```
 
 ## Testing
 
 ```sh
-pnpm verify         # the whole gate, in order (frontend, Rust, e2e, praxis)
+# the whole gate, in order (frontend, Rust, e2e)
+pnpm verify
 
-pnpm test           # frontend unit tests (vitest)
-pnpm check          # svelte-check
-pnpm lint           # eslint
-pnpm verify:rust    # cargo fmt --check, clippy -D warnings, cargo test
-pnpm test:e2e       # Playwright against the real UI + fake backend
-pnpm test:praxis    # vitest suite driving a real lean --server (√2 proof)
+# frontend unit tests (vitest)
+pnpm test
+# svelte-check
+pnpm check
+# eslint
+pnpm lint
+# cargo fmt --check, clippy -D warnings, cargo test
+pnpm verify:rust
+# Playwright against the real UI + fake backend
+pnpm test:e2e
+# vitest suite driving a real lean --server (√2 proof)
+pnpm test:lean-server
 ```
 
-The last two are the praxis layer (see `praxis/README.md`): the
-Playwright suite runs the unmodified frontend in a browser against an
-in-browser simulation of the backend (`vite dev --mode e2e` serves the
-same thing for manual poking), and the LSP harness checks the protocol
-contracts the backend encodes against a live Lean server.
+### Test types and launch points
+
+Three kinds of test, two runners (vitest and Playwright), two config files.
+There's no single launcher because Playwright is a separate test runner from
+vitest; the two vitest types share one config via vitest **projects**.
+
+| Type          | Files                           | Runner & config                                      | Script                  |
+|---------------|---------------------------------|------------------------------------------------------|-------------------------|
+| Unit          | `src/**/*.test.ts`              | vitest — `unit` project in `vitest.config.ts`        | `pnpm test`             |
+| LSP contract  | `e2e/lean-server/**/*.test.mjs` | vitest — `lean-server` project in `vitest.config.ts` | `pnpm test:lean-server` |
+| Browser (e2e) | `e2e/browser/**/*.spec.ts`      | Playwright — `playwright.config.ts`                  | `pnpm test:e2e`         |
+
+- **`vitest.config.ts`** defines both vitest types as projects, selected with
+  `--project unit` / `--project lean-server`. A bare `vitest run` (no
+  `--project`) runs **both** — so it requires a Lean binary; the `pnpm test`
+  script pins `--project unit` to keep the fast path Lean-free. The
+  `lean-server` project carries the long timeouts (60 s / 300 s) the live
+  server needs; `unit` does not.
+- **`playwright.config.ts`** owns the browser suite: `testDir: e2e/browser`,
+  and it starts its own dev server (`vite dev --mode e2e`).
+- The three file globs are disjoint, which is what lets the runners coexist
+  without picking up each other's specs.
+
+The two suites under `e2e/` are the end-to-end layer (see
+`e2e/lean-server/README.md`). `e2e/browser/` runs the unmodified frontend in
+a browser against an in-browser simulation of the backend (`vite dev --mode
+e2e` serves the same thing for manual poking); `e2e/lean-server/` checks the
+protocol contracts the backend encodes against a live Lean server.
 
 ## Architecture notes
 

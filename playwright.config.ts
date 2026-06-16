@@ -1,7 +1,10 @@
 import { defineConfig } from "@playwright/test";
 
 export default defineConfig({
-  testDir: "e2e",
+  // Browser specs only. The Lean LSP-contract suite under e2e/lean-server/
+  // is a Node/vitest test (the "lean-server" project in vitest.config.ts),
+  // not Playwright.
+  testDir: "e2e/browser",
   fullyParallel: false,
   workers: 1,
   timeout: 30_000,

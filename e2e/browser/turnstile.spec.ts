@@ -1,6 +1,6 @@
 /**
- * End-to-end praxis: drive the real Turnstile UI in a browser against the
- * fake backend (src/lib/fake/), which simulates the Rust side's event
+ * End-to-end browser suite: drive the real Turnstile UI in a browser against
+ * the fake backend (src/lib/fake/), which simulates the Rust side's event
  * contracts. The scenario mirrors real use: write the sqrt(2)
  * irrationality theorem, watch elaboration progress come and *go* (the
  * 1.0 highlight bug), read the goal state, and talk to the assistant.
