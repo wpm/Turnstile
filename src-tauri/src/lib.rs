@@ -45,6 +45,11 @@ pub struct AppState {
     pub session_dirty: Arc<AtomicBool>,
     /// Latest LSP diagnostics for the Lean source file.
     pub current_diagnostics: Arc<Mutex<Vec<lean::messages::turnstile::DiagnosticInfo>>>,
+    /// Latest LSP status emitted to the frontend. Recorded on every emit so a
+    /// late-subscribing webview can recover it via `get_lsp_status`, closing the
+    /// startup race where `start_lsp` emits "connected" before the frontend's
+    /// `turnstile-message` listener is registered.
+    pub last_lsp_status: Arc<Mutex<Option<LspStatus>>>,
     /// Whether the formal proof has changed since the last prose generation.
     pub prose_dirty: Arc<AtomicBool>,
     /// Monotonically increasing sequence number for prose generation requests.
@@ -173,10 +178,12 @@ fn dispatch_turnstile_message(app: &AppHandle, msg: TurnstileMessage) {
         TurnstileMessage::SemanticTokenRefresh => {
             spawn_semantic_token_refresh(app.clone());
         }
+        TurnstileMessage::LspStatus(status) => {
+            emit_lsp_status(app, status);
+        }
         msg @ (TurnstileMessage::FileProgress { .. }
         | TurnstileMessage::ShowMessage { .. }
         | TurnstileMessage::AnnotationsUpdated { .. }
-        | TurnstileMessage::LspStatus(_)
         | TurnstileMessage::SemanticTokens { .. }
         | TurnstileMessage::GoalStateUpdated(_)) => {
             emit_turnstile(app, &msg);
@@ -184,17 +191,30 @@ fn dispatch_turnstile_message(app: &AppHandle, msg: TurnstileMessage) {
     }
 }
 
+/// Record the latest LSP status in app state, then emit it to the frontend.
+/// Recording lets a late-subscribing webview recover the status via the
+/// `get_lsp_status` command, so a "connected" emitted before the frontend's
+/// listener is registered is not lost.
+fn emit_lsp_status(app: &AppHandle, status: LspStatus) {
+    app.state::<AppState>()
+        .last_lsp_status
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .replace(status.clone());
+    emit_turnstile(app, &TurnstileMessage::LspStatus(status));
+}
+
 async fn start_lsp(app: AppHandle) -> Result<(), String> {
     let state = app.state::<AppState>();
 
     let lean_bin = setup::lean_bin();
 
-    emit_turnstile(
+    emit_lsp_status(
         &app,
-        &TurnstileMessage::LspStatus(LspStatus {
+        LspStatus {
             state: String::new(),
             message: format!("initializing ({})...", lean_bin.display()),
-        }),
+        },
     );
 
     // Open the document with whatever source the app already holds (e.g. a
@@ -217,12 +237,12 @@ async fn start_lsp(app: AppHandle) -> Result<(), String> {
 
     *state.lsp_client.lock().await = Some(client);
 
-    emit_turnstile(
+    emit_lsp_status(
         &app,
-        &TurnstileMessage::LspStatus(LspStatus {
+        LspStatus {
             state: "connected".to_string(),
             message: "connected".to_string(),
-        }),
+        },
     );
 
     Ok(())
@@ -649,6 +669,20 @@ async fn lsp_hover(app: AppHandle, line: u32, character: u32) -> Result<Option<H
     Ok(lean::messages::turnstile::parse_hover(raw))
 }
 
+/// Return the most recently emitted LSP status, if any. The frontend calls
+/// this once after registering its `turnstile-message` listener to recover a
+/// status it may have missed during startup.
+// Tauri commands must take `State` by value; clippy can't see that.
+#[allow(clippy::needless_pass_by_value)]
+#[tauri::command]
+fn get_lsp_status(state: tauri::State<'_, AppState>) -> Option<LspStatus> {
+    state
+        .last_lsp_status
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 /// # Panics
 ///
@@ -703,6 +737,7 @@ pub fn run() {
                 current_session_path: Arc::new(tokio::sync::Mutex::new(None)),
                 session_dirty: Arc::new(AtomicBool::new(false)),
                 current_diagnostics: Arc::new(Mutex::new(Vec::new())),
+                last_lsp_status: Arc::new(Mutex::new(None)),
                 prose_dirty: Arc::new(AtomicBool::new(false)),
                 prose_generation_seq: Arc::new(AtomicU64::new(0)),
                 goal_state_seq: Arc::new(AtomicU64::new(0)),
@@ -763,6 +798,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             update_document,
             lsp_hover,
+            get_lsp_status,
             send_message,
             get_transcript,
             load_transcript,
@@ -953,6 +989,7 @@ mod tests {
             current_session_path: Arc::new(tokio::sync::Mutex::new(None)),
             session_dirty: Arc::new(AtomicBool::new(false)),
             current_diagnostics: Arc::new(Mutex::new(Vec::new())),
+            last_lsp_status: Arc::new(Mutex::new(None)),
             prose_dirty: Arc::new(AtomicBool::new(false)),
             prose_generation_seq: Arc::new(AtomicU64::new(0)),
             goal_state_seq: Arc::new(AtomicU64::new(0)),

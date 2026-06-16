@@ -33,6 +33,23 @@ test("status bar reports a connected Lean server", async ({ page }) => {
   await expect(page.getByRole("status")).toContainText("Lean: connected");
 });
 
+test("recovers connected status emitted before the listener subscribed", async ({
+  page,
+}) => {
+  // Regression: when the backend reaches "connected" before the frontend's
+  // turnstile-message listener is registered (e.g. Mathlib already built),
+  // the live event is dropped. Without get_lsp_status recovery the UI stays
+  // stuck on "Starting…" with a read-only editor. `?eager-lsp=1` makes the
+  // fake announce connected at load, before any listener exists.
+  await page.goto("/?eager-lsp=1");
+  await expect(page.locator(".cm-content")).toHaveAttribute(
+    "contenteditable",
+    "true",
+    { timeout: 10_000 },
+  );
+  await expect(page.getByRole("status")).toContainText("Lean: connected");
+});
+
 test("typing a theorem shows processing highlights that clear on elaborationDone", async ({
   page,
 }) => {

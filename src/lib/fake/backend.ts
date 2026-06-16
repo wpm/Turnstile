@@ -21,6 +21,24 @@ type Listener = (event: { payload: unknown }) => void;
 
 const listeners = new Map<string, Set<Listener>>();
 
+/**
+ * When true, the fake announces "connected" eagerly at module load — before
+ * any listener subscribes — reproducing the real backend's startup race where
+ * `start_lsp` reaches connected before the webview's `turnstile-message`
+ * listener is registered. In that mode the live event is dropped and the UI
+ * must recover the status via the `get_lsp_status` command. Enabled with
+ * `?eager-lsp=1` so the e2e suite can guard the race fix.
+ */
+const eagerLsp =
+  typeof window !== "undefined" &&
+  new URLSearchParams(window.location.search).get("eager-lsp") === "1";
+
+function announceConnected() {
+  lspAnnounced = true;
+  lastLspStatus = { state: "connected", message: "connected" };
+  emit("turnstile-message", { type: "lspStatus", ...lastLspStatus });
+}
+
 export function fakeListen(event: string, cb: Listener): () => void {
   let set = listeners.get(event);
   if (!set) {
@@ -28,15 +46,9 @@ export function fakeListen(event: string, cb: Listener): () => void {
     listeners.set(event, set);
   }
   set.add(cb);
-  if (event === "turnstile-message" && !lspAnnounced) {
+  if (event === "turnstile-message" && !lspAnnounced && !eagerLsp) {
     lspAnnounced = true;
-    setTimeout(() => {
-      emit("turnstile-message", {
-        type: "lspStatus",
-        state: "connected",
-        message: "connected",
-      });
-    }, 50);
+    setTimeout(announceConnected, 50);
   }
   return () => set.delete(cb);
 }
@@ -48,6 +60,7 @@ export function emit(event: string, payload: unknown): void {
 // ── Simulated state ─────────────────────────────────────────────────────
 
 let lspAnnounced = false;
+let lastLspStatus: { state: string; message: string } | null = null;
 let source = "";
 let goalState = "";
 const transcript: {
@@ -298,6 +311,8 @@ export async function fakeInvoke(
       );
       elaborate();
       return null;
+    case "get_lsp_status":
+      return lastLspStatus;
     case "lsp_hover": {
       const doc = source.split("\n");
       const line = doc[(args?.line as number | undefined) ?? 0] ?? "";
@@ -389,3 +404,7 @@ if (typeof window !== "undefined") {
     setAutosave,
   };
 }
+
+// In eager mode, become "connected" before the frontend can subscribe. The
+// emit reaches no one (no listeners yet); recovery happens via get_lsp_status.
+if (eagerLsp) announceConnected();
