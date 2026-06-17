@@ -13,6 +13,12 @@ on:
   push:
   pull_request:
 
+# A push to a PR branch triggers both `push` and `pull_request`; collapse the
+# redundant pair (and cancel runs superseded by a newer commit) to one run.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   frontend:
     name: Frontend (lint, format, check, tests)
@@ -31,6 +37,12 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      # Generates .svelte-kit/ (route types, $app/$env ambient types) that the
+      # type-aware eslint rules and svelte-check both need. Locally this dir
+      # already exists; a fresh CI checkout has none, so sync it explicitly.
+      - name: Sync SvelteKit
+        run: pnpm exec svelte-kit sync
 
       # ── Formatting & linting (matches .githooks/pre-commit) ───────────────
       - name: Format check (prettier)
@@ -55,6 +67,11 @@ jobs:
   rust:
     name: Rust (fmt, clippy, tests)
     runs-on: ubuntu-latest
+    env:
+      # The Lean toolchain + Mathlib revision the app pins in src-tauri/src/setup.rs.
+      # Keep these in sync with LEAN_TOOLCHAIN / MATHLIB_REV there.
+      LEAN_TOOLCHAIN: leanprover/lean4:v4.29.0
+      MATHLIB_REV: v4.29.0
     steps:
       - uses: actions/checkout@v4
 
@@ -92,6 +109,62 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
+      # ── Lean toolchain + Mathlib ──────────────────────────────────────────
+      # The `lean::tests::*` integration tests spawn a real `lean --server`
+      # against a Mathlib-enabled project (see src-tauri/src/lean/server.rs:
+      # make_project_dir, which symlinks lean-toolchain / lakefile.toml /
+      # lake-manifest.json / .lake/packages from setup::project_dir()).
+      #
+      # We reproduce exactly what src-tauri/src/setup.rs builds on first launch,
+      # then point the tests at it with TURNSTILE_PROJECT_DIR. elan + the Mathlib
+      # cache are slow to fetch once and then restored from cache, so only the
+      # first run on a given toolchain/revision pays the cost.
+      - name: Configure Lean project path
+        run: echo "TURNSTILE_PROJECT_DIR=$HOME/turnstile-lean-project" >> "$GITHUB_ENV"
+
+      - name: Cache Lean toolchain and Mathlib
+        id: lean-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.elan
+            ~/turnstile-lean-project
+          key: ${{ runner.os }}-lean-${{ env.LEAN_TOOLCHAIN }}-mathlib-${{ env.MATHLIB_REV }}
+
+      - name: Install elan and Lean toolchain
+        if: steps.lean-cache.outputs.cache-hit != 'true'
+        run: |
+          curl -sSf https://elan.lean-lang.org/elan-init.sh \
+            | sh -s -- --no-modify-path -y --default-toolchain "$LEAN_TOOLCHAIN"
+
+      - name: Provision Mathlib project
+        if: steps.lean-cache.outputs.cache-hit != 'true'
+        run: |
+          export PATH="$HOME/.elan/bin:$PATH"
+          mkdir -p "$TURNSTILE_PROJECT_DIR"
+          cd "$TURNSTILE_PROJECT_DIR"
+          printf '%s' "$LEAN_TOOLCHAIN" > lean-toolchain
+          cat > lakefile.toml <<EOF
+          name = "turnstile-scratch"
+          version = "0.1.0"
+
+          [[require]]
+          name = "mathlib"
+          scope = "leanprover-community"
+          rev = "$MATHLIB_REV"
+
+          [[lean_lib]]
+          name = "Proof"
+          EOF
+          printf 'import Mathlib\n' > Proof.lean
+          # Fetch Mathlib (writes lake-manifest.json) then pull its prebuilt
+          # cache so `import Mathlib` elaborates without a full local build.
+          lake update
+          lake exe cache get
+
+      - name: Put elan on PATH
+        run: echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+
       # ── Formatting & linting (matches .githooks/pre-commit) ───────────────
       - name: Format check (cargo fmt)
         run: cargo fmt --manifest-path src-tauri/Cargo.toml --check
@@ -100,5 +173,7 @@ jobs:
         run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 
       # ── Tests ─────────────────────────────────────────────────────────────
+      # TURNSTILE_PROJECT_DIR (set above) points the lean integration tests at
+      # the provisioned Mathlib project.
       - name: Rust tests (cargo test)
         run: cargo test --manifest-path src-tauri/Cargo.toml
