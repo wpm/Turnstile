@@ -75,6 +75,13 @@ jobs:
           files: ./coverage/lcov.info
           flags: frontend
 
+      # Release tooling: the artifact-normalization + SHA256SUMS script
+      # (scripts/normalize-artifacts.sh) shells out, so its tests live outside
+      # the v8-coverage unit project. Guards the release naming contract the
+      # website's latest/download links depend on (#24).
+      - name: Release script tests (vitest)
+        run: pnpm run test:scripts
+
       - name: Install Playwright browser
         run: pnpm exec playwright install --with-deps chromium
 
