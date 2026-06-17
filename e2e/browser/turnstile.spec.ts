@@ -7,6 +7,19 @@
  */
 import { expect, test, type Page } from "@playwright/test";
 
+// The fake backend (src/lib/fake/backend.ts) exposes this test hook on
+// `window`. Its own `declare global` augmentation is out of scope here (this
+// spec doesn't import the module), so mirror the shape for type-checking.
+declare global {
+  interface Window {
+    __turnstileFake?: {
+      emit: (event: string, payload: unknown) => void;
+      getSource: () => string;
+      setAutosave: (v: boolean) => void;
+    };
+  }
+}
+
 const THEOREM = [
   "theorem sqrt2_irrational (n d : Nat) (hd : d ≠ 0) :",
   "    n * n ≠ 2 * (d * d) := by",
