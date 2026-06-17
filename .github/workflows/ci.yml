@@ -7,6 +7,11 @@
 # The lint/format gates here are the non-mutating equivalents of the
 # hook's --write/--fix commands; the hook escalates clippy warnings to
 # errors and so does CI.
+#
+# Coverage note: instrumented coverage builds recompile the whole dependency
+# tree and dominate the Rust job, so `cargo llvm-cov` + the Codecov upload run
+# only on pushes to `main`. Other pushes run a plain `cargo test` for fast
+# pass/fail feedback.
 name: CI
 
 on:
@@ -118,20 +123,24 @@ jobs:
           rustup component add rustfmt clippy llvm-tools-preview
 
       # cargo-llvm-cov instruments `cargo test` to emit an lcov report for
-      # Codecov; needs the llvm-tools-preview component added above.
+      # Codecov; needs the llvm-tools-preview component added above. Only the
+      # coverage run (main) uses it, so skip the install elsewhere.
       - name: Install cargo-llvm-cov
+        if: github.ref == 'refs/heads/main'
         uses: taiki-e/install-action@cargo-llvm-cov
 
+      # Swatinem/rust-cache (vs a hand-rolled actions/cache) saves a fresh
+      # cache on every successful run and keys on the rustc version + lockfile,
+      # so compiled dependencies actually persist run-to-run. The previous
+      # actions/cache keyed only on Cargo.lock, which froze the cache after its
+      # first save ("not saving cache") and left the coverage build recompiling
+      # the whole dependency tree each time. rust-cache also trims the target
+      # dir before saving, keeping the cache small enough to dodge GitHub's
+      # 10 GB/repo eviction (which competes with the large Lean/Mathlib cache).
       - name: Cache cargo
-        uses: actions/cache@v5
+        uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            src-tauri/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
+          workspaces: src-tauri
 
       # ── Lean toolchain + Mathlib ──────────────────────────────────────────
       # The `lean::tests::*` integration tests spawn a real `lean --server`
@@ -198,11 +207,25 @@ jobs:
 
       # ── Tests ─────────────────────────────────────────────────────────────
       # TURNSTILE_PROJECT_DIR (set above) points the lean integration tests at
-      # the provisioned Mathlib project. Run under llvm-cov to produce lcov.info.
+      # the provisioned Mathlib project.
+      #
+      # The instrumented coverage build (`cargo llvm-cov`) compiles into its own
+      # target/llvm-cov-target/ dir and so cannot reuse the artifacts clippy and
+      # a normal build warm — it recompiles the entire dependency tree, which is
+      # ~95% of the step's wall time (the tests themselves run in ~17s). To keep
+      # per-commit feedback fast we run a plain `cargo test` on branch pushes
+      # (reusing the cached debug deps) and only pay the coverage cost on `main`,
+      # which is the ref Codecov reports against.
+      - name: Rust tests (cargo test)
+        if: github.ref != 'refs/heads/main'
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
       - name: Rust tests (cargo test) with coverage
+        if: github.ref == 'refs/heads/main'
         run: cargo llvm-cov --manifest-path src-tauri/Cargo.toml --lcov --output-path lcov.info
 
       - name: Upload coverage to Codecov
+        if: github.ref == 'refs/heads/main'
         uses: codecov/codecov-action@v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
