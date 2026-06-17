@@ -915,8 +915,9 @@ mod tests {
     use std::sync::Mutex;
 
     use super::{
-        apply_content_changes, assistant, end_of_document_position, llm, lsp_pos_to_offset, proof,
-        should_generate_prose, AppState, ContentChange, LspPosition, LspRange, ShouldGenerate,
+        apply_content_changes, assistant, end_of_document_position, last_non_whitespace_position,
+        llm, lsp_pos_to_offset, proof, should_generate_prose, AppState, ContentChange, LspPosition,
+        LspRange, ShouldGenerate,
     };
     use crate::lean;
     use std::sync::Arc;
@@ -929,6 +930,19 @@ mod tests {
         assert_eq!(end_of_document_position("abc\ndef"), (1, 3));
         assert_eq!(end_of_document_position("abc\ndef\n"), (2, 0));
         assert_eq!(end_of_document_position("abc\ndef\nghi"), (2, 3));
+    }
+
+    #[test]
+    fn last_non_whitespace_position_finds_last_glyph() {
+        // Empty / whitespace-only docs report the origin.
+        assert_eq!(last_non_whitespace_position(""), (0, 0));
+        assert_eq!(last_non_whitespace_position("   \n\t  "), (0, 0));
+        // Single line: column of the last non-space char (0-indexed).
+        assert_eq!(last_non_whitespace_position("abc"), (0, 2));
+        // Trailing spaces on the line are ignored.
+        assert_eq!(last_non_whitespace_position("abc   "), (0, 2));
+        // Trailing blank lines are skipped; we land on the last content line.
+        assert_eq!(last_non_whitespace_position("abc\ndef\n\n  "), (1, 2));
     }
 
     // -- lsp_pos_to_offset --------------------------------------------------

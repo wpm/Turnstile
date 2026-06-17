@@ -1,0 +1,109 @@
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { get } from "svelte/store";
+
+// Capture the callback handed to `listen` so tests can push payloads through
+// the real handler installed by startMessageListener.
+type Listener = (event: { payload: unknown }) => void;
+let captured: { event: string; cb: Listener } | null = null;
+const unlisten = vi.fn();
+
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: (event: string, cb: Listener) => {
+    captured = { event, cb };
+    return Promise.resolve(unlisten);
+  },
+}));
+
+import {
+  startMessageListener,
+  fileProgress,
+  annotations,
+  lspStatus,
+  goalState,
+  elaborationDone,
+  showMessage,
+} from "./turnstile_messages";
+
+function emit(payload: unknown) {
+  if (!captured) throw new Error("no turnstile-message listener registered");
+  captured.cb({ payload });
+}
+
+beforeEach(() => {
+  captured = null;
+  fileProgress.set([]);
+  annotations.set([]);
+  lspStatus.set(null);
+  goalState.set("");
+  elaborationDone.set(0);
+  showMessage.set(null);
+});
+
+describe("startMessageListener", () => {
+  it("subscribes to the turnstile-message event and returns the unlisten fn", async () => {
+    const fn = await startMessageListener();
+    if (!captured) throw new Error("no listener registered");
+    expect(captured.event).toBe("turnstile-message");
+    expect(fn).toBe(unlisten);
+  });
+
+  it("handles fileProgress", async () => {
+    await startMessageListener();
+    const items = [{ start_line: 1, end_line: 3 }];
+    emit({ type: "fileProgress", items });
+    expect(get(fileProgress)).toEqual(items);
+  });
+
+  it("handles annotationsUpdated", async () => {
+    await startMessageListener();
+    const items = [{ kind: "token", line: 1, col: 0, length: 2 }];
+    emit({ type: "annotationsUpdated", items });
+    expect(get(annotations)).toEqual(items);
+  });
+
+  it("handles lspStatus", async () => {
+    await startMessageListener();
+    emit({ type: "lspStatus", state: "ready", message: "ok" });
+    expect(get(lspStatus)).toEqual({ state: "ready", message: "ok" });
+  });
+
+  it("handles goalStateUpdated", async () => {
+    await startMessageListener();
+    emit({ type: "goalStateUpdated", full: "⊢ True" });
+    expect(get(goalState)).toBe("⊢ True");
+  });
+
+  it("handles elaborationDone by clearing progress and bumping the counter", async () => {
+    await startMessageListener();
+    fileProgress.set([{ start_line: 1, end_line: 2 }]);
+    emit({ type: "elaborationDone" });
+    expect(get(fileProgress)).toEqual([]);
+    expect(get(elaborationDone)).toBe(1);
+    emit({ type: "elaborationDone" });
+    expect(get(elaborationDone)).toBe(2);
+  });
+
+  it("handles showMessage", async () => {
+    await startMessageListener();
+    emit({ type: "showMessage", severity: "error", message: "boom" });
+    expect(get(showMessage)).toEqual({ severity: "error", message: "boom" });
+  });
+
+  it("ignores backend-internal message types", async () => {
+    await startMessageListener();
+    emit({ type: "diagnostics", items: [] });
+    emit({ type: "semanticTokenRefresh" });
+    emit({ type: "semanticTokens", items: [] });
+    // None of these mutate the public stores.
+    expect(get(annotations)).toEqual([]);
+    expect(get(goalState)).toBe("");
+  });
+
+  it("warns on an unknown message type", async () => {
+    await startMessageListener();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    emit({ type: "totallyUnknown" });
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+});

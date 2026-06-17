@@ -3,14 +3,14 @@ import type { EditorView, Tooltip } from "@codemirror/view";
 import { invoke } from "@tauri-apps/api/core";
 import { renderMathInMarkdown } from "./render";
 
-interface HoverInfo {
+export interface HoverInfo {
   contents: string;
   kind: "markdown" | "plaintext";
 }
 
 // ── Tooltip DOM construction ───────────────────────────────────────────
 
-function buildTooltipDom(info: HoverInfo): HTMLElement {
+export function buildTooltipDom(info: HoverInfo): HTMLElement {
   const dom = document.createElement("div");
   dom.className = "cm-hover-tooltip-content";
 
@@ -36,7 +36,7 @@ function offsetToLspPosition(
   return { line: lineObj.number - 1, character: offset - lineObj.from };
 }
 
-async function buildHoverTooltip(
+export async function buildHoverTooltip(
   view: EditorView,
   pos: number,
 ): Promise<Tooltip | null> {

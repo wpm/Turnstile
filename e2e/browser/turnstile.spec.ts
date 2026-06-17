@@ -223,6 +223,79 @@ test("opening a session loads the proof and prose", async ({ page }) => {
   });
 });
 
+test("theme toggle switches the document between light and dark", async ({
+  page,
+}) => {
+  await openApp(page);
+  const html = page.locator("html");
+  await expect(html).not.toHaveClass(/dark/);
+
+  await page.getByRole("button", { name: "Switch to dark mode" }).click();
+  await expect(html).toHaveClass(/dark/);
+
+  await page.getByRole("button", { name: "Switch to light mode" }).click();
+  await expect(html).not.toHaveClass(/dark/);
+});
+
+test("proof view toggle round-trips between formal and prose", async ({
+  page,
+}) => {
+  await openApp(page);
+  // Start on the formal view; switch to prose and back.
+  await page.getByRole("button", { name: "Switch to Prose Proof" }).click();
+  await expect(page.locator(".prose-proof")).toBeVisible();
+
+  await page.getByRole("button", { name: "Switch to Formal Proof" }).click();
+  await expect(page.locator(".prose-proof")).toHaveCount(0);
+});
+
+test("an error in the source shows an error squiggle and gutter mark", async ({
+  page,
+}) => {
+  await openApp(page);
+  // The fake backend flags the token `oops` as an error diagnostic.
+  await typeInEditor(page, "theorem t := oops");
+
+  await expect(page.locator(".cm-diag-error").first()).toBeVisible({
+    timeout: 5_000,
+  });
+  await expect(page.locator(".cm-diag-gutter--error").first()).toBeVisible({
+    timeout: 5_000,
+  });
+});
+
+test("a showMessage notification surfaces a dismissable toast", async ({
+  page,
+}) => {
+  await openApp(page);
+  await page.evaluate(() => {
+    window.__turnstileFake?.emit("turnstile-message", {
+      type: "showMessage",
+      severity: "error",
+      message: "something went wrong",
+    });
+  });
+
+  const toast = page.getByRole("alert");
+  await expect(toast).toContainText("something went wrong");
+
+  await toast.getByRole("button", { name: "Dismiss" }).click();
+  await expect(page.getByRole("alert")).toHaveCount(0);
+});
+
+test("new session clears the editor", async ({ page }) => {
+  await openApp(page);
+  await typeInEditor(page, "theorem scratch : True := trivial");
+  await expect(page.locator(".cm-content")).toContainText("scratch");
+
+  await page.evaluate(() => {
+    window.__turnstileFake?.emit("menu-event", "new_session");
+  });
+  await expect(page.locator(".cm-content")).not.toContainText("scratch", {
+    timeout: 5_000,
+  });
+});
+
 test("autosave recovery prompt restores the session", async ({ page }) => {
   await page.goto("/");
   await page.waitForFunction(() => window.__turnstileFake !== undefined);

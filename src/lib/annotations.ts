@@ -199,7 +199,7 @@ class DiagnosticGutterMarker extends GutterMarker {
   }
 }
 
-function buildGutterMarkers(state: EditorState): RangeSet<GutterMarker> {
+export function buildGutterMarkers(state: EditorState): RangeSet<GutterMarker> {
   const annotations = state.field(annotationsDataField);
   const lineMap = new Map<number, DiagnosticSeverity>();
   for (const a of annotations) {

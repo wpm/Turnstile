@@ -1500,4 +1500,385 @@ mod tests {
         assert_eq!(edits[0].start_character, edits[0].end_character);
         assert_eq!(edits[0].new_text, "import Mathlib\n");
     }
+
+    // ── Display impls ───────────────────────────────────────────────────
+
+    #[test]
+    fn turnstile_message_display_covers_every_variant() {
+        let cases: Vec<(TurnstileMessage, &str)> = vec![
+            (
+                TurnstileMessage::Diagnostics { items: vec![] },
+                "diagnostics (0 items)",
+            ),
+            (
+                TurnstileMessage::AnnotationsUpdated { items: vec![] },
+                "annotationsUpdated (0 items)",
+            ),
+            (
+                TurnstileMessage::FileProgress { items: vec![] },
+                "fileProgress (0 ranges)",
+            ),
+            (TurnstileMessage::ElaborationDone, "elaborationDone"),
+            (
+                TurnstileMessage::ShowMessage {
+                    severity: "error".to_string(),
+                    message: "boom".to_string(),
+                },
+                "showMessage [error]: boom",
+            ),
+            (
+                TurnstileMessage::LspStatus(LspStatus {
+                    state: "connected".to_string(),
+                    message: "ok".to_string(),
+                }),
+                "lspStatus [connected]: ok",
+            ),
+            (
+                TurnstileMessage::SemanticTokenRefresh,
+                "semanticTokenRefresh",
+            ),
+            (
+                TurnstileMessage::SemanticTokens { items: vec![] },
+                "semanticTokens (0 tokens)",
+            ),
+            (
+                TurnstileMessage::GoalStateUpdated(GoalStateInfo {
+                    full: "x".to_string(),
+                }),
+                "goalStateUpdated",
+            ),
+        ];
+        for (msg, expected) in cases {
+            assert_eq!(msg.to_string(), expected);
+        }
+    }
+
+    #[test]
+    fn diagnostic_info_display_maps_each_severity() {
+        let mk = |severity: u8| DiagnosticInfo {
+            start_line: 3,
+            start_col: 5,
+            end_line: 3,
+            end_col: 9,
+            severity,
+            message: "msg".to_string(),
+        };
+        assert_eq!(mk(1).to_string(), "error at 3:5: msg");
+        assert_eq!(mk(2).to_string(), "warning at 3:5: msg");
+        assert_eq!(mk(3).to_string(), "info at 3:5: msg");
+        assert_eq!(mk(9).to_string(), "hint at 3:5: msg");
+    }
+
+    #[test]
+    fn semantic_token_display_with_and_without_modifiers() {
+        let bare = SemanticToken {
+            line: 2,
+            col: 4,
+            length: 6,
+            token_type: "keyword".to_string(),
+            token_modifiers: vec![],
+        };
+        assert_eq!(bare.to_string(), "2:4 len=6 keyword");
+
+        let modded = SemanticToken {
+            token_modifiers: vec!["declaration".to_string(), "readonly".to_string()],
+            ..bare
+        };
+        assert_eq!(
+            modded.to_string(),
+            "2:4 len=6 keyword [declaration, readonly]"
+        );
+    }
+
+    #[test]
+    fn lsp_status_display_handles_empty_state() {
+        assert_eq!(
+            LspStatus {
+                state: String::new(),
+                message: "initializing".to_string(),
+            }
+            .to_string(),
+            "initializing"
+        );
+        assert_eq!(
+            LspStatus {
+                state: "error".to_string(),
+                message: "nope".to_string(),
+            }
+            .to_string(),
+            "error: nope"
+        );
+    }
+
+    #[test]
+    fn completion_item_display_with_and_without_detail() {
+        let plain = CompletionItem {
+            label: "rfl".to_string(),
+            detail: None,
+            insert_text: None,
+        };
+        assert_eq!(plain.to_string(), "rfl");
+        let detailed = CompletionItem {
+            detail: Some("keyword".to_string()),
+            ..plain
+        };
+        assert_eq!(detailed.to_string(), "rfl  — keyword");
+    }
+
+    #[test]
+    fn file_progress_range_and_hover_displays() {
+        assert_eq!(
+            FileProgressRange {
+                start_line: 3,
+                end_line: 7,
+            }
+            .to_string(),
+            "lines 3–7"
+        );
+        assert_eq!(HoverKind::Markdown.to_string(), "markdown");
+        assert_eq!(HoverKind::Plaintext.to_string(), "plaintext");
+        assert_eq!(
+            HoverInfo {
+                contents: "x : Nat".to_string(),
+                kind: HoverKind::Plaintext,
+            }
+            .to_string(),
+            "[plaintext]\nx : Nat"
+        );
+    }
+
+    #[test]
+    fn uri_filename_handles_paths_and_bare_names() {
+        assert_eq!(uri_filename("file:///a/b/Proof.lean"), "Proof.lean");
+        assert_eq!(uri_filename("bare"), "bare");
+    }
+
+    #[test]
+    fn definition_location_display() {
+        let d = DefinitionLocation {
+            uri: "file:///a/Proof.lean".to_string(),
+            line: 1,
+            character: 8,
+            end_line: 1,
+            end_character: 18,
+        };
+        assert_eq!(d.to_string(), "Proof.lean 1:8 – 1:18");
+    }
+
+    #[test]
+    fn text_edit_dto_display_single_line_multi_line_and_ellipsis() {
+        let single = TextEditDto {
+            start_line: 2,
+            start_character: 0,
+            end_line: 2,
+            end_character: 5,
+            new_text: "exact rfl".to_string(),
+        };
+        assert_eq!(single.to_string(), "2:0-5 ← \"exact rfl\"");
+
+        let multi = TextEditDto {
+            start_line: 1,
+            start_character: 2,
+            end_line: 3,
+            end_character: 4,
+            new_text: "x".to_string(),
+        };
+        assert_eq!(multi.to_string(), "1:2 – 3:4 ← \"x\"");
+
+        let long = TextEditDto {
+            start_line: 0,
+            start_character: 0,
+            end_line: 0,
+            end_character: 1,
+            new_text: "a".repeat(45),
+        };
+        let s = long.to_string();
+        assert!(s.ends_with("…\""));
+        // 40-char preview plus the ellipsis.
+        assert!(s.contains(&"a".repeat(40)));
+    }
+
+    #[test]
+    fn workspace_edit_dto_and_code_action_info_displays() {
+        let ws = WorkspaceEditDto {
+            changes: vec![(
+                "file:///a/Proof.lean".to_string(),
+                vec![TextEditDto {
+                    start_line: 0,
+                    start_character: 0,
+                    end_line: 0,
+                    end_character: 1,
+                    new_text: "z".to_string(),
+                }],
+            )],
+        };
+        let ws_str = ws.to_string();
+        assert!(ws_str.contains("Proof.lean:"));
+        assert!(ws_str.contains("0:0-1 ← \"z\""));
+
+        // title only
+        let bare = CodeActionInfo {
+            title: "do thing".to_string(),
+            kind: None,
+            edit: None,
+            resolve_data: None,
+        };
+        assert_eq!(bare.to_string(), "do thing");
+
+        // title + kind + inline edit
+        let with_edit = CodeActionInfo {
+            title: "fix".to_string(),
+            kind: Some("quickfix".to_string()),
+            edit: Some(ws),
+            resolve_data: None,
+        };
+        let s = with_edit.to_string();
+        assert!(s.starts_with("fix (quickfix)"));
+        assert!(s.contains("Proof.lean:"));
+
+        // resolve-only action
+        let needs_resolve = CodeActionInfo {
+            title: "lazy".to_string(),
+            kind: None,
+            edit: None,
+            resolve_data: Some(json!({ "token": 1 })),
+        };
+        assert_eq!(needs_resolve.to_string(), "lazy [needs resolve]");
+    }
+
+    #[test]
+    fn document_symbol_info_display_is_indented_tree() {
+        let sym = DocumentSymbolInfo {
+            name: "Outer".to_string(),
+            kind: 5,
+            start_line: 0,
+            start_character: 0,
+            end_line: 9,
+            end_character: 0,
+            children: vec![DocumentSymbolInfo {
+                name: "inner".to_string(),
+                kind: 12,
+                start_line: 2,
+                start_character: 2,
+                end_line: 4,
+                end_character: 0,
+                children: vec![],
+            }],
+        };
+        let s = sym.to_string();
+        assert!(s.contains("Outer (kind 5) line 0"));
+        // Child is indented two spaces.
+        assert!(s.contains("\n  inner (kind 12) line 2"));
+    }
+
+    // ── from_lean ───────────────────────────────────────────────────────
+
+    fn diag_params() -> PublishDiagnosticsParams {
+        serde_json::from_value(json!({
+            "uri": "file:///test.lean",
+            "diagnostics": [{
+                "range": {
+                    "start": { "line": 0, "character": 0 },
+                    "end": { "line": 0, "character": 1 }
+                },
+                "severity": 1,
+                "message": "boom"
+            }]
+        }))
+        .unwrap()
+    }
+
+    fn fp_params(processing: Value) -> FileProgressParams {
+        let mut obj = serde_json::Map::new();
+        obj.insert(
+            "textDocument".to_string(),
+            json!({ "uri": "file:///test.lean" }),
+        );
+        obj.insert("processing".to_string(), processing);
+        serde_json::from_value(Value::Object(obj)).unwrap()
+    }
+
+    #[test]
+    fn from_lean_diagnostics() {
+        let msg = from_lean(LeanMessage::Diagnostics(diag_params())).unwrap();
+        assert!(matches!(
+            msg,
+            TurnstileMessage::Diagnostics { items } if items.len() == 1
+        ));
+    }
+
+    #[test]
+    fn from_lean_file_progress_nonempty_and_empty() {
+        let nonempty = from_lean(LeanMessage::FileProgress(fp_params(json!([{
+            "range": {
+                "start": { "line": 0, "character": 0 },
+                "end": { "line": 5, "character": 0 }
+            }
+        }]))))
+        .unwrap();
+        assert!(matches!(nonempty, TurnstileMessage::FileProgress { .. }));
+
+        // Empty processing collapses to ElaborationDone.
+        let empty = from_lean(LeanMessage::FileProgress(fp_params(json!([])))).unwrap();
+        assert!(matches!(empty, TurnstileMessage::ElaborationDone));
+    }
+
+    #[test]
+    fn from_lean_log_message_is_dropped() {
+        let log = LeanMessage::LogMessage(lsp_types::LogMessageParams {
+            typ: MessageType::ERROR,
+            message: "internal".to_string(),
+        });
+        assert!(from_lean(log).is_none());
+    }
+
+    #[test]
+    fn from_lean_show_message_maps_severity() {
+        let cases = [
+            (MessageType::ERROR, "error"),
+            (MessageType::WARNING, "warning"),
+            (MessageType::INFO, "info"),
+            (MessageType::LOG, "log"),
+        ];
+        for (typ, expected) in cases {
+            let msg = from_lean(LeanMessage::ShowMessage(lsp_types::ShowMessageParams {
+                typ,
+                message: "hi".to_string(),
+            }))
+            .unwrap();
+            match msg {
+                TurnstileMessage::ShowMessage { severity, message } => {
+                    assert_eq!(severity, expected);
+                    assert_eq!(message, "hi");
+                }
+                other => panic!("expected ShowMessage, got {other}"),
+            }
+        }
+    }
+
+    #[test]
+    fn from_lean_token_refresh() {
+        let msg = from_lean(LeanMessage::TokenRefresh).unwrap();
+        assert!(matches!(msg, TurnstileMessage::SemanticTokenRefresh));
+    }
+
+    #[test]
+    fn decode_semantic_tokens_exercises_debug_formatting() {
+        // The debug-only pretty-printer (column-width alignment, modifier
+        // rendering) only runs when DEBUG tracing is enabled. Install a
+        // local subscriber so that branch is covered.
+        use tracing_subscriber::util::SubscriberInitExt;
+        let _guard = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::DEBUG)
+            .with_test_writer()
+            .set_default();
+
+        let types = vec!["keyword".to_string(), "variable".to_string()];
+        let modifiers = vec!["declaration".to_string()];
+        // Two tokens with different position widths and one carrying a modifier.
+        let data = tokens_from_raw(&[0, 5, 3, 0, 0, 9, 12, 4, 1, 0b1]);
+        let tokens = decode_semantic_tokens(&data, &types, &modifiers);
+        assert_eq!(tokens.len(), 2);
+        assert_eq!(tokens[1].token_modifiers, vec!["declaration"]);
+    }
 }

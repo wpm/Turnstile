@@ -363,6 +363,136 @@ mod tests {
     }
 
     #[test]
+    fn token_type_from_str_maps_every_legend_name() {
+        let cases = [
+            ("namespace", TokenType::Namespace),
+            ("type", TokenType::Type),
+            ("class", TokenType::Class),
+            ("enum", TokenType::Enum),
+            ("interface", TokenType::Interface),
+            ("struct", TokenType::Struct),
+            ("typeParameter", TokenType::TypeParameter),
+            ("parameter", TokenType::Parameter),
+            ("variable", TokenType::Variable),
+            ("property", TokenType::Property),
+            ("enumMember", TokenType::EnumMember),
+            ("event", TokenType::Event),
+            ("function", TokenType::Function),
+            ("method", TokenType::Method),
+            ("macro", TokenType::Macro),
+            ("keyword", TokenType::Keyword),
+            ("modifier", TokenType::Modifier),
+            ("comment", TokenType::Comment),
+            ("string", TokenType::String),
+            ("number", TokenType::Number),
+            ("regexp", TokenType::Regexp),
+            ("operator", TokenType::Operator),
+            ("decorator", TokenType::Decorator),
+        ];
+        for (name, expected) in cases {
+            assert_eq!(name.parse::<TokenType>().unwrap(), expected);
+        }
+        // Anything unrecognized falls back to Unknown.
+        assert_eq!(
+            "totallyBogus".parse::<TokenType>().unwrap(),
+            TokenType::Unknown
+        );
+    }
+
+    #[test]
+    fn diagnostic_severity_from_u8_covers_all_levels() {
+        assert_eq!(DiagnosticSeverity::from_u8(1), DiagnosticSeverity::Error);
+        assert_eq!(DiagnosticSeverity::from_u8(2), DiagnosticSeverity::Warning);
+        assert_eq!(DiagnosticSeverity::from_u8(3), DiagnosticSeverity::Info);
+        assert_eq!(DiagnosticSeverity::from_u8(4), DiagnosticSeverity::Hint);
+        // Out-of-range severities clamp to Hint.
+        assert_eq!(DiagnosticSeverity::from_u8(99), DiagnosticSeverity::Hint);
+    }
+
+    fn sem_token(line: u32, ty: &str) -> SemanticToken {
+        SemanticToken {
+            line,
+            col: 0,
+            length: 3,
+            token_type: ty.to_string(),
+            token_modifiers: vec!["declaration".to_string()],
+        }
+    }
+
+    fn diag_info(line: u32, severity: u8) -> DiagnosticInfo {
+        DiagnosticInfo {
+            start_line: line,
+            start_col: 0,
+            end_line: line,
+            end_col: 3,
+            severity,
+            message: "m".to_string(),
+        }
+    }
+
+    #[test]
+    fn set_tokens_replaces_tokens_and_preserves_diagnostics() {
+        let mut anns = Annotations::default();
+        anns.set_diagnostics(&[diag_info(1, 1)]);
+        anns.set_tokens(&[sem_token(2, "keyword"), sem_token(3, "bogusType")]);
+
+        let token_count = anns
+            .items
+            .iter()
+            .filter(|a| matches!(a, Annotation::Token { .. }))
+            .count();
+        let diag_count = anns
+            .items
+            .iter()
+            .filter(|a| matches!(a, Annotation::Diagnostic { .. }))
+            .count();
+        assert_eq!(token_count, 2);
+        assert_eq!(diag_count, 1, "diagnostics must survive a token refresh");
+
+        // Unknown token-type strings fall back to TokenType::Unknown; modifiers carry over.
+        let unknown = anns.items.iter().find_map(|a| match a {
+            Annotation::Token {
+                token_type,
+                modifiers,
+                ..
+            } if *token_type == TokenType::Unknown => Some(modifiers.clone()),
+            _ => None,
+        });
+        assert_eq!(unknown, Some(vec!["declaration".to_string()]));
+
+        // A second set_tokens replaces, not appends.
+        anns.set_tokens(&[sem_token(5, "type")]);
+        let token_count = anns
+            .items
+            .iter()
+            .filter(|a| matches!(a, Annotation::Token { .. }))
+            .count();
+        assert_eq!(token_count, 1);
+    }
+
+    #[test]
+    fn set_diagnostics_replaces_diagnostics_and_preserves_tokens() {
+        let mut anns = Annotations::default();
+        anns.set_tokens(&[sem_token(1, "keyword")]);
+        anns.set_diagnostics(&[diag_info(2, 1), diag_info(3, 2)]);
+        anns.set_diagnostics(&[diag_info(4, 3)]); // replace
+
+        let diags: Vec<_> = anns
+            .items
+            .iter()
+            .filter_map(|a| match a {
+                Annotation::Diagnostic { severity, .. } => Some(severity.clone()),
+                Annotation::Token { .. } => None,
+            })
+            .collect();
+        assert_eq!(diags, vec![DiagnosticSeverity::Info]);
+        assert!(anns
+            .items
+            .iter()
+            .any(|a| matches!(a, Annotation::Token { .. })));
+    }
+
+    #[test]
     fn proof_round_trips_through_json() {
         let proof = Proof {
             formal: FormalProof {

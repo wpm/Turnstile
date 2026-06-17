@@ -37,6 +37,7 @@ export default ts.config(
       ".svelte-kit/",
       "build/",
       "dist/",
+      "coverage/",
       "src-tauri/target/",
       "test-results/",
       "playwright-report/",

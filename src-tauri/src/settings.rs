@@ -154,6 +154,20 @@ mod tests {
     use super::*;
 
     #[test]
+    fn default_prompt_getters_return_baked_in_constants() {
+        assert_eq!(
+            get_default_assistant_prompt(),
+            crate::assistant::DEFAULT_ASSISTANT_PROMPT
+        );
+        assert!(!get_default_assistant_prompt().is_empty());
+        assert_eq!(
+            get_default_translation_prompt(),
+            crate::proof::translator::DEFAULT_TRANSLATION_PROMPT
+        );
+        assert!(!get_default_translation_prompt().is_empty());
+    }
+
+    #[test]
     fn default_values_are_correct() {
         let s = Settings::default();
         assert_eq!(s.editor_font_size, 13);
