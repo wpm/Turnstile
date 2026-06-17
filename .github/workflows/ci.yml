@@ -57,8 +57,18 @@ jobs:
         run: pnpm run check
 
       # ── Tests ─────────────────────────────────────────────────────────────
+      # Run the unit suite under v8 coverage so we have an lcov report to ship
+      # to Codecov (test:coverage == `vitest run --project unit --coverage`).
       - name: Unit tests (vitest)
-        run: pnpm run test
+        run: pnpm run test:coverage
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v7
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          slug: wpm/Turnstile
+          files: ./coverage/lcov.info
+          flags: frontend
 
       - name: Install Playwright browser
         run: pnpm exec playwright install --with-deps chromium
@@ -105,7 +115,12 @@ jobs:
       - name: Install Rust toolchain
         run: |
           rustup toolchain install stable --profile minimal
-          rustup component add rustfmt clippy
+          rustup component add rustfmt clippy llvm-tools-preview
+
+      # cargo-llvm-cov instruments `cargo test` to emit an lcov report for
+      # Codecov; needs the llvm-tools-preview component added above.
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
 
       - name: Cache cargo
         uses: actions/cache@v5
@@ -183,6 +198,14 @@ jobs:
 
       # ── Tests ─────────────────────────────────────────────────────────────
       # TURNSTILE_PROJECT_DIR (set above) points the lean integration tests at
-      # the provisioned Mathlib project.
-      - name: Rust tests (cargo test)
-        run: cargo test --manifest-path src-tauri/Cargo.toml
+      # the provisioned Mathlib project. Run under llvm-cov to produce lcov.info.
+      - name: Rust tests (cargo test) with coverage
+        run: cargo llvm-cov --manifest-path src-tauri/Cargo.toml --lcov --output-path lcov.info
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v7
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          slug: wpm/Turnstile
+          files: ./lcov.info
+          flags: rust
