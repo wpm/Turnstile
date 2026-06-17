@@ -1,0 +1,80 @@
+/*
+ * Turnstile brand tokens — the single source of truth for color and type.
+ * Anyone touching brand starts in brand/README.md, then uses these variables.
+ *
+ * The palette mirrors the running app (src/app.css): a Tailwind `slate`
+ * neutral ramp on a paper-white ground, with blue-600 as the accent. Brand
+ * and app stay identical, so nothing in the live UI has to change.
+ *
+ * Rule: no component should hardcode a color or font. Reference a token.
+ */
+
+:root {
+  /* ── Primary pair: paper / ink ───────────────────────────────────── */
+  --ts-paper: #ffffff;   /* page ground (light mode)        */
+  --ts-ink:   #0f172a;   /* primary text — Tailwind slate-900 */
+
+  /* ── Neutral ramp (Tailwind `slate`) ─────────────────────────────── */
+  --ts-slate-50:  #f8fafc;
+  --ts-slate-100: #f1f5f9;
+  --ts-slate-200: #e2e8f0;
+  --ts-slate-300: #cbd5e1;
+  --ts-slate-400: #94a3b8;
+  --ts-slate-500: #64748b;
+  --ts-slate-600: #475569;
+  --ts-slate-700: #334155;
+  --ts-slate-800: #1e293b;
+  --ts-slate-900: #0f172a;
+
+  /* ── Accent — adopted from the app (blue-600). Approved 2026-06-16. ─ */
+  --ts-accent:       #2563eb;  /* blue-600 */
+  --ts-accent-hover: #1d4ed8;  /* blue-700 */
+  --ts-accent-text:  #ffffff;
+
+  /* ── Semantic surface tokens (light) — names mirror src/app.css ──── */
+  --ts-color-bg:         var(--ts-paper);
+  --ts-color-surface:    var(--ts-slate-50);
+  --ts-color-header-bg:  var(--ts-slate-100);
+  --ts-color-border:     var(--ts-slate-200);
+  --ts-color-divider:    var(--ts-slate-200);
+  --ts-color-text:       var(--ts-slate-900);
+  --ts-color-text-muted: var(--ts-slate-500);
+
+  /* ── Type families — IBM Plex superfamily (SIL OFL 1.1) ──────────── */
+  --ts-font-serif: "IBM Plex Serif", Georgia, "Times New Roman", serif;       /* wordmark, headings, prose */
+  --ts-font-sans:  "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif; /* UI / labels */
+  --ts-font-mono:  "IBM Plex Mono", ui-monospace, "Cascadia Code", "Fira Code", monospace; /* Lean code */
+
+  /* ── Type scale — 1.250 (major third), 16px base ─────────────────── */
+  --ts-text-xs:   0.64rem;    /* 10.24px */
+  --ts-text-sm:   0.8rem;     /* 12.8px  */
+  --ts-text-base: 1rem;       /* 16px    */
+  --ts-text-lg:   1.25rem;    /* 20px    */
+  --ts-text-xl:   1.5625rem;  /* 25px    */
+  --ts-text-2xl:  1.9531rem;  /* 31.25px */
+  --ts-text-3xl:  2.4414rem;  /* 39.06px */
+
+  /* ── Weights & line heights ──────────────────────────────────────── */
+  --ts-weight-regular:  400;
+  --ts-weight-medium:   500;
+  --ts-weight-semibold: 600;
+  --ts-leading-tight:  1.2;   /* headings / wordmark */
+  --ts-leading-snug:   1.4;   /* UI                  */
+  --ts-leading-prose:  1.6;   /* body prose          */
+}
+
+/*
+ * Dark mode — mirrors the app's `:root.dark` inversion. The accent is left
+ * unchanged (the app keeps blue-600 in dark). If it ever needs lifting for
+ * contrast on slate-900, blue-500 (#3b82f6) is the proposed alternative.
+ */
+:root.dark,
+[data-theme="dark"] {
+  --ts-color-bg:         var(--ts-slate-900);
+  --ts-color-surface:    var(--ts-slate-800);
+  --ts-color-header-bg:  var(--ts-slate-800);
+  --ts-color-border:     var(--ts-slate-700);
+  --ts-color-divider:    var(--ts-slate-700);
+  --ts-color-text:       var(--ts-slate-100);
+  --ts-color-text-muted: var(--ts-slate-400);
+}
