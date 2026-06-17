@@ -1,0 +1,100 @@
+# Unsigned packaging sanity check (issue #21).
+#
+# The fast, every-push/PR counterpart to the main-only full bundle build in
+# #37. The rest of CI (ci.yml) lints and tests but never invokes the Tauri
+# bundler, so a broken tauri.conf.json, a missing icon path, or code that
+# won't compile into the app binary would only surface at release time. This
+# job closes that gap with a quick compile-and-validate pass.
+#
+# `pnpm tauri build --no-bundle` runs the frontend build, loads and validates
+# the (bundle-inclusive) tauri.conf.json, and compiles the release binary —
+# then stops short of producing the deb/rpm/AppImage/dmg installers. That
+# keeps the check fast enough to gate every PR while still failing on the
+# config/compile breakage we care about. The heavier "produce every installer
+# format + launch smoke" pass is #37's job on `main`.
+#
+# Deliberately UNSIGNED: no Apple signing identity or notarization secrets are
+# referenced, so this runs on forks and PRs with no secrets configured.
+# `--no-bundle` never signs, so there is nothing to configure here.
+name: Package check
+
+on:
+  push:
+  pull_request:
+
+# Cancel an in-progress run when a newer commit is pushed to the same ref.
+concurrency:
+  group: package-check-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  package:
+    name: Package (${{ matrix.os }}, unsigned)
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    env:
+      # Harden cargo's crates.io downloads against transient network flakes,
+      # matching the rust job in ci.yml.
+      CARGO_NET_RETRY: 10
+      CARGO_HTTP_MULTIPLEXING: false
+    steps:
+      - uses: actions/checkout@v5
+
+      # Tauri v2 build dependencies on Linux. macOS ships the WebKit/GTK
+      # equivalents with the OS, so this step is Linux-only. Mirrors the system
+      # deps installed by the rust job in ci.yml.
+      - name: Install system dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libsoup-3.0-dev \
+            libjavascriptcoregtk-4.1-dev \
+            librsvg2-dev \
+            libayatana-appindicator3-dev \
+            libxdo-dev \
+            libssl-dev \
+            build-essential \
+            file \
+            wget \
+            curl
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Generates .svelte-kit/ (route types, $app/$env ambient types) so the
+      # frontend build invoked by tauri's beforeBuildCommand has what it needs
+      # on a fresh checkout, matching the frontend job in ci.yml.
+      - name: Sync SvelteKit
+        run: pnpm exec svelte-kit sync
+
+      - name: Install Rust toolchain
+        run: rustup toolchain install stable --profile minimal
+
+      # Cache the compiled dependency tree so the PR check stays quick (issue
+      # #21 note). Keys on the rustc version + lockfile and trims target/ before
+      # saving, like the rust job in ci.yml.
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      # Compile the app and validate the bundler config without producing (or
+      # signing) any installers. No Apple secrets are referenced, so this
+      # passes with no signing identity / notarization configured.
+      - name: Tauri build (unsigned, no bundle)
+        run: pnpm tauri build --no-bundle
