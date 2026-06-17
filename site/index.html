@@ -68,6 +68,9 @@
             <li><a href="#overview">Overview</a></li>
             <li><a href="#features">Features</a></li>
             <li><a href="#releases">Releases</a></li>
+            <li>
+              <a href="https://github.com/wpm/Turnstile">GitHub</a>
+            </li>
           </ul>
         </nav>
       </div>
@@ -92,32 +95,38 @@
         </svg>
 
         <h1 id="hero-heading">Turnstile</h1>
-        <p class="lede placeholder">
-          Placeholder lede. A Lean proof assistant pairing formal proofs with
-          prose. Final copy lands in the content issue.
+        <p class="lede">
+          A Lean proof assistant pairing formal proofs with prose. Develop
+          Lean&nbsp;4 proofs alongside a textbook-style rendering of the same
+          argument, with a Claude-backed assistant keeping the prose in step
+          with the formalism.
         </p>
 
         <div class="actions">
-          <a class="button button--primary placeholder" href="#releases"
-            >Get Turnstile</a
-          >
-          <a class="button button--secondary placeholder" href="#overview"
-            >Learn more</a
-          >
+          <a class="button button--primary" href="#releases">Get Turnstile</a>
+          <a class="button button--secondary" href="#overview">Learn more</a>
         </div>
       </section>
 
       <!-- Overview -->
       <section id="overview" aria-labelledby="overview-heading">
         <h2 id="overview-heading">Overview</h2>
-        <p class="placeholder">
-          Placeholder overview paragraph. This section will describe how
-          Turnstile pairs a live Lean&nbsp;4 editor with a textbook-style prose
-          rendering of the same argument. Real copy lands in the content issue.
+        <p>
+          Turnstile is a desktop app for developing
+          <a href="https://lean-lang.org">Lean&nbsp;4</a> proofs alongside a
+          textbook-style prose rendering of the same argument. The left pane is
+          a CodeMirror editor backed by a live <code>lean&nbsp;--server</code>;
+          below it sits the current goal state or the generated prose proof. On
+          first launch Turnstile installs elan, the pinned Lean toolchain, and
+          the <a href="https://leanprover-community.github.io/">Mathlib</a>
+          cache automatically.
         </p>
-        <p class="placeholder">
-          Placeholder secondary paragraph standing in for a short description of
-          the Proof Assistant and how prose stays in step with the formalism.
+        <p>
+          The right pane is a Proof Assistant — a Claude-backed collaborator
+          that reads your source, goal state, and diagnostics through tools, and
+          keeps the prose in step with the formalism. The Lean code is the
+          mathematics; the prose hints at the meaning. The turnstile
+          (&#8866;) separates what you have from what you must show.
         </p>
       </section>
 
@@ -125,22 +134,29 @@
       <section id="features" aria-labelledby="features-heading">
         <h2 id="features-heading">Features</h2>
         <div class="features">
-          <article class="card placeholder">
+          <article class="card">
             <h3>Formal &amp; prose, side by side</h3>
             <p>
-              Placeholder feature description. Replaced in the content issue.
+              A CodeMirror editor holds the Lean source while a textbook-style
+              prose proof of the same argument renders alongside it — the
+              formalism and its meaning in one view.
             </p>
           </article>
-          <article class="card placeholder">
+          <article class="card">
             <h3>Live Lean server</h3>
             <p>
-              Placeholder feature description. Replaced in the content issue.
+              The editor is backed by a live <code>lean&nbsp;--server</code>, so
+              goal state and diagnostics are always current. Turnstile installs
+              elan, the pinned Lean toolchain, and the Mathlib cache on first
+              launch.
             </p>
           </article>
-          <article class="card placeholder">
+          <article class="card">
             <h3>Proof Assistant</h3>
             <p>
-              Placeholder feature description. Replaced in the content issue.
+              A Claude-backed collaborator reads your source, goal state, and
+              diagnostics through tools, and keeps the prose in step as the
+              proof evolves.
             </p>
           </article>
         </div>
@@ -149,17 +165,31 @@
       <!-- Releases -->
       <section id="releases" aria-labelledby="releases-heading">
         <h2 id="releases-heading">Releases</h2>
-        <p class="placeholder">
-          Placeholder. Downloads are coming soon. The content issue wires this
-          to the repository's releases page.
+        <p>
+          Downloads are coming soon. Builds will be published on the project's
+          <a href="https://github.com/wpm/Turnstile/releases">releases page</a>
+          — check there for the latest version once 1.0.0 is cut.
         </p>
       </section>
     </main>
 
     <footer class="site-footer">
       <div class="container">
-        <p class="placeholder">
-          Placeholder footer. Links and copyright land in the content issue.
+        <nav class="footer-links" aria-label="Resources">
+          <ul>
+            <li><a href="https://github.com/wpm/Turnstile">GitHub</a></li>
+            <li><a href="https://lean-lang.org">Lean</a></li>
+            <li>
+              <a href="https://leanprover-community.github.io/">Mathlib</a>
+            </li>
+            <li>
+              <a href="https://leanprover.zulipchat.com/">Lean Zulip</a>
+            </li>
+          </ul>
+        </nav>
+        <p class="footer-meta">
+          Turnstile is open source on
+          <a href="https://github.com/wpm/Turnstile">GitHub</a>.
         </p>
       </div>
     </footer>
