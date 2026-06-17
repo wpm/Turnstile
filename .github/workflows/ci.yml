@@ -74,6 +74,13 @@ jobs:
       # Keep these in sync with LEAN_TOOLCHAIN / MATHLIB_REV there.
       LEAN_TOOLCHAIN: leanprover/lean4:v4.29.0
       MATHLIB_REV: v4.29.0
+      # Harden cargo's crates.io downloads against transient network flakes.
+      # Runs have intermittently failed with curl "[16] Error in the HTTP2
+      # framing layer" while fetching crates; disabling HTTP/2 multiplexing
+      # falls back to sequential HTTP/1.1 transfers (no framing layer), and a
+      # higher retry count rides out brief blips.
+      CARGO_NET_RETRY: 10
+      CARGO_HTTP_MULTIPLEXING: false
     steps:
       - uses: actions/checkout@v4
 
