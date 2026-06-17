@@ -1,5 +1,8 @@
 # Turnstile
 
+[![CI](https://github.com/wpm/Turnstile/actions/workflows/ci.yml/badge.svg)](https://github.com/wpm/Turnstile/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/wpm/Turnstile/branch/main/graph/badge.svg)](https://codecov.io/gh/wpm/Turnstile)
+
 _A Lean proof assistant pairing formal proofs with prose._
 
 Turnstile is a desktop app for developing Lean 4 proofs alongside a
