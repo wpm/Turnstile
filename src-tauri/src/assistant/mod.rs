@@ -491,6 +491,19 @@ mod tests {
         }
     }
 
+    // -- Turn constructor ------------------------------------------------
+
+    #[test]
+    fn turn_assistant_sets_role_and_timestamp() {
+        let before = Utc::now().timestamp_millis();
+        let turn = Turn::assistant("hi there".to_string());
+        let after = Utc::now().timestamp_millis();
+        assert_eq!(turn.role, Role::Assistant);
+        assert_eq!(turn.content, "hi there");
+        assert!(turn.spans.is_empty());
+        assert!(turn.timestamp >= before && turn.timestamp <= after);
+    }
+
     // -- Serialisation ---------------------------------------------------
 
     #[test]

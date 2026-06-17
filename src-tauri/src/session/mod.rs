@@ -823,6 +823,41 @@ mod tests {
     }
 
     #[test]
+    fn round_trip_preserves_annotations() -> TestResult {
+        use crate::proof::{Annotation, DiagnosticSeverity, TokenType};
+        let mut state = sample_state();
+        state.annotations = Annotations {
+            items: vec![
+                Annotation::Token {
+                    line: 1,
+                    col: 0,
+                    length: 7,
+                    token_type: TokenType::Keyword,
+                    modifiers: vec!["declaration".to_string()],
+                },
+                Annotation::Diagnostic {
+                    start_line: 2,
+                    start_col: 2,
+                    end_line: 2,
+                    end_col: 9,
+                    severity: DiagnosticSeverity::Warning,
+                    message: "uses sorry".to_string(),
+                },
+            ],
+        };
+
+        let tmp = NamedTempFile::new()?;
+        save(&state, tmp.path())?;
+        let loaded = load(tmp.path())?;
+
+        // Both the build_zip write branch and the parse_zip read branch for
+        // annotations.json are exercised by this round trip.
+        assert_eq!(loaded.annotations, state.annotations);
+        assert_eq!(loaded, state);
+        Ok(())
+    }
+
+    #[test]
     fn round_trip_without_summary() -> TestResult {
         let mut state = sample_state();
         state.summary = None;

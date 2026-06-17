@@ -237,4 +237,28 @@ mod tests {
         assert!(out.contains("katex"));
         assert!(!out.contains("<strong>"));
     }
+
+    #[test]
+    fn render_katex_inline_lean_code_span_is_backticked() {
+        // Backtick-delimited Lean spans are emitted as Markdown inline code,
+        // not run through KaTeX or the bold/italic pass.
+        let out = render_katex("call `Nat.succ` now");
+        assert!(out.contains("`Nat.succ`"));
+        assert!(!out.contains("katex"));
+    }
+
+    #[test]
+    fn render_katex_unclosed_bold_marker_falls_through_to_italic_pass() {
+        // `**` with no closing `**` is not treated as bold; the single-`*`
+        // italic pass then consumes the pair as an empty emphasis span. This
+        // documents the actual fall-through behavior of the bold branch.
+        let out = render_katex("**bold without close");
+        assert_eq!(out, "<p><em></em>bold without close</p>");
+    }
+
+    #[test]
+    fn render_katex_unclosed_italic_marker_is_literal() {
+        let out = render_katex("*italic without close");
+        assert_eq!(out, "<p>*italic without close</p>");
+    }
 }

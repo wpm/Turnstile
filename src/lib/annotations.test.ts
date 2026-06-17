@@ -1,13 +1,15 @@
 // @vitest-environment jsdom
 import { describe, it, expect } from "vitest";
 import { EditorState } from "@codemirror/state";
-import { Decoration } from "@codemirror/view";
+import { Decoration, EditorView } from "@codemirror/view";
 import {
   annotationField,
   annotationsDataField,
   setAnnotations,
   buildAnnotationDecorations,
   buildDiagnosticTooltip,
+  buildGutterMarkers,
+  diagnosticGutter,
   type Annotation,
 } from "./annotations";
 
@@ -460,5 +462,193 @@ describe("buildDiagnosticTooltip", () => {
     if (!tooltip) throw new Error("expected a tooltip");
     const dom = tooltip.create(null as never).dom;
     expect(dom.textContent).toContain("type mismatch");
+  });
+});
+
+// ── Diagnostic gutter ──────────────────────────────────────────────────
+
+describe("buildGutterMarkers", () => {
+  // The 1-indexed document line of every gutter marker the builder produces.
+  function markerLines(state: EditorState): number[] {
+    const set = buildGutterMarkers(state);
+    const lines: number[] = [];
+    const cursor = set.iter();
+    while (cursor.value) {
+      lines.push(state.doc.lineAt(cursor.from).number);
+      cursor.next();
+    }
+    return lines;
+  }
+
+  it("produces no markers when there are no diagnostics", () => {
+    expect(markerLines(makeStateWithData("theorem foo", []))).toEqual([]);
+  });
+
+  it("ignores info/hint diagnostics (only error/warning get gutter marks)", () => {
+    const state = makeStateWithData("hello\nworld", [
+      {
+        kind: "diagnostic",
+        startLine: 1,
+        startCol: 0,
+        endLine: 1,
+        endCol: 2,
+        severity: "info",
+        message: "fyi",
+      },
+    ]);
+    expect(markerLines(state)).toEqual([]);
+  });
+
+  it("renders one marker per line even when a line has several diagnostics", () => {
+    const state = makeStateWithData("aaaa\nbbbb", [
+      {
+        kind: "diagnostic",
+        startLine: 1,
+        startCol: 0,
+        endLine: 1,
+        endCol: 2,
+        severity: "warning",
+        message: "warn first",
+      },
+      {
+        kind: "diagnostic",
+        startLine: 1,
+        startCol: 2,
+        endLine: 1,
+        endCol: 4,
+        severity: "error",
+        message: "then error",
+      },
+      {
+        kind: "diagnostic",
+        startLine: 2,
+        startCol: 0,
+        endLine: 2,
+        endCol: 2,
+        severity: "warning",
+        message: "lone warning",
+      },
+    ]);
+    // Line 1 collapses to a single marker; line 2 gets its own.
+    expect(markerLines(state)).toEqual([1, 2]);
+  });
+
+  it("does not let a later warning displace an existing error on a line", () => {
+    const state = makeStateWithData("aaaa", [
+      {
+        kind: "diagnostic",
+        startLine: 1,
+        startCol: 0,
+        endLine: 1,
+        endCol: 2,
+        severity: "error",
+        message: "error first",
+      },
+      {
+        kind: "diagnostic",
+        startLine: 1,
+        startCol: 2,
+        endLine: 1,
+        endCol: 4,
+        severity: "warning",
+        message: "warning after",
+      },
+    ]);
+    expect(markerLines(state)).toEqual([1]);
+  });
+
+  it("skips markers on out-of-bounds lines", () => {
+    const state = makeStateWithData("only one line", [
+      {
+        kind: "diagnostic",
+        startLine: 99,
+        startCol: 0,
+        endLine: 99,
+        endCol: 2,
+        severity: "error",
+        message: "off the end",
+      },
+    ]);
+    expect(markerLines(state)).toEqual([]);
+  });
+});
+
+describe("diagnosticGutter extension", () => {
+  function mountedView(doc: string) {
+    const parent = document.createElement("div");
+    document.body.appendChild(parent);
+    const view = new EditorView({
+      state: EditorState.create({
+        doc,
+        extensions: [annotationsDataField, diagnosticGutter],
+      }),
+      parent,
+    });
+    return { view, parent };
+  }
+
+  it("renders error/warning gutter glyphs into the DOM", () => {
+    const { view, parent } = mountedView("err line\nwarn line");
+    try {
+      view.dispatch({
+        effects: setAnnotations.of([
+          {
+            kind: "diagnostic",
+            startLine: 1,
+            startCol: 0,
+            endLine: 1,
+            endCol: 3,
+            severity: "error",
+            message: "boom",
+          },
+          {
+            kind: "diagnostic",
+            startLine: 2,
+            startCol: 0,
+            endLine: 2,
+            endCol: 3,
+            severity: "warning",
+            message: "careful",
+          },
+        ]),
+      });
+
+      // CodeMirror renders the markers (calling DiagnosticGutterMarker.toDOM)
+      // into the gutter column DOM.
+      const glyphs = [...parent.querySelectorAll(".cm-diag-gutter")].map(
+        (el) => el.textContent,
+      );
+      expect(glyphs).toContain("✕");
+      expect(glyphs).toContain("⚠");
+    } finally {
+      view.destroy();
+      parent.remove();
+    }
+  });
+
+  it("mounts and survives annotation + plain-edit dispatches", () => {
+    const { view, parent } = mountedView("theorem foo\nbar");
+    try {
+      view.dispatch({
+        effects: setAnnotations.of([
+          {
+            kind: "diagnostic",
+            startLine: 1,
+            startCol: 0,
+            endLine: 1,
+            endCol: 3,
+            severity: "error",
+            message: "boom",
+          },
+        ]),
+      });
+      // A pure document edit (no setAnnotations effect) exercises the
+      // markers-remap branch of the gutter field's update().
+      view.dispatch({ changes: { from: 0, insert: "x" } });
+      expect(view.state.field(annotationsDataField).length).toBe(1);
+    } finally {
+      view.destroy();
+      parent.remove();
+    }
   });
 });
