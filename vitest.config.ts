@@ -3,6 +3,7 @@ import { defineConfig } from "vitest/config";
 // Two vitest test types, one config, selected with `--project`:
 //
 //   vitest run --project unit         # fast frontend unit tests (src/)
+//   vitest run --project scripts      # release tooling in scripts/
 //   vitest run --project lean-server  # e2e: drives a real `lean --server`
 //
 // Playwright owns the browser e2e suite (e2e/browser/) under its own runner;
@@ -25,6 +26,13 @@ export default defineConfig({
           name: "unit",
           environment: "node",
           include: ["src/**/*.test.ts"],
+        },
+      },
+      {
+        test: {
+          name: "scripts",
+          environment: "node",
+          include: ["scripts/**/*.test.mjs"],
         },
       },
       {
