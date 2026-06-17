@@ -1,0 +1,84 @@
+# Publishes the marketing site to GitHub Pages.
+#
+# The site (site/index.html, site/styles.css) is a static, framework-free
+# bundle that references two brand assets by relative path:
+#   site/index.html  → ../brand/turnstile.svg   (SVG favicon)
+#   site/styles.css  → ../brand/tokens.css       (@import, the design tokens)
+# Fonts are pulled from Google Fonts and the mark is inlined in the HTML, so
+# those two files are the only assets that need to travel with the site.
+#
+# Those `../brand/` paths point a level *above* site/, which has no analogue
+# once site/ is the published root. So the build assembles a self-contained
+# bundle — site files at the root, the referenced brand assets in a sibling
+# brand/ folder — and rewrites `../brand/` → `brand/` to match. Every path
+# stays relative, so it resolves correctly under the project-Pages base path
+# (https://wpm.github.io/Turnstile/) without any base-path rewriting.
+#
+# Publishing is to the gh-pages branch (Settings → Pages must point its source
+# there). This needs `contents: write` so the Action can push that branch.
+name: Deploy website
+
+on:
+  push:
+    branches: [main]
+    # Only rebuild when the site or the brand assets it ships actually change.
+    paths:
+      - "site/**"
+      - "brand/turnstile.svg"
+      - "brand/tokens.css"
+      - ".github/workflows/pages.yml"
+  # Allow a manual redeploy from the Actions tab.
+  workflow_dispatch:
+
+# Let one deploy finish before the next starts; never cancel a publish midway.
+concurrency:
+  group: pages-deploy
+  cancel-in-progress: false
+
+# The deploy step pushes to the gh-pages branch.
+permissions:
+  contents: write
+
+jobs:
+  deploy:
+    name: Build and publish to gh-pages
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Assemble the publishable bundle
+        run: |
+          set -euo pipefail
+          dist="$RUNNER_TEMP/site"
+          mkdir -p "$dist/brand"
+
+          # Static site at the bundle root.
+          cp site/index.html site/styles.css "$dist/"
+
+          # The brand assets the site references, kept under brand/ so the
+          # rewritten paths below resolve to a sibling of the site files.
+          cp brand/turnstile.svg brand/tokens.css "$dist/brand/"
+
+          # Re-anchor the site's `../brand/` references (one level above site/)
+          # onto the in-bundle brand/ sibling.
+          sed -i 's#\.\./brand/#brand/#g' "$dist/index.html" "$dist/styles.css"
+
+          # Fail loudly if any `../brand/` reference survived the rewrite.
+          if grep -rn '\.\./brand/' "$dist"; then
+            echo "::error::Unrewritten ../brand/ reference in the published bundle" >&2
+            exit 1
+          fi
+
+          echo "SITE_DIST=$dist" >> "$GITHUB_ENV"
+
+      - name: Publish to gh-pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ${{ env.SITE_DIST }}
+          publish_branch: gh-pages
+          # Replace the branch contents each deploy rather than accreting files.
+          force_orphan: true
+          user_name: github-actions[bot]
+          user_email: github-actions[bot]@users.noreply.github.com
+          commit_message: "Deploy site from ${{ github.sha }}"
