@@ -11,10 +11,8 @@ name: CI
 
 on:
   push:
-  pull_request:
 
-# A push to a PR branch triggers both `push` and `pull_request`; collapse the
-# redundant pair (and cancel runs superseded by a newer commit) to one run.
+# Cancel an in-progress run when a newer commit is pushed to the same ref.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -45,8 +43,12 @@ jobs:
         run: pnpm exec svelte-kit sync
 
       # ── Formatting & linting (matches .githooks/pre-commit) ───────────────
+      # The hook only formats staged .ts/.js/.svelte files, so scope prettier
+      # to that set here rather than `prettier --check .` (the repo-wide
+      # format:check script), which would also flag unrelated .md/.css assets
+      # the hook never touches.
       - name: Format check (prettier)
-        run: pnpm run format:check
+        run: pnpm exec prettier --check "**/*.{ts,js,svelte}"
 
       - name: Lint (eslint)
         run: pnpm run lint
