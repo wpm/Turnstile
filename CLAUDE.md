@@ -5,7 +5,7 @@ repository.
 
 ## Commit and PR conventions
 
-- **Commit titles MUST follow [Conventional Commits](https://www.conventionalcommits.org/):** 
+- **Commit titles MUST follow [Conventional Commits](https://www.conventionalcommits.org/):**
 - **PR titles MUST follow [Conventional Commits](https://www.conventionalcommits.org/):**
 - Types and their release effect on `Turnstile`: `fix` → patch bump, `feat` →
   minor bump, `!` suffix or `BREAKING CHANGE` footer → breaking bump

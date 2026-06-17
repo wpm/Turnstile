@@ -29,7 +29,7 @@ that owns them so you can dig into the rationale.
 ## Prerequisites
 
 These are one-time setup items. They rarely change between releases, but
-confirm them before the *first* release and whenever a secret or certificate
+confirm them before the _first_ release and whenever a secret or certificate
 might have rotated/expired.
 
 ### Apple Developer ID
@@ -37,7 +37,7 @@ might have rotated/expired.
 macOS builds are signed with a **Developer ID Application** certificate and
 notarized through Apple so Gatekeeper accepts them with no right-click-open
 workaround. See [#29] for the full verification procedure. In short, the
-certificate must be a valid, unexpired *Developer ID Application* identity
+certificate must be a valid, unexpired _Developer ID Application_ identity
 **with its private key** present in the login keychain:
 
 ```sh
@@ -57,21 +57,21 @@ The release workflow reads six `APPLE_*` secrets. They are added under
 match these names exactly. Full retrieval instructions (how to export the
 `.p12`, generate the app-specific password, etc.) live in [#30].
 
-| Secret                       | Where it comes from                                              |
-| ---------------------------- | --------------------------------------------------------------- |
-| `APPLE_CERTIFICATE`          | base64 of the Developer ID Application `.p12` export            |
-| `APPLE_CERTIFICATE_PASSWORD` | password chosen when exporting the `.p12`                       |
-| `APPLE_SIGNING_IDENTITY`     | `Developer ID Application: <Name> (<TEAMID>)`, exactly          |
-| `APPLE_ID`                   | Apple ID email of the developer account                         |
-| `APPLE_PASSWORD`             | app-specific password for that Apple ID (not the account one)   |
-| `APPLE_TEAM_ID`              | 10-character team ID (also inside the identity string)          |
+| Secret                       | Where it comes from                                           |
+| ---------------------------- | ------------------------------------------------------------- |
+| `APPLE_CERTIFICATE`          | base64 of the Developer ID Application `.p12` export          |
+| `APPLE_CERTIFICATE_PASSWORD` | password chosen when exporting the `.p12`                     |
+| `APPLE_SIGNING_IDENTITY`     | `Developer ID Application: <Name> (<TEAMID>)`, exactly        |
+| `APPLE_ID`                   | Apple ID email of the developer account                       |
+| `APPLE_PASSWORD`             | app-specific password for that Apple ID (not the account one) |
+| `APPLE_TEAM_ID`              | 10-character team ID (also inside the identity string)        |
 
 > Secrets must never pass through Claude, a PR, or shell history — only Bill
 > can add them. Set them with `gh secret set <NAME> --repo wpm/Turnstile`,
 > which prompts for the value rather than taking it on the command line.
 
 Turnstile has **no auto-updater**, so Mathdoku's `TAURI_SIGNING_PRIVATE_KEY`
-(updater/minisign) secret is *not* needed here. `CODECOV_TOKEN` is used by CI
+(updater/minisign) secret is _not_ needed here. `CODECOV_TOKEN` is used by CI
 but is unrelated to releases.
 
 ### Repo settings
@@ -89,7 +89,7 @@ Confirm once (details in [#31]):
 
 ## Pre-flight
 
-Do all of this on `main` (or a PR that merges to `main`) *before* tagging.
+Do all of this on `main` (or a PR that merges to `main`) _before_ tagging.
 
 ### 1. Bump the version in all three files
 
@@ -97,11 +97,11 @@ Turnstile keeps the version in three places that must agree. CI enforces this
 ([#25]), and the release workflow refuses to build if the tag disagrees with
 the source version, so get it right here:
 
-| File                         | Field             |
-| ---------------------------- | ----------------- |
-| `package.json`               | `version`         |
-| `src-tauri/tauri.conf.json`  | `version`         |
-| `src-tauri/Cargo.toml`       | `package.version` |
+| File                        | Field             |
+| --------------------------- | ----------------- |
+| `package.json`              | `version`         |
+| `src-tauri/tauri.conf.json` | `version`         |
+| `src-tauri/Cargo.toml`      | `package.version` |
 
 For a release candidate, set the **base** version (e.g. `1.0.0`) in these
 files — the `-rc.N` suffix lives only on the git tag, not in the source. The
@@ -252,7 +252,7 @@ If a draft is bad, or a published RC needs to be replaced:
    delete it first (step 2) — never move a tag that anyone may have already
    pulled.
 
-Re-running the workflow on an *existing* tag (Actions → release →
+Re-running the workflow on an _existing_ tag (Actions → release →
 `workflow_dispatch`) is the lighter option when the tagged commit is fine and
 only a transient build/notarization step failed — it updates the draft in
 place.
