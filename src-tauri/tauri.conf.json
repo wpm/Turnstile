@@ -31,12 +31,44 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "publisher": "W.P. McNeill",
+    "homepage": "https://github.com/wpm/Turnstile",
+    "license": "MIT",
+    "category": "Education",
+    "shortDescription": "A Lean proof assistant pairing formal proofs with prose",
+    "longDescription": "Turnstile is a desktop app for developing Lean 4 proofs alongside a textbook-style prose rendering of the same argument, backed by a live lean --server and an AI proof assistant that keeps the prose in step with the formalism.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "linux": {
+      "deb": {
+        "depends": [
+          "libwebkit2gtk-4.1-0",
+          "libgtk-3-0",
+          "libayatana-appindicator3-1"
+        ],
+        "section": "math",
+        "priority": "optional",
+        "desktopTemplate": "linux/turnstile.desktop"
+      },
+      "rpm": {
+        "depends": [
+          "webkit2gtk4.1",
+          "gtk3",
+          "libappindicator-gtk3",
+          "librsvg2"
+        ],
+        "release": "1",
+        "epoch": 0,
+        "desktopTemplate": "linux/turnstile.desktop"
+      },
+      "appimage": {
+        "bundleMediaFramework": true
+      }
+    }
   }
 }
