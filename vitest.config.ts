@@ -10,6 +10,15 @@ import { defineConfig } from "vitest/config";
 // three run without picking up each other's files.
 export default defineConfig({
   test: {
+    // Coverage for the unit suite, surfaced in CI and uploaded to Codecov.
+    // `pnpm run test:coverage` writes coverage/lcov.info (plus a terminal
+    // summary); the report is scoped to the frontend sources the unit tests
+    // exercise, not the e2e/ harnesses or generated SvelteKit output.
+    coverage: {
+      provider: "v8",
+      reporter: ["text", "lcov"],
+      include: ["src/**"],
+    },
     projects: [
       {
         test: {
