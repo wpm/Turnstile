@@ -101,3 +101,7 @@ protocol contracts the backend encodes against a live Lean server.
 
 Sessions are saved as `.turn` files via the File menu; settings
 (models, prompts, font sizes) live under Settings (⌘,).
+
+## License
+
+Turnstile is released under the [MIT License](LICENSE).
