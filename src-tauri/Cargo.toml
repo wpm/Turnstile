@@ -1,6 +1,11 @@
 [package]
 name = "turnstile"
-version = "1.0.0"
+# Not the app version - the shipped version comes from package.json via
+# tauri.conf.json. This crate isn't published and its version isn't read
+# anywhere, so it's pinned to 0.0.0 to keep it out of the running as a
+# version source. Cargo still requires some value here.
+publish = false
+version = "0.0.0"
 description = "Turnstile - a Lean proof assistant pairing formal proofs with prose"
 authors = ["W.P. McNeill <billmcn@gmail.com>"]
 edition = "2021"
