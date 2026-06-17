@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>
+      Turnstile — A Lean proof assistant pairing formal proofs with prose
+    </title>
+    <meta
+      name="description"
+      content="Turnstile is a desktop app for developing Lean 4 proofs alongside a textbook-style prose rendering of the same argument."
+    />
+    <meta name="color-scheme" content="light dark" />
+
+    <!--
+      Favicon: the brand mark, served straight from the source of truth as an
+      SVG favicon. The icon issue (#2) emits a full favicon set + social card
+      for the site to consume; swap those in here when they land.
+    -->
+    <link rel="icon" type="image/svg+xml" href="../brand/turnstile.svg" />
+
+    <!--
+      Type: IBM Plex superfamily (brand/README.md → Type). Pulled from Google
+      Fonts for the scaffold; the brand direction is to self-host these. The
+      font stacks in tokens.css fall back cleanly if these never load (e.g.
+      offline), so the page still opens correctly from a local file.
+    -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Serif:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <header class="site-header">
+      <div class="container">
+        <!--
+          Wordmark lockup: the mark + "Turnstile". The SVG is inlined (from
+          brand/turnstile.svg) so it inherits the page's `color` via
+          currentColor and inverts in dark mode. The visible word is the
+          accessible name, so the mark itself is decorative (aria-hidden).
+        -->
+        <a class="wordmark" href="#main" aria-label="Turnstile — home">
+          <svg
+            class="logo"
+            viewBox="0 0 256 256"
+            aria-hidden="true"
+            focusable="false"
+          >
+            <path
+              fill-rule="evenodd"
+              d="M24 128a104 104 0 1 0 208 0a104 104 0 1 0 -208 0ZM46 128a82 82 0 1 0 164 0a82 82 0 1 0 -164 0Z"
+            />
+            <rect x="89" y="88" width="22" height="80" rx="11" />
+            <rect x="100" y="117" width="64" height="22" rx="11" />
+          </svg>
+          <span>Turnstile</span>
+        </a>
+
+        <nav class="site-nav" aria-label="Primary">
+          <ul>
+            <li><a href="#overview">Overview</a></li>
+            <li><a href="#features">Features</a></li>
+            <li><a href="#releases">Releases</a></li>
+          </ul>
+        </nav>
+      </div>
+    </header>
+
+    <main id="main" class="container">
+      <!-- Hero -->
+      <section class="hero" aria-labelledby="hero-heading">
+        <svg
+          class="logo-hero"
+          viewBox="0 0 256 256"
+          role="img"
+          aria-label="Turnstile logo"
+        >
+          <title>Turnstile</title>
+          <path
+            fill-rule="evenodd"
+            d="M24 128a104 104 0 1 0 208 0a104 104 0 1 0 -208 0ZM46 128a82 82 0 1 0 164 0a82 82 0 1 0 -164 0Z"
+          />
+          <rect x="89" y="88" width="22" height="80" rx="11" />
+          <rect x="100" y="117" width="64" height="22" rx="11" />
+        </svg>
+
+        <h1 id="hero-heading">Turnstile</h1>
+        <p class="lede placeholder">
+          Placeholder lede. A Lean proof assistant pairing formal proofs with
+          prose. Final copy lands in the content issue.
+        </p>
+
+        <div class="actions">
+          <a class="button button--primary placeholder" href="#releases"
+            >Get Turnstile</a
+          >
+          <a class="button button--secondary placeholder" href="#overview"
+            >Learn more</a
+          >
+        </div>
+      </section>
+
+      <!-- Overview -->
+      <section id="overview" aria-labelledby="overview-heading">
+        <h2 id="overview-heading">Overview</h2>
+        <p class="placeholder">
+          Placeholder overview paragraph. This section will describe how
+          Turnstile pairs a live Lean&nbsp;4 editor with a textbook-style prose
+          rendering of the same argument. Real copy lands in the content issue.
+        </p>
+        <p class="placeholder">
+          Placeholder secondary paragraph standing in for a short description of
+          the Proof Assistant and how prose stays in step with the formalism.
+        </p>
+      </section>
+
+      <!-- Features -->
+      <section id="features" aria-labelledby="features-heading">
+        <h2 id="features-heading">Features</h2>
+        <div class="features">
+          <article class="card placeholder">
+            <h3>Formal &amp; prose, side by side</h3>
+            <p>
+              Placeholder feature description. Replaced in the content issue.
+            </p>
+          </article>
+          <article class="card placeholder">
+            <h3>Live Lean server</h3>
+            <p>
+              Placeholder feature description. Replaced in the content issue.
+            </p>
+          </article>
+          <article class="card placeholder">
+            <h3>Proof Assistant</h3>
+            <p>
+              Placeholder feature description. Replaced in the content issue.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <!-- Releases -->
+      <section id="releases" aria-labelledby="releases-heading">
+        <h2 id="releases-heading">Releases</h2>
+        <p class="placeholder">
+          Placeholder. Downloads are coming soon. The content issue wires this
+          to the repository's releases page.
+        </p>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container">
+        <p class="placeholder">
+          Placeholder footer. Links and copyright land in the content issue.
+        </p>
+      </div>
+    </footer>
+  </body>
+</html>
