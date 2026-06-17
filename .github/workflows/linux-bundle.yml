@@ -159,10 +159,11 @@ jobs:
           # GitHub runners don't provide FUSE; extract-and-run unpacks the
           # AppImage to a temp dir instead of mounting it.
           export APPIMAGE_EXTRACT_AND_RUN=1
-          # Surface setup.rs's debug logs so we can detect that run_setup
-          # actually fires. Mirrors the default EnvFilter in init_tracing
-          # (info, async_lsp=off) with the turnstile_lib crate raised to debug.
-          export RUST_LOG=turnstile_lib=debug,info,async_lsp=off
+          # The "run_setup: started" milestone is logged at INFO, which is the
+          # static max level for release builds (`release_max_level_info`), so
+          # the default filter surfaces it. Mirrors init_tracing's default
+          # EnvFilter (info, async_lsp=off).
+          export RUST_LOG=info,async_lsp=off
 
           xvfb-run -a "$appimage" > launch.log 2>&1 &
           app_pid=$!
