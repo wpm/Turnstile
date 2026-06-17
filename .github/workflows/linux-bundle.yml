@@ -1,0 +1,200 @@
+# Full Linux bundle build + headless launch smoke test (issue #37).
+#
+# This is the heavier, main-only counterpart to the fast every-push/PR
+# packaging sanity check in package-check.yml (#21). That job stops at
+# `--no-bundle` (compile + validate config); this one produces the real
+# deb/rpm/AppImage installers and then headlessly launches the AppImage to
+# confirm it actually starts and begins first-launch Lean provisioning.
+#
+# It replaces the manual Linux hardware test in RELEASING.md: a launch under
+# `xvfb` is the bit real hardware would have caught, so dropping the manual
+# step means we want this extra confidence on every push to `main`. macOS
+# verification stays manual (#33); the per-PR compile/bundle check is #21.
+#
+# Modeled on the main-only cross-platform `build` job in wpm/Mathdoku's CI:
+#   - gated to main with `if: github.ref == 'refs/heads/main'`,
+#   - `strategy: { fail-fast: false, matrix.include }` so each target reports
+#     independently,
+#   - a per-target Swatinem/rust-cache keyed on the matrix target.
+# The matrix carries a single x86_64 target today; aarch64 can be added later
+# with a cross-compiler exactly as Mathdoku does (see the commented entry).
+name: Linux bundle
+
+# Runs on every push but the job itself is gated to main (below), mirroring
+# Mathdoku and ci.yml's main-only steps. On PRs / other branches the job is
+# skipped — the lightweight packaging check (#21) covers those.
+on:
+  push:
+
+# Cancel an in-progress run when a newer commit is pushed to the same ref.
+concurrency:
+  group: linux-bundle-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bundle:
+    name: Linux bundle (${{ matrix.target }})
+    # Heavier than the per-PR check, so only run it where it matters: pushes to
+    # main. Skipped (green/neutral, not failed) on every other ref.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # Each target reports independently rather than the first failure
+      # cancelling its siblings.
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+          # Optional later (#37): ship ARM Linux by cross-compiling here, the
+          # way Mathdoku does. Needs gcc-aarch64-linux-gnu plus arm64 WebKit/GTK
+          # dev libs and the matching linker env, so it is left out until we
+          # commit to an aarch64 build.
+          # - target: aarch64-unknown-linux-gnu
+          #   os: ubuntu-latest
+    env:
+      # Harden cargo's crates.io downloads against transient network flakes,
+      # matching the rust job in ci.yml and the package check in #21.
+      CARGO_NET_RETRY: 10
+      CARGO_HTTP_MULTIPLEXING: false
+    steps:
+      - uses: actions/checkout@v5
+
+      # Tauri v2 build dependencies plus xvfb for the headless launch smoke
+      # test. Same WebKit/GTK list as the rust job in ci.yml and the package
+      # check in #21; xvfb-run gives the AppImage a virtual display to open in.
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libsoup-3.0-dev \
+            libjavascriptcoregtk-4.1-dev \
+            librsvg2-dev \
+            libayatana-appindicator3-dev \
+            libxdo-dev \
+            libssl-dev \
+            build-essential \
+            file \
+            wget \
+            curl \
+            xvfb
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Generates .svelte-kit/ (route types, $app/$env ambient types) so the
+      # frontend build invoked by tauri's beforeBuildCommand has what it needs
+      # on a fresh checkout, matching the frontend job in ci.yml.
+      - name: Sync SvelteKit
+        run: pnpm exec svelte-kit sync
+
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup target add ${{ matrix.target }}
+
+      # Per-target build cache keyed on the matrix target, like Mathdoku. Trims
+      # target/ before saving and keys on the rustc version + lockfile, so
+      # adding a second target later gets its own cache rather than thrashing.
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: ${{ matrix.target }}
+
+      # Produce the real installers (deb/rpm/AppImage; bundle.targets is "all"
+      # in tauri.conf.json). Unsigned — no Linux signing secrets are referenced,
+      # so this runs without any secrets configured. Passing --target keeps the
+      # output path predictable and makes adding aarch64 a one-line matrix edit.
+      - name: Tauri build (bundle)
+        run: pnpm tauri build --target ${{ matrix.target }}
+
+      # Confirm all three Linux bundle formats were produced. Catches a bundler
+      # target silently dropping out (e.g. a missing rpm/appimage tool) that a
+      # plain build would not flag.
+      - name: Assert Linux bundles exist
+        run: |
+          set -euo pipefail
+          bundle="src-tauri/target/${{ matrix.target }}/release/bundle"
+          fail=0
+          for spec in "deb/*.deb" "rpm/*.rpm" "appimage/*.AppImage"; do
+            matches="$(compgen -G "$bundle/$spec" || true)"
+            if [ -z "$matches" ]; then
+              echo "::error::No bundle matching $bundle/$spec"
+              fail=1
+            else
+              echo "Found: $matches"
+            fi
+          done
+          [ "$fail" -eq 0 ]
+
+      # The confidence the manual hardware test used to provide: actually launch
+      # the built AppImage headlessly and confirm it (a) starts cleanly and
+      # (b) begins first-launch Lean provisioning. We watch for the setup
+      # module's "run_setup: started" log rather than just a live PID, so a
+      # build that launches but never kicks off provisioning still fails.
+      - name: Headless launch smoke test
+        run: |
+          set -uo pipefail
+          bundle="src-tauri/target/${{ matrix.target }}/release/bundle"
+          appimage="$(find "$bundle/appimage" -maxdepth 1 -name '*.AppImage' | head -n1)"
+          if [ -z "$appimage" ]; then
+            echo "::error::No AppImage to launch"
+            exit 1
+          fi
+          echo "Launching $appimage headlessly under xvfb"
+          chmod +x "$appimage"
+
+          # GitHub runners don't provide FUSE; extract-and-run unpacks the
+          # AppImage to a temp dir instead of mounting it.
+          export APPIMAGE_EXTRACT_AND_RUN=1
+          # Surface setup.rs's debug logs so we can detect that run_setup
+          # actually fires. Mirrors the default EnvFilter in init_tracing
+          # (info, async_lsp=off) with the turnstile_lib crate raised to debug.
+          export RUST_LOG=turnstile_lib=debug,info,async_lsp=off
+
+          xvfb-run -a "$appimage" > launch.log 2>&1 &
+          app_pid=$!
+
+          provisioning_started=0
+          # run_setup logs "started" almost immediately; poll generously to ride
+          # out a slow cold start, and bail early if the process dies first.
+          for _ in $(seq 1 30); do
+            if ! kill -0 "$app_pid" 2>/dev/null; then
+              echo "::error::Turnstile exited before the smoke test could confirm a clean launch"
+              cat launch.log
+              exit 1
+            fi
+            if grep -q "run_setup: started" launch.log; then
+              provisioning_started=1
+              break
+            fi
+            sleep 2
+          done
+
+          # It's a long-lived GUI process — nothing closes its window under
+          # xvfb — so tear it down now that we've observed what we need.
+          kill "$app_pid" 2>/dev/null || true
+          wait "$app_pid" 2>/dev/null || true
+
+          echo "----- launch.log -----"
+          cat launch.log
+          echo "----------------------"
+
+          if [ "$provisioning_started" -eq 1 ]; then
+            echo "Turnstile launched and first-launch Lean provisioning began."
+          else
+            echo "::error::Turnstile launched but first-launch Lean provisioning never started"
+            exit 1
+          fi
