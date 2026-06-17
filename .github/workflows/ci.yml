@@ -22,13 +22,13 @@ jobs:
     name: Frontend (lint, format, check, tests)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 10
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: pnpm
@@ -75,7 +75,7 @@ jobs:
       LEAN_TOOLCHAIN: leanprover/lean4:v4.29.0
       MATHLIB_REV: v4.29.0
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # Tauri v2 build/test dependencies on Linux.
       - name: Install system dependencies
@@ -101,7 +101,7 @@ jobs:
           rustup component add rustfmt clippy
 
       - name: Cache cargo
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry
@@ -126,7 +126,7 @@ jobs:
 
       - name: Cache Lean toolchain and Mathlib
         id: lean-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.elan
