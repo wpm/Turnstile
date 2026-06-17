@@ -298,12 +298,26 @@ main section {
   padding-block: 2rem;
 }
 
-/* ── Placeholder marker ──────────────────────────────────────────────── */
-/* Real copy and links land in the content issue (#4); this dashes the edge
- * of anything still standing in as a placeholder so it's obvious in review. */
-.placeholder {
-  outline: 1px dashed var(--ts-color-border);
-  outline-offset: 0.5rem;
+.footer-links ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.25rem;
+  margin: 0 0 1rem;
+  padding: 0;
+  list-style: none;
+}
+
+.footer-links a {
+  color: var(--ts-color-text-muted);
+  font-weight: var(--ts-weight-medium);
+}
+
+.footer-links a:hover {
+  color: var(--ts-accent);
+}
+
+.footer-meta {
+  margin: 0;
 }
 
 /* ── Responsive ──────────────────────────────────────────────────────── */
