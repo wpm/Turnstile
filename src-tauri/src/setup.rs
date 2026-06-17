@@ -12,7 +12,7 @@ use tauri::{AppHandle, Emitter};
 use tokio::io::AsyncBufReadExt;
 use tokio::process::Command;
 
-use tracing::debug;
+use tracing::{debug, info};
 
 // ── Constants ─────────────────────────────────────────────────────────
 
@@ -109,7 +109,11 @@ fn resume_from(project_path: &Path) -> ResumeFrom {
 /// Run the full setup sequence, emitting `setup-progress` events throughout.
 /// Designed to be called from `tokio::spawn`.
 pub async fn run_setup(app: AppHandle, project_path: PathBuf, setup_running: Arc<AtomicBool>) {
-    debug!(
+    // Logged at INFO so release builds (which statically cap tracing at
+    // `info` via `release_max_level_info`) still emit this milestone. The
+    // headless smoke test in CI greps for it to confirm first-launch
+    // provisioning actually fires.
+    info!(
         "run_setup: started, project_path={}",
         project_path.display()
     );
