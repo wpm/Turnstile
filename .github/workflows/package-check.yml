@@ -18,8 +18,15 @@
 # `--no-bundle` never signs, so there is nothing to configure here.
 name: Package check
 
+# Scope `push` to main so feature-branch pushes fire exactly once: same-repo
+# and fork PRs run via `pull_request` (the latter is what lets the unsigned
+# check run on PRs from forks), direct pushes to main run via `push`. An
+# unscoped `push` would double-run on PR branches, since the push and
+# pull_request events key different concurrency groups (refs/heads/<branch>
+# vs refs/pull/N/merge) and so don't dedupe each other.
 on:
   push:
+    branches: [main]
   pull_request:
 
 # Cancel an in-progress run when a newer commit is pushed to the same ref.
@@ -44,25 +51,12 @@ jobs:
       - uses: actions/checkout@v5
 
       # Tauri v2 build dependencies on Linux. macOS ships the WebKit/GTK
-      # equivalents with the OS, so this step is Linux-only. Mirrors the system
-      # deps installed by the rust job in ci.yml.
+      # equivalents with the OS, so this step is Linux-only. Uses the shared
+      # composite action (same package list as the rust job in ci.yml), which
+      # caches the deps so a hit skips the apt update + download.
       - name: Install system dependencies (Linux)
         if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            libgtk-3-dev \
-            libsoup-3.0-dev \
-            libjavascriptcoregtk-4.1-dev \
-            librsvg2-dev \
-            libayatana-appindicator3-dev \
-            libxdo-dev \
-            libssl-dev \
-            build-essential \
-            file \
-            wget \
-            curl
+        uses: ./.github/actions/linux-deps
 
       - uses: pnpm/action-setup@v6
         with:
