@@ -88,19 +88,8 @@ The env var is retained as an optional override so terminal and CI runs keep wor
 
 - **Easier:** assistant failures are visible and actionable; the key is stored securely and never echoed back to the user as `[echo]`; `PATH` is correct for Lean tooling under GUI launches.
 - **Harder:** new first-run modal and a Settings restructure (tabbed: Models / Font sizes / Prompts, with the key field in Models); a secret-hygiene burden (redacting `Debug`/`Display`, excluding the key from serialization and logs, plus a guard test); platform-specific keychain handling and a defined Linux-without-Secret-Service degraded path.
-- **To revisit:** whether an existing Anthropic credential (e.g. from the Claude CLI) can be discovered to skip onboarding; the exact Linux fallback behavior; whether to keep the env override long-term.
+- **To revisit:** the exact Linux fallback behavior when no Secret Service is present; whether to keep the env override long-term. (Silent discovery of a key stored by another tool was investigated and ruled out for #64: `keyring` has no portable enumerate, and macOS keychain ACLs prompt for the login password when a non-creating app reads an item. A consent-based "import from Claude" remains possible as a future stretch goal.)
 
 ## Action Items
 
-Tracked under epic [#56](https://github.com/wpm/Turnstile/issues/56):
-
-1. [ ] #57 — Remove `mock-llm` feature and `MockBackend`; eliminate the echo fallback
-2. [ ] #63 — Keychain API-key storage (encrypted at rest, never logged)
-3. [ ] #58 — Backend assistant connection status (the silent-swallow fix)
-4. [ ] #59 — Right-justified "Proof Assistant" status indicator
-5. [ ] #60 — Error toast naming the cause + disabled chat input
-6. [ ] #64 — First-run onboarding modal (key + model choices)
-7. [ ] #66 — Split Settings into Models / Font sizes / Prompts tabs
-8. [ ] #65 — Adopt `fix-path-env` to fix `PATH` for GUI launches
-9. [ ] #61 — Audit other swallowed errors for toast-worthiness
-10. [ ] #62 — Update browser fake + e2e (no echo)
+Tracked under epic [#56](https://github.com/wpm/Turnstile/issues/56).
