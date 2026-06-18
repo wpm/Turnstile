@@ -61,25 +61,14 @@ jobs:
       - uses: actions/checkout@v5
 
       # Tauri v2 build dependencies plus xvfb for the headless launch smoke
-      # test. Same WebKit/GTK list as the rust job in ci.yml and the package
-      # check in #21; xvfb-run gives the AppImage a virtual display to open in.
+      # test. Uses the shared composite action (same WebKit/GTK list as the
+      # rust job in ci.yml and the package check in #21) with xvfb added via
+      # extra-packages; xvfb-run gives the AppImage a virtual display to open
+      # in. Cached so a hit skips the apt update + download.
       - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            libgtk-3-dev \
-            libsoup-3.0-dev \
-            libjavascriptcoregtk-4.1-dev \
-            librsvg2-dev \
-            libayatana-appindicator3-dev \
-            libxdo-dev \
-            libssl-dev \
-            build-essential \
-            file \
-            wget \
-            curl \
-            xvfb
+        uses: ./.github/actions/linux-deps
+        with:
+          extra-packages: xvfb
 
       - uses: pnpm/action-setup@v6
         with:

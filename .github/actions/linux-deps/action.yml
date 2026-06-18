@@ -1,0 +1,27 @@
+name: Install Linux system dependencies
+description: Install (and cache) the WebKitGTK/Tauri build dependencies.
+inputs:
+  extra-packages:
+    description: Space-separated extra apt packages (e.g. xvfb).
+    required: false
+    default: ""
+runs:
+  using: composite
+  steps:
+    # cache-apt-pkgs-action restores the packages from the Actions cache on a
+    # hit, skipping `apt-get update` and the download/unpack of the full
+    # WebKitGTK/Tauri dev stack (~1-2 min per run). Bump `version` below to
+    # bust the cache whenever this package list changes.
+    #
+    # Caveat: it restores files but does not re-run package post-install
+    # scripts. For these GTK/WebKit dev libraries (headers, .so, pkg-config
+    # files) that's fine; revisit if the list grows to include packages that
+    # register services (see ADR-0001).
+    - uses: awalsh128/cache-apt-pkgs-action@v1
+      with:
+        packages: >-
+          libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev
+          libjavascriptcoregtk-4.1-dev librsvg2-dev
+          libayatana-appindicator3-dev libxdo-dev libssl-dev
+          build-essential file wget curl ${{ inputs.extra-packages }}
+        version: 1.0
