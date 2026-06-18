@@ -179,16 +179,16 @@ async fn install_elan(app: &AppHandle) -> Result<(), String> {
 
 async fn install_elan_unix(app: &AppHandle) -> Result<(), String> {
     let home = home_dir();
-    let path_env =
-        std::env::var("PATH").unwrap_or_else(|_| "/usr/bin:/bin:/usr/sbin:/sbin".to_string());
 
+    // PATH is inherited from the process environment, which `fix_path_env::fix()`
+    // has already populated from the user's shell at startup — so `sh`, `curl`,
+    // and friends resolve even on Finder/Dock launches.
     let status = Command::new("sh")
         .args([
             "-c",
             "curl -sSf https://elan.lean-lang.org/elan-init.sh | sh -s -- --no-modify-path -y",
         ])
         .env("HOME", &home)
-        .env("PATH", &path_env)
         .status()
         .await
         .map_err(|e| format!("Failed to run elan installer: {e}"))?;
@@ -421,13 +421,20 @@ async fn run_streaming(
     pct_start: u8,
     _pct_end: u8,
 ) -> Result<(), String> {
-    let elan_bin = elan_bin_dir();
     let home = home_dir();
-    let path_env = format!(
-        "{}:{}",
-        elan_bin.display(),
-        std::env::var("PATH").unwrap_or_else(|_| "/usr/bin:/bin:/usr/sbin:/sbin".to_string())
-    );
+    // Prepend elan's bin dir to the inherited PATH (populated from the user's
+    // shell by `fix_path_env::fix()` at startup). We still prepend explicitly:
+    // elan installs to ~/.elan/bin with `--no-modify-path`, so that directory is
+    // not guaranteed to be on the shell PATH, and `lake` shells out to `lean`,
+    // `git`, etc., which it locates via PATH.
+    let path_env = match std::env::var_os("PATH") {
+        Some(existing) => {
+            let mut paths = vec![elan_bin_dir()];
+            paths.extend(std::env::split_paths(&existing));
+            std::env::join_paths(paths).map_err(|e| format!("Failed to build PATH: {e}"))?
+        }
+        None => elan_bin_dir().into_os_string(),
+    };
 
     debug!("run_streaming: {} {:?}", cmd.display(), args);
 

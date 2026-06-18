@@ -45,6 +45,11 @@ async-lsp = "0.2.3"
 tower = "0.5"
 tokio-util = { version = "0.7", features = ["compat"] }
 tempfile = "3"
+# GUI launches (Finder/Dock) don't inherit the login shell's PATH, so spawned
+# elan/lake/lean tooling can't be found. fix-path-env reads the real PATH from
+# the user's shell config at startup. Not published to crates.io, so pinned to a
+# git revision.
+fix-path-env = { git = "https://github.com/tauri-apps/fix-path-env-rs", rev = "c4c45d503ea115a839aae718d02f79e7c7f0f673" }
 
 [features]
 mock-llm = []
