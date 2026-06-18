@@ -1,61 +1,64 @@
 # Releasing Turnstile
 
-This is the end-to-end runbook for cutting a Turnstile release. Followed top
-to bottom, it should let a contributor who has never shipped before produce a
+This is the end-to-end runbook for cutting a Turnstile release. Followed top to
+bottom, it should let a contributor who has never shipped before produce a
 signed, notarized, public GitHub Release with working website download links.
 
-A release is a tag, a workflow, and a few manual checks:
+A release starts in the GitHub UI. You create and publish a Release; publishing
+triggers a workflow that builds the signed/notarized installers and uploads
+them onto the Release you just published:
 
-1. A version tag (`v*`) is pushed to GitHub.
-2. The release workflow builds the signed/notarized installer matrix and
-   publishes a **draft** Release with all assets attached.
-3. A human verifies the draft on real hardware, then **un-drafts** it.
-4. The website's "latest download" links resolve against the published
-   Release.
+1. Bump the version on `main` and confirm CI is green.
+2. **Create a new Release** in the GitHub UI (tag, notes, pre-release flag) and
+   publish it.
+3. Publishing triggers the release workflow, which builds the installer matrix
+   and **uploads the assets onto that Release** a few minutes later.
+4. Verify the published assets; the website's "latest download" links resolve
+   against the published (non-prerelease) Release.
 
 ```
-bump versions ─► green CI on main ─► tag v1.0.0-rc.1 ─► release workflow
-   ─► draft Release ─► smoke-test artifacts ─► publish (un-draft) ─► verify site
+bump version (package.json) ─► green CI on main ─► create + publish Release in the UI
+   ─► workflow builds & attaches installers (a few min later) ─► verify ─► done
 ```
 
-The work that builds this machinery is tracked under the
-[1.0.0 release epic (#19)][epic]; individual steps cross-reference the issue
-that owns them so you can dig into the rationale.
-
-[epic]: https://github.com/wpm/Turnstile/issues/19
+> **The assets lag the publish.** Creating the Release makes it live
+> immediately, but the download files don't appear until the build +
+> notarization finish — usually 20–40 minutes later. During that window the
+> Release page shows your notes with no binaries attached. This is expected,
+> and it's the tradeoff for driving releases from the UI: a *draft* Release
+> doesn't trigger the build, so there's no way to attach binaries before
+> publishing.
 
 ---
 
 ## Prerequisites
 
-These are one-time setup items. They rarely change between releases, but
-confirm them before the _first_ release and whenever a secret or certificate
-might have rotated/expired.
+One-time setup. These rarely change between releases, but confirm them before
+the _first_ release and whenever a secret or certificate might have rotated or
+expired.
 
 ### Apple Developer ID
 
 macOS builds are signed with a **Developer ID Application** certificate and
 notarized through Apple so Gatekeeper accepts them with no right-click-open
-workaround. See [#29] for the full verification procedure. In short, the
-certificate must be a valid, unexpired _Developer ID Application_ identity
-**with its private key** present in the login keychain:
+workaround. The certificate must be a valid, unexpired _Developer ID
+Application_ identity **with its private key** present in the login keychain:
 
 ```sh
 security find-identity -v -p codesigning
 # look for: Developer ID Application: <Name> (<TEAMID>)
 ```
 
-We use the **Apple ID + app-specific password** notarization path (not the
-App Store Connect API-key path). Mathdoku needed no entitlements file; whether
-Turnstile's embedded `lean --server` needs hardened-runtime exceptions is
-tracked in [#22] and confirmed during the macOS smoke test ([#33]).
+We use the **Apple ID + app-specific password** notarization path (not the App
+Store Connect API-key path). No entitlements file is required: the embedded
+`lean --server` runs as a separately-executed child process and works under the
+default hardened runtime (verified on a signed local build and on the notarized
+release).
 
 ### GitHub Actions secrets
 
-The release workflow reads six `APPLE_*` secrets. They are added under
-**Settings → Secrets and variables → Actions** in `wpm/Turnstile` and must
-match these names exactly. Full retrieval instructions (how to export the
-`.p12`, generate the app-specific password, etc.) live in [#30].
+The release workflow reads six `APPLE_*` secrets, added under **Settings →
+Secrets and variables → Actions** and matching these names exactly:
 
 | Secret                       | Where it comes from                                           |
 | ---------------------------- | ------------------------------------------------------------- |
@@ -66,57 +69,58 @@ match these names exactly. Full retrieval instructions (how to export the
 | `APPLE_PASSWORD`             | app-specific password for that Apple ID (not the account one) |
 | `APPLE_TEAM_ID`              | 10-character team ID (also inside the identity string)        |
 
-> Secrets must never pass through Claude, a PR, or shell history — only Bill
-> can add them. Set them with `gh secret set <NAME> --repo wpm/Turnstile`,
-> which prompts for the value rather than taking it on the command line.
+To produce them: export the Developer ID certificate **with its private key**
+from Keychain Access as a `.p12` (the export password becomes
+`APPLE_CERTIFICATE_PASSWORD`), then `base64 -i cert.p12` for `APPLE_CERTIFICATE`;
+generate the app-specific password at account.apple.com → Sign-In and Security →
+App-Specific Passwords.
 
-Turnstile has **no auto-updater**, so Mathdoku's `TAURI_SIGNING_PRIVATE_KEY`
-(updater/minisign) secret is _not_ needed here. `CODECOV_TOKEN` is used by CI
-but is unrelated to releases.
+> Never commit a secret, paste one into a PR, or leave one in shell history. Add
+> them with `gh secret set <NAME> --repo wpm/Turnstile`, which prompts for the
+> value rather than taking it on the command line.
+
+Turnstile has **no auto-updater**, so an updater signing key
+(`TAURI_SIGNING_PRIVATE_KEY`) is not needed. `CODECOV_TOKEN` is used by CI but
+is unrelated to releases.
 
 ### Repo settings
 
-Confirm once (details in [#31]):
+Confirm once:
 
-- **Actions → General → Workflow permissions** allow the release workflow to
-  create Releases and upload assets (the workflow declares
-  `permissions: contents: write`).
-- Actions is enabled and **tag-triggered** workflows are allowed.
-- **Settings → Pages** source is the `gh-pages` branch — `pages.yml` deploys
-  the marketing site (including the download links) there.
+- **Actions → General → Workflow permissions** allow the workflow to upload
+  release assets (it declares `permissions: contents: write`).
+- Actions is enabled.
+- **Settings → Pages** source is the `gh-pages` branch — the marketing site
+  (including the download links) deploys there.
 
 ---
 
 ## Pre-flight
 
-Do all of this on `main` (or a PR that merges to `main`) _before_ tagging.
+Do all of this on `main` (or a PR that merges to `main`) _before_ creating the
+Release.
 
-### 1. Bump the version in all three files
+### 1. Bump the version
 
-Turnstile keeps the version in three places that must agree. CI enforces this
-([#25]), and the release workflow refuses to build if the tag disagrees with
-the source version, so get it right here:
+The version is single-sourced from **`package.json`** — bump it there and
+nowhere else:
 
-| File                        | Field             |
-| --------------------------- | ----------------- |
-| `package.json`              | `version`         |
-| `src-tauri/tauri.conf.json` | `version`         |
-| `src-tauri/Cargo.toml`      | `package.version` |
+```jsonc
+// package.json
+"version": "1.0.0"
+```
 
-For a release candidate, set the **base** version (e.g. `1.0.0`) in these
-files — the `-rc.N` suffix lives only on the git tag, not in the source. The
-final release reuses the same `1.0.0` source version; only the tag changes
-(`v1.0.0-rc.1` → `v1.0.0`).
-
-After editing, `src-tauri/Cargo.lock` will update its `turnstile` entry on the
-next build — commit that too.
+`src-tauri/tauri.conf.json` reads the version from `package.json`
+(`"version": "../package.json"`), and `src-tauri/Cargo.toml` carries a fixed
+`0.0.0` placeholder (the app crate is never published, so its version is not the
+app version). For a release candidate, keep the **base** version (`1.0.0`) here —
+the `-rc.N` suffix lives only on the release tag, not in the source.
+`src-tauri/Cargo.lock` updates on the next build; commit that too if it changes.
 
 ### 2. Update the CHANGELOG
 
-Add or finalize the section for this version in `CHANGELOG.md` (template and
-scope guidance in [#27]). The release notes shown on the GitHub Release are
-curated from this section for 1.0.0; later releases may switch to
-auto-generated notes.
+Add or finalize the section for this version in `CHANGELOG.md`. The release
+notes you paste into the GitHub Release are curated from this section.
 
 ### 3. Run the full gate locally — on a Mac
 
@@ -125,45 +129,52 @@ pnpm verify
 ```
 
 This runs `test + check + lint + format:check + verify:rust + e2e +
-lean-server`. **Run it on macOS** ([#32]): `verify:rust` includes `cargo test`,
-and the `lean-server` suite drives a real `lean --server` against Mathlib,
-which is the path that must be green before tagging. First run provisions the
-Lean toolchain + Mathlib cache and is slow; later runs are fast.
+lean-server`. **Run it on macOS:** `verify:rust` includes `cargo test`, and the
+`lean-server` suite drives a real `lean --server` against Mathlib — the path
+that must be green before releasing. The first run provisions the Lean toolchain
++ Mathlib cache and is slow; later runs are fast.
 
 ### 4. Confirm green CI on `main`
 
-The version bump + CHANGELOG must be merged to `main` and the **CI** workflow
-green there before you tag. The release builds from the tagged commit, so a
-red `main` means a red release. On push to `main`, CI also builds and
-headlessly launches the Linux packages ([#37]) and runs the unsigned
-packaging check ([#21]) — those passing on `main` is your pre-tag evidence
-that the bundler config is sound.
+The version bump + CHANGELOG must be merged to `main` and CI green there before
+you create the Release, because the Release builds from that commit. On push to
+`main`, CI also builds and headlessly launches the Linux packages and runs the
+unsigned packaging check — those passing is your pre-release evidence that the
+bundler config is sound.
 
 ---
 
 ## Cut the release
 
-Tag the release commit and push the tag. The tag name is `v` + the version,
-with the RC suffix for candidates:
+You create the Release in the GitHub UI; publishing it triggers the build.
 
-```sh
-git checkout main && git pull          # be on the green, version-bumped commit
-git tag v1.0.0-rc.1
-git push origin v1.0.0-rc.1
-```
+1. Go to **Releases → Draft a new release**.
+2. **Choose a tag:** type `v` + the version, with the RC suffix for candidates
+   (`v1.0.0-rc.1`, or `v1.0.0` for the final). GitHub creates the tag when you
+   publish. Set **Target** to the green, version-bumped commit on `main`.
+3. **Title and notes:** paste the curated notes from `CHANGELOG.md`.
+4. **Pre-release:** tick **Set as a pre-release** for `-rc.N` tags; leave it
+   unchecked for the final.
+5. **Publish release.**
 
-Pushing a `v*` tag triggers the release workflow ([#20]). It:
+Publishing fires the release workflow. It:
 
-- Builds the **macOS** universal bundle (`universal-apple-darwin`, Intel +
-  Apple Silicon) → `.dmg`, signed with the Developer ID cert, then **notarized
-  and stapled** via the `APPLE_*` secrets.
-- Builds the **Linux** x86_64 bundles → `.deb`, `.rpm`, `.AppImage` (the
-  Linux leg does not need and does not fail on missing Apple secrets).
-- Renames assets to stable, version-less filenames and generates
-  `SHA256SUMS` ([#24]).
-- Creates a **draft** GitHub Release with all assets attached.
+- Checks the tag's base version against `package.json` and **fails fast** if
+  they disagree (so a typo'd tag can't ship mislabeled binaries).
+- Builds the **macOS** universal bundle (`universal-apple-darwin`, Intel + Apple
+  Silicon) → `.dmg`, signed with the Developer ID cert, then **notarized and
+  stapled** via the `APPLE_*` secrets.
+- Builds the **Linux** x86_64 bundles → `.deb`, `.rpm`, `.AppImage`.
+- Generates `SHA256SUMS` and uploads everything onto the Release under stable,
+  version-less names.
 
-Expected assets on the draft:
+**The assets appear a few minutes after you publish.** Budget roughly 20–40
+minutes; the macOS leg dominates (compiling both arch slices plus the
+asynchronous notarization wait, which can run from a couple of minutes to ~20+).
+Until it finishes, the published Release shows your notes with **no downloads
+attached** — that's expected. Watch progress under the **Actions** tab.
+
+Expected assets once the workflow completes:
 
 - `Turnstile-macOS-universal.dmg`
 - `Turnstile-linux-x86_64.deb`
@@ -171,149 +182,94 @@ Expected assets on the draft:
 - `Turnstile-linux-x86_64.AppImage`
 - `SHA256SUMS`
 
-**Duration:** budget roughly 20–40 minutes. The macOS leg dominates —
-compiling both arch slices plus the **notarization wait** (Apple's service is
-asynchronous and can take anywhere from a couple of minutes to ~20+). Re-runs
-on the same tag update the existing draft rather than duplicating assets, so
-a failed leg can be re-run from the Actions tab without re-tagging.
+If a build leg fails, **re-run it from the Actions tab** — the Release already
+exists, so the assets re-attach in place (no re-tagging, no duplicate releases).
 
 ---
 
-## Verify the draft
+## Verify the published release
 
-Don't publish until the artifacts are confirmed good. This is [#34]'s
-checklist; the platform-specific smoke tests are [#33] (macOS) and [#37]
-(Linux).
+Because the build runs _after_ you publish, verification happens on the live
+Release. For a `-rc.N` **pre-release** that's the intended flow — RCs exist to be
+tested. Validate the RC's binaries before you ever cut the final `v1.0.0`, so the
+final ships the same, already-trusted artifacts.
 
-1. **Review the draft Release** on GitHub: correct tag, all five assets
-   present, release notes render.
-2. **Checksums:** download the assets and confirm they match `SHA256SUMS`
+1. **Review the Release:** correct tag, all five assets attached once the
+   workflow finishes, notes render.
+2. **Checksums:** download the assets and confirm they match
    (`shasum -a 256 -c SHA256SUMS`).
-3. **macOS smoke test on real hardware** ([#33]) — Gatekeeper/notarization
-   can only be verified on a real Mac:
+3. **macOS smoke test on real hardware** — Gatekeeper/notarization can only be
+   verified on a real Mac:
    ```sh
    # install the .dmg to /Applications, then:
    spctl -a -vvv /Applications/Turnstile.app
    #   → accepted, source=Notarized Developer ID
    codesign --verify --deep --strict /Applications/Turnstile.app
    ```
-   Launch the app, confirm first-launch Lean toolchain + Mathlib provisioning
+   Launch the app; confirm first-launch Lean toolchain + Mathlib provisioning
    completes and a proof elaborates under the hardened runtime.
-4. **Linux** is verified automatically in CI on push to `main` ([#37], build +
-   `xvfb` headless launch), so it needs no manual hardware step. If you want a
-   spot check, install the `.deb`/`.rpm` or run the `.AppImage` on a clean box
-   and confirm it launches and provisions Lean.
+4. **Linux** is verified automatically in CI on push to `main` (build + `xvfb`
+   headless launch), so it needs no manual hardware step. For a spot check,
+   install the `.deb`/`.rpm` or run the `.AppImage` on a clean box.
 
-If any check fails, **do not publish** — fix it and re-cut (see Rollback).
-File macOS signing/entitlement failures against [#22].
+If any check fails, treat it as a re-cut (see Rollback) rather than shipping the
+final on top of it.
 
----
+### Website download links
 
-## Publish
+For a published **non-prerelease** Release, the marketing site's download links
+resolve against it:
 
-Once the draft is verified:
+```
+https://github.com/wpm/Turnstile/releases/latest/download/Turnstile-macOS-universal.dmg
+https://github.com/wpm/Turnstile/releases/latest/download/Turnstile-linux-x86_64.deb
+https://github.com/wpm/Turnstile/releases/latest/download/Turnstile-linux-x86_64.rpm
+https://github.com/wpm/Turnstile/releases/latest/download/Turnstile-linux-x86_64.AppImage
+https://github.com/wpm/Turnstile/releases/latest/download/SHA256SUMS
+```
 
-1. On the GitHub Release page, **un-draft** (Edit → uncheck "Set as a
-   draft" / "Publish release"). Mark it a **pre-release** for `-rc.N` tags;
-   leave that unchecked for the final.
-2. Publishing makes the `releases/latest/download/...` URLs resolve. Confirm
-   the website's Releases section links work ([#26]) — they point at stable
-   asset names on `github.com`, e.g.:
-
-   ```
-   https://github.com/wpm/Turnstile/releases/latest/download/Turnstile-macOS-universal.dmg
-   https://github.com/wpm/Turnstile/releases/latest/download/Turnstile-linux-x86_64.deb
-   https://github.com/wpm/Turnstile/releases/latest/download/Turnstile-linux-x86_64.rpm
-   https://github.com/wpm/Turnstile/releases/latest/download/Turnstile-linux-x86_64.AppImage
-   https://github.com/wpm/Turnstile/releases/latest/download/SHA256SUMS
-   ```
-
-   > `latest/download/` resolves to the newest **non-prerelease, non-draft**
-   > Release. While only `-rc.N` pre-releases exist, those `latest` links will
-   > 404 — that's expected until the final `1.0.0` is published. The website
-   > notes this pre-release caveat.
+> `latest/download/` resolves to the newest **non-prerelease, non-draft**
+> Release. While only `-rc.N` pre-releases exist, those `latest` links 404 —
+> expected until the final `1.0.0` is published.
 
 ---
 
 ## Rollback / re-cut
 
-If a draft is bad, or a published RC needs to be replaced:
+If a published Release is bad (failed smoke test, wrong build):
 
-1. **Delete the GitHub Release** (the draft or pre-release) from its page —
-   "Delete" removes the release and its uploaded assets.
+1. **Delete the Release** from its page — this removes the Release and its
+   uploaded assets, but **not** the underlying tag.
 2. **Delete the tag**, locally and on the remote:
    ```sh
    git tag -d v1.0.0-rc.1
    git push origin :refs/tags/v1.0.0-rc.1
    ```
-3. Land the fix on `main`, get CI green, then **re-cut**. If the fix is purely
-   in the release machinery (not the app), you can re-use the same version but
-   bump the RC: tag `v1.0.0-rc.2`. If you must re-use the exact same tag name,
-   delete it first (step 2) — never move a tag that anyone may have already
-   pulled.
+3. Land the fix on `main`, get CI green, then create a new Release. If the fix is
+   purely in the release machinery, bump the RC (`v1.0.0-rc.2`) rather than
+   reusing a tag anyone may have pulled.
 
-Re-running the workflow on an _existing_ tag (Actions → release →
-`workflow_dispatch`) is the lighter option when the tagged commit is fine and
-only a transient build/notarization step failed — it updates the draft in
-place.
+If only a transient build/notarization step failed and the commit is fine, you
+don't need to re-cut — just **re-run the failed run** from the Actions tab; it
+re-attaches the assets to the existing Release.
 
 ---
 
 ## Versioning convention
 
-- **Tag format:** `v` + semver, e.g. `v1.0.0`. The leading `v` is required —
-  it's what the release workflow triggers on (`tags: ["v*"]`).
-- **Source version:** the three version files carry the base version
-  (`1.0.0`) with **no** `-rc` suffix. The candidate suffix lives only on the
-  tag. The release workflow checks the tag's base version against the source
-  version, so `v1.2.0` against a `1.0.0` tree fails fast ([#25]).
+- **Tag format:** `v` + semver, e.g. `v1.0.0`. The leading `v` is required. You
+  set the tag when creating the Release; GitHub creates it on publish.
+- **Source version:** `package.json` carries the base version (`1.0.0`) with
+  **no** `-rc` suffix; the candidate suffix lives only on the tag. The workflow
+  checks the tag's base version against `package.json` and fails fast on a
+  mismatch.
 - **Release candidates:** `vX.Y.Z-rc.N`, starting at `-rc.1` and incrementing
-  the `N` for each re-cut (`-rc.2`, …). Publish these as GitHub **pre-releases**
-  so they don't become `latest`.
-- **Final release:** when an RC is validated end to end, tag `vX.Y.Z` (no
-  suffix) from the same/validated commit and publish it as a normal release.
-  The final **supersedes** the RC: it becomes `latest`, and the website's
-  `releases/latest/download/...` links resolve to it. The `-rc` pre-releases
-  can be left in the Releases list for history or deleted.
+  `N` for each re-cut. Publish these as GitHub **pre-releases** so they don't
+  become `latest`.
+- **Final release:** once an RC is validated end to end, create `vX.Y.Z` (no
+  suffix) from the same validated commit and publish it as a normal release. The
+  final **supersedes** the RC: it becomes `latest`, and the website's
+  `releases/latest/download/...` links resolve to it. The `-rc` pre-releases can
+  be left for history or deleted.
 - **Bump size** follows Conventional Commits, per `CLAUDE.md`: `fix` → patch,
   `feat` → minor, `!`/`BREAKING CHANGE` → breaking.
-
----
-
-## Cross-references
-
-| Area                                   | Issue |
-| -------------------------------------- | ----- |
-| Release epic / design decisions        | [#19] |
-| Release workflow (`release.yml`)       | [#20] |
-| Unsigned packaging check (push/PR)     | [#21] |
-| macOS signing / hardened runtime       | [#22] |
-| Linux bundle metadata                  | [#23] |
-| Stable artifact names + `SHA256SUMS`   | [#24] |
-| Version-consistency check in CI        | [#25] |
-| Website download links                 | [#26] |
-| CHANGELOG + release-notes template     | [#27] |
-| Apple Developer ID / notarization path | [#29] |
-| Signing/notarization secrets           | [#30] |
-| Repo settings (Actions, Pages)         | [#31] |
-| `pnpm verify` on Mac                   | [#32] |
-| macOS installer smoke test             | [#33] |
-| Tag + publish the Release              | [#34] |
-| Linux verify in CI on `main`           | [#37] |
-
-[#19]: https://github.com/wpm/Turnstile/issues/19
-[#20]: https://github.com/wpm/Turnstile/issues/20
-[#21]: https://github.com/wpm/Turnstile/issues/21
-[#22]: https://github.com/wpm/Turnstile/issues/22
-[#23]: https://github.com/wpm/Turnstile/issues/23
-[#24]: https://github.com/wpm/Turnstile/issues/24
-[#25]: https://github.com/wpm/Turnstile/issues/25
-[#26]: https://github.com/wpm/Turnstile/issues/26
-[#27]: https://github.com/wpm/Turnstile/issues/27
-[#29]: https://github.com/wpm/Turnstile/issues/29
-[#30]: https://github.com/wpm/Turnstile/issues/30
-[#31]: https://github.com/wpm/Turnstile/issues/31
-[#32]: https://github.com/wpm/Turnstile/issues/32
-[#33]: https://github.com/wpm/Turnstile/issues/33
-[#34]: https://github.com/wpm/Turnstile/issues/34
-[#37]: https://github.com/wpm/Turnstile/issues/37
