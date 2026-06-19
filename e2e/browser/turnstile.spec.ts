@@ -142,17 +142,57 @@ test("assistant chat: streams a reply about the goal and renders math", async ({
   );
 });
 
-test("assistant chat: echo round-trip and input disabled while busy", async ({
+test("assistant chat: replies without echoing the user's message", async ({
   page,
 }) => {
   await openApp(page);
   const input = page.getByPlaceholder("Message Proof Assistant…");
   await input.fill("hello turnstile");
   await input.press("Enter");
-  await expect(page.locator(".bubble.assistant").last()).toContainText(
-    "[echo] hello turnstile",
+  const lastBubble = page.locator(".bubble.assistant").last();
+  await expect(lastBubble).toContainText("Proof Assistant", {
+    timeout: 10_000,
+  });
+  // The assistant must never echo the user's text back (#57/#62).
+  await expect(lastBubble).not.toContainText("[echo]");
+  await expect(lastBubble).not.toContainText("hello turnstile");
+});
+
+test("status bar reports a connected Proof Assistant", async ({ page }) => {
+  await openApp(page);
+  await expect(page.getByRole("status")).toContainText(
+    "Proof Assistant: connected",
+  );
+});
+
+test("disconnected assistant: error toast names the fix and the input is disabled", async ({
+  page,
+}) => {
+  // Simulate a stored-but-rejected key: a key is present (so the first-run modal
+  // doesn't pop), but the assistant is disconnected.
+  await page.goto("/?assistant=disconnected:keyRejected");
+  await expect(page.locator(".cm-content")).toHaveAttribute(
+    "contenteditable",
+    "true",
     { timeout: 10_000 },
   );
+
+  // Status bar shows disconnected.
+  await expect(page.getByRole("status")).toContainText(
+    "Proof Assistant: disconnected",
+  );
+
+  // An error toast names the cause and the fix.
+  const toast = page.locator(".toast--error");
+  await expect(toast).toBeVisible({ timeout: 10_000 });
+  await expect(toast).toContainText("API key was rejected");
+  await expect(toast).toContainText("Settings");
+
+  // The chat input is disabled with an explanatory placeholder.
+  const input = page.getByPlaceholder(
+    "Proof Assistant unavailable — set your API key in Settings",
+  );
+  await expect(input).toBeDisabled();
 });
 
 test("settings dialog opens from the menu, edits persist", async ({ page }) => {
