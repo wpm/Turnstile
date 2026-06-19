@@ -238,6 +238,18 @@
       } catch {
         // Defaults apply when settings can't be loaded.
       }
+      // Warn (once) if settings.json was present but unparseable at startup —
+      // the backend reset it to defaults and backed up the bad file. Drained
+      // by command rather than a startup emit so it can't fire before this
+      // listener exists.
+      try {
+        const warning = await invoke<string | null>(
+          "take_settings_load_warning",
+        );
+        if (warning) addToast("warning", warning);
+      } catch {
+        // No backend (browser/dev): nothing to drain.
+      }
       void invoke("set_menu_item_enabled", {
         id: "save_session",
         enabled: true,
@@ -261,8 +273,26 @@
       }
     })();
 
+    // The 30s autosave is the crash-recovery safety net. Surface failures
+    // (disk full, permissions, missing app-data dir) as an error toast, but
+    // dedupe: toast only on the transition working→failing so a persistent
+    // problem doesn't fire every interval. A later success silently re-arms.
+    let autosaveFailing = false;
     const autosaveTimer = setInterval(() => {
-      autoSaveSession(currentLayout()).catch(() => undefined);
+      autoSaveSession(currentLayout()).then(
+        () => {
+          autosaveFailing = false;
+        },
+        (e: unknown) => {
+          if (!autosaveFailing) {
+            autosaveFailing = true;
+            addToast(
+              "error",
+              `Autosave failed — your recovery snapshot is not being updated. ${String(e)}`,
+            );
+          }
+        },
+      );
     }, AUTOSAVE_INTERVAL_MS);
 
     return () => {
