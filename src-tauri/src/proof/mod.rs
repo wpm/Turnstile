@@ -129,23 +129,21 @@ impl LSPAnnotation {
     /// these straight onto decorations, gutter markers, and tooltips.
     #[must_use]
     pub fn derive(&self, source: &str) -> DerivedAnnotations {
-        // Precompute the UTF-16 offset of the start of each line so per-token
-        // resolution is O(1) instead of rescanning the document each time.
+        // Precompute the UTF-16 offset of the start of each line once, then share
+        // it across every resolution below so the document is scanned a single
+        // time per refresh.
         let line_starts = utf16_line_starts(source);
-        let resolve = |line: u32, col: u32| -> u32 {
-            // line is 1-indexed; line_starts is 0-indexed by line number.
-            line_starts
-                .get((line as usize).saturating_sub(1))
-                .map_or_else(|| line_starts.last().copied().unwrap_or(0), |s| s + col)
-        };
 
         let syntax_coloring = self
             .tokens
             .iter()
-            .map(|t| SyntaxColor {
-                from: resolve(t.line, t.col),
-                to: resolve(t.line, t.col) + t.length,
-                token_type: t.token_type.parse().unwrap_or(TokenType::Unknown),
+            .map(|t| {
+                let from = resolve_offset(&line_starts, t.line, t.col);
+                SyntaxColor {
+                    from,
+                    to: from + t.length,
+                    token_type: t.token_type.parse().unwrap_or(TokenType::Unknown),
+                }
             })
             .collect();
 
@@ -153,8 +151,8 @@ impl LSPAnnotation {
             .diagnostics
             .iter()
             .map(|d| Underline {
-                from: resolve(d.start_line, d.start_col),
-                to: resolve(d.end_line, d.end_col),
+                from: resolve_offset(&line_starts, d.start_line, d.start_col),
+                to: resolve_offset(&line_starts, d.end_line, d.end_col),
                 severity: DiagnosticSeverity::from_u8(d.severity),
             })
             .collect();
@@ -163,7 +161,7 @@ impl LSPAnnotation {
             syntax_coloring,
             underlines,
             gutter: self.gutter(),
-            hover: self.hover(source),
+            hover: self.hover(&line_starts),
         }
     }
 
@@ -197,21 +195,16 @@ impl LSPAnnotation {
             .collect()
     }
 
-    /// One hover hit per diagnostic, with its span resolved to UTF-16 offsets.
-    /// The renderer tests the cursor position against each hit's `[from, to]`
-    /// and unions the messages of all hits under the cursor.
-    fn hover(&self, source: &str) -> Vec<HoverHit> {
-        let line_starts = utf16_line_starts(source);
-        let resolve = |line: u32, col: u32| -> u32 {
-            line_starts
-                .get((line as usize).saturating_sub(1))
-                .map_or_else(|| line_starts.last().copied().unwrap_or(0), |s| s + col)
-        };
+    /// One hover hit per diagnostic, with its span resolved to UTF-16 offsets
+    /// against the shared `line_starts`. The renderer tests the cursor position
+    /// against each hit's `[from, to]` and unions the messages of all hits under
+    /// the cursor.
+    fn hover(&self, line_starts: &[u32]) -> Vec<HoverHit> {
         self.diagnostics
             .iter()
             .map(|d| HoverHit {
-                from: resolve(d.start_line, d.start_col),
-                to: resolve(d.end_line, d.end_col),
+                from: resolve_offset(line_starts, d.start_line, d.start_col),
+                to: resolve_offset(line_starts, d.end_line, d.end_col),
                 severity: DiagnosticSeverity::from_u8(d.severity),
                 message: d.message.clone(),
             })
@@ -292,6 +285,21 @@ fn utf16_line_starts(source: &str) -> Vec<u32> {
         }
     }
     starts
+}
+
+/// Resolve a 1-indexed (line, col) to an absolute UTF-16 offset using the
+/// precomputed `line_starts`. A line past the end clamps to the last line start.
+///
+/// Only the line start is bounded; `col` (and any `+ length` a caller adds) is
+/// trusted as the LSP reported it, so the returned offset — and especially a
+/// caller's `to` — may point past the end of the document if the annotation was
+/// computed against a since-edited source. The frontend renderer clamps every
+/// span to the live document before use, so out-of-range offsets are dropped
+/// rather than trusted.
+fn resolve_offset(line_starts: &[u32], line: u32, col: u32) -> u32 {
+    line_starts
+        .get((line as usize).saturating_sub(1))
+        .map_or_else(|| line_starts.last().copied().unwrap_or(0), |s| s + col)
 }
 
 /// The Lean source buffer together with the LSP annotations that index into it.

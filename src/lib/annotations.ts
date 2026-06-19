@@ -23,13 +23,22 @@ import type { DerivedAnnotations } from "./DerivedAnnotations";
 /**
  * An empty annotation snapshot. Used as the field default and to clear
  * annotations on session load before the LSP repopulates them.
+ *
+ * Frozen because it is a shared singleton handed out as both the store default
+ * and the StateField `create()` value: freezing turns any accidental in-place
+ * mutation (e.g. `gutter.push(...)`) into an immediate error instead of silently
+ * corrupting the shared default.
  */
-export const EMPTY_ANNOTATIONS: DerivedAnnotations = {
-  syntaxColoring: [],
-  underlines: [],
-  gutter: [],
-  hover: [],
-};
+// The inner arrays are frozen (the actual corruption vector — `.push(...)` on a
+// shared array). The generated DerivedAnnotations type declares mutable arrays,
+// so we cast through `unknown`; the frozen arrays still throw on mutation at
+// runtime, which is the protection we want.
+export const EMPTY_ANNOTATIONS = Object.freeze({
+  syntaxColoring: Object.freeze([]),
+  underlines: Object.freeze([]),
+  gutter: Object.freeze([]),
+  hover: Object.freeze([]),
+}) as unknown as DerivedAnnotations;
 
 /**
  * Clamp a Rust-resolved `[from, to)` UTF-16 offset range to the live document.

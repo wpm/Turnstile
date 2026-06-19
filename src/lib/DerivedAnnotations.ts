@@ -5,8 +5,9 @@ import type { SyntaxColor } from "./SyntaxColor";
 import type { Underline } from "./Underline";
 
 /**
- * The complete set of CodeMirror-ready annotation views, derived from an
- * [`LSPAnnotation`] against a specific source. This is the payload the
- * frontend renders; it carries no line/col, only resolved offsets.
+ * The complete set of `CodeMirror`-ready annotation views.
+ *
+ * Derived from an [`LSPAnnotation`] against a specific source. This is the
+ * payload the frontend renders; it carries no line/col, only resolved offsets.
  */
 export type DerivedAnnotations = { syntaxColoring: Array<SyntaxColor>, underlines: Array<Underline>, gutter: Array<GutterMark>, hover: Array<HoverHit>, };
