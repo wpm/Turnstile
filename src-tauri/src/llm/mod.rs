@@ -1,23 +1,19 @@
 //! LLM provider abstraction and wire protocol.
 //!
-//! The [`Llm`] trait hides whether the underlying provider is a real Anthropic
-//! API call or a test mock.  Two operations are supported:
+//! The [`Llm`] trait abstracts the Anthropic provider so the rest of the app
+//! can talk to it without knowing the wire details.  Two operations are
+//! supported:
 //!
 //! * [`Llm::complete`] — one-shot completion with a system prompt.  Used by the
 //!   translator (prose proof generation).
 //! * [`Llm::send_with_tools`] — multi-turn streaming with tool use.  Used by the
 //!   assistant to carry on a conversation with the user.
 //!
-//! # Backend selection
-//!
-//! Production: [`AnthropicBackend`] (reads `ANTHROPIC_API_KEY` from the environment).
-//! Testing / mock mode: [`MockBackend`], selected by either
-//! * the `mock-llm` Cargo feature flag, or
-//! * the `TURNSTILE_MOCK_LLM` environment variable (`echo` | `scripted` | `delay`).
+//! The only backend is [`AnthropicBackend`].  There is deliberately no mock or
+//! echo fallback: when no usable API key is available the assistant reports a
+//! disconnected status rather than silently substituting a fake reply.
 
 pub mod models;
-
-use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde::Serialize;
@@ -89,152 +85,32 @@ pub trait Llm: Send + Sync {
 }
 
 // ---------------------------------------------------------------------------
-// MockBackend
+// AnthropicBackend (the only LLM backend)
 // ---------------------------------------------------------------------------
 
-/// Mock mode selected by the `TURNSTILE_MOCK_LLM` env var or `mock-llm` feature.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum MockMode {
-    /// Returns the user message back, prefixed with `[echo] `.
-    Echo,
-    /// Plays back `Vec<String>` responses in order (cycling).
-    Scripted,
-    /// Like Echo but emits one character at a time with a 10 ms delay.
-    Delay,
-}
-
-pub struct MockBackend {
-    pub mode: MockMode,
-    /// Scripted responses (used when `mode == Scripted`).
-    pub script: Vec<String>,
-    /// Index into `script`, wrapped with Mutex for interior mutability.
-    script_idx: Arc<std::sync::Mutex<usize>>,
-}
-
-impl MockBackend {
-    #[must_use]
-    pub fn echo() -> Self {
-        Self {
-            mode: MockMode::Echo,
-            script: Vec::new(),
-            script_idx: Arc::new(std::sync::Mutex::new(0)),
-        }
-    }
-
-    #[must_use]
-    pub fn scripted(responses: Vec<String>) -> Self {
-        Self {
-            mode: MockMode::Scripted,
-            script: responses,
-            script_idx: Arc::new(std::sync::Mutex::new(0)),
-        }
-    }
-
-    #[must_use]
-    pub fn delay() -> Self {
-        Self {
-            mode: MockMode::Delay,
-            script: Vec::new(),
-            script_idx: Arc::new(std::sync::Mutex::new(0)),
-        }
-    }
-
-    /// Construct from the `TURNSTILE_MOCK_LLM` environment variable.
-    #[must_use]
-    pub fn from_env() -> Self {
-        match std::env::var("TURNSTILE_MOCK_LLM")
-            .unwrap_or_default()
-            .as_str()
-        {
-            "scripted" => {
-                let script: Vec<String> = std::env::var("TURNSTILE_MOCK_SCRIPT")
-                    .unwrap_or_default()
-                    .lines()
-                    .map(String::from)
-                    .collect();
-                Self::scripted(script)
-            }
-            "delay" => Self::delay(),
-            _ => Self::echo(),
-        }
-    }
-}
-
-#[async_trait]
-impl Llm for MockBackend {
-    async fn complete(
-        &self,
-        _system_prompt: &str,
-        user_content: &str,
-        _model: &str,
-        app: &AppHandle,
-    ) -> Result<Turn, LlmError> {
-        let turn = Turn::assistant(format!("[echo] {user_content}"));
-        app.emit(STREAM_DONE_EVENT, ()).ok();
-        Ok(turn)
-    }
-
-    async fn send_with_tools(
-        &self,
-        _system_prompt: &str,
-        _transcript: &Transcript,
-        _tools: &[ToolDefinition],
-        _model: &str,
-        app: &AppHandle,
-        user_content: &str,
-    ) -> Result<Turn, LlmError> {
-        let response = match self.mode {
-            MockMode::Echo => format!("[echo] {user_content}"),
-            MockMode::Scripted => {
-                if self.script.is_empty() {
-                    "[scripted: no responses]".to_string()
-                } else {
-                    let mut idx = self.script_idx.lock().unwrap();
-                    let r = self.script[*idx % self.script.len()].clone();
-                    *idx += 1;
-                    r
-                }
-            }
-            MockMode::Delay => {
-                let prefix = format!("[echo] {user_content}");
-                for ch in prefix.chars() {
-                    app.emit(STREAM_DELTA_EVENT, ch.to_string()).ok();
-                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-                }
-                prefix
-            }
-        };
-
-        let turn = Turn::assistant(response);
-
-        app.emit(STREAM_DONE_EVENT, ()).ok();
-        app.emit(COMPLETE_EVENT, &turn).ok();
-        Ok(turn)
-    }
-}
-
-// ---------------------------------------------------------------------------
-// AnthropicBackend (real LLM; excluded when mock-llm feature is active)
-// ---------------------------------------------------------------------------
-
-#[cfg(not(feature = "mock-llm"))]
 pub struct AnthropicBackend {
     api_key: String,
     client: reqwest::Client,
 }
 
-#[cfg(not(feature = "mock-llm"))]
 impl AnthropicBackend {
-    /// # Errors
-    ///
-    /// Returns an error if `ANTHROPIC_API_KEY` is not set.
-    pub fn from_env() -> Result<Self, String> {
-        let api_key = std::env::var("ANTHROPIC_API_KEY")
-            .map_err(|_| "ANTHROPIC_API_KEY environment variable not set".to_string())?;
-        Ok(Self {
+    /// Construct a backend from an explicit API key.  An empty key is allowed;
+    /// the request methods reject it with a structured error rather than
+    /// reaching the network.
+    #[must_use]
+    pub fn new(api_key: String) -> Self {
+        Self {
             api_key,
             client: reqwest::Client::new(),
-        })
+        }
+    }
+
+    /// Construct a backend from the `ANTHROPIC_API_KEY` environment variable,
+    /// defaulting to an empty key when it is unset.  An empty key yields a
+    /// backend that reports the missing-key error on use — never an echo.
+    #[must_use]
+    pub fn from_env() -> Self {
+        Self::new(std::env::var("ANTHROPIC_API_KEY").unwrap_or_default())
     }
 
     /// Stream one request to the Anthropic API and collect the full response.
@@ -411,7 +287,6 @@ impl AnthropicBackend {
     }
 }
 
-#[cfg(not(feature = "mock-llm"))]
 #[async_trait]
 impl Llm for AnthropicBackend {
     async fn complete(
@@ -563,72 +438,5 @@ mod tests {
     fn llm_error_from_string() {
         let err = LlmError::from("msg".to_string());
         assert_eq!(err.0, "msg");
-    }
-
-    // -- MockBackend -----------------------------------------------------
-
-    #[test]
-    fn mock_echo_prefixes_message() {
-        // The echo logic is straightforward: just verify the format string.
-        let msg = "hello world";
-        let echoed = format!("[echo] {msg}");
-        assert_eq!(echoed, "[echo] hello world");
-    }
-
-    #[test]
-    fn mock_scripted_cycles_responses() {
-        let backend = MockBackend::scripted(vec!["first".into(), "second".into()]);
-        {
-            let mut idx = backend.script_idx.lock().unwrap();
-            let r0 = backend.script[*idx % backend.script.len()].clone();
-            *idx += 1;
-            let r1 = backend.script[*idx % backend.script.len()].clone();
-            *idx += 1;
-            let r2 = backend.script[*idx % backend.script.len()].clone();
-            drop(idx);
-            assert_eq!(r0, "first");
-            assert_eq!(r1, "second");
-            assert_eq!(r2, "first"); // cycles
-        }
-    }
-
-    // -- MockBackend::from_env -------------------------------------------
-
-    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-    #[test]
-    fn mock_backend_from_env_defaults_to_echo() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        std::env::remove_var("TURNSTILE_MOCK_LLM");
-        let backend = MockBackend::from_env();
-        assert_eq!(backend.mode, MockMode::Echo);
-    }
-
-    #[test]
-    fn mock_backend_from_env_delay() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        std::env::set_var("TURNSTILE_MOCK_LLM", "delay");
-        let backend = MockBackend::from_env();
-        std::env::remove_var("TURNSTILE_MOCK_LLM");
-        assert_eq!(backend.mode, MockMode::Delay);
-    }
-
-    #[test]
-    fn mock_backend_from_env_scripted() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        std::env::set_var("TURNSTILE_MOCK_LLM", "scripted");
-        std::env::set_var("TURNSTILE_MOCK_SCRIPT", "line1\nline2");
-        let backend = MockBackend::from_env();
-        std::env::remove_var("TURNSTILE_MOCK_LLM");
-        std::env::remove_var("TURNSTILE_MOCK_SCRIPT");
-        assert_eq!(backend.mode, MockMode::Scripted);
-        assert_eq!(backend.script, vec!["line1", "line2"]);
-    }
-
-    #[test]
-    fn mock_backend_scripted_empty_vec() {
-        let backend = MockBackend::scripted(vec![]);
-        assert_eq!(backend.mode, MockMode::Scripted);
-        assert!(backend.script.is_empty());
     }
 }

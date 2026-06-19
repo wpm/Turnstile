@@ -35,7 +35,7 @@ pub struct AppState {
     pub proof: Arc<tokio::sync::Mutex<proof::Proof>>,
     /// Assistant conversation state.
     pub transcript: Arc<tokio::sync::Mutex<assistant::Transcript>>,
-    /// LLM backend (mock or real Anthropic).
+    /// LLM backend (the Anthropic API client).
     pub llm: Arc<dyn llm::Llm>,
     /// Persisted user settings.
     pub settings: Arc<tokio::sync::Mutex<settings::Settings>>,
@@ -779,16 +779,7 @@ pub fn run() {
 
             let initial_settings = settings::load_settings(&app_data_dir);
 
-            #[cfg(feature = "mock-llm")]
-            let llm_backend: Arc<dyn llm::Llm> = Arc::new(llm::MockBackend::from_env());
-
-            #[cfg(not(feature = "mock-llm"))]
-            let llm_backend: Arc<dyn llm::Llm> = {
-                match llm::AnthropicBackend::from_env() {
-                    Ok(b) => Arc::new(b),
-                    Err(_) => Arc::new(llm::MockBackend::echo()),
-                }
-            };
+            let llm_backend: Arc<dyn llm::Llm> = Arc::new(llm::AnthropicBackend::from_env());
 
             let setup_running = Arc::new(AtomicBool::new(false));
 
@@ -1062,7 +1053,9 @@ mod tests {
             lsp_client: Arc::new(tokio::sync::Mutex::new(None)),
             proof: Arc::new(tokio::sync::Mutex::new(proof::Proof::default())),
             transcript: Arc::new(tokio::sync::Mutex::new(assistant::Transcript::default())),
-            llm: Arc::new(llm::MockBackend::echo()),
+            // The pre-flight checks under test never call the backend, so an
+            // empty-key Anthropic backend is sufficient.
+            llm: Arc::new(llm::AnthropicBackend::new(String::new())),
             settings: Arc::new(tokio::sync::Mutex::new(crate::settings::Settings::default())),
             current_session_path: Arc::new(tokio::sync::Mutex::new(None)),
             session_dirty: Arc::new(AtomicBool::new(false)),

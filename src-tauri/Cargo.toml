@@ -46,9 +46,6 @@ tower = "0.5"
 tokio-util = { version = "0.7", features = ["compat"] }
 tempfile = "3"
 
-[features]
-mock-llm = []
-
 # Lint policy lives here (not in CLI flags) so every clippy invocation -
 # pre-commit hook, `pnpm verify`, CI, editors - agrees on the lint set.
 # Levels are "warn" so dev builds aren't blocked; gates escalate with
