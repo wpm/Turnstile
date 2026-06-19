@@ -142,6 +142,50 @@ test("assistant chat: streams a reply about the goal and renders math", async ({
   );
 });
 
+test("assistant chat: bubbles keep their full height when the transcript overflows", async ({
+  page,
+}) => {
+  // Regression: in WebKit (the macOS Tauri webview), the assistant bubbles
+  // clipped their text once enough turns overflowed the scrollable transcript.
+  // The transcript is a column flex container, so a shrinkable bubble row gets
+  // squashed to fit and its text is cut off. The fix pins the rows to their
+  // natural height (`flex-shrink: 0`) and lets the transcript scroll. Chromium
+  // doesn't reproduce the squash, so assert the CSS contract that prevents it
+  // and that no rendered bubble clips its own content.
+  await openApp(page);
+  const input = page.getByPlaceholder("Message Proof Assistant…");
+  // Send sequentially: send() is a no-op while a reply is still streaming, so
+  // pace on the user bubbles (one per send) and wait for the streaming bubble
+  // to settle into a finished reply before sending the next message.
+  const TURNS = 6;
+  for (let i = 0; i < TURNS; i++) {
+    await input.fill(`overflow the transcript, message ${String(i)}`);
+    await input.press("Enter");
+    await expect(page.locator(".bubble.user")).toHaveCount(i + 1, {
+      timeout: 10_000,
+    });
+    await expect(page.locator(".bubble.assistant").last()).toContainText(
+      "Proof Assistant",
+      { timeout: 10_000 },
+    );
+  }
+
+  // Rows must not be shrinkable — that is what stops WebKit from clipping them.
+  const shrink = await page
+    .locator(".bubble-row")
+    .first()
+    .evaluate((el) => getComputedStyle(el).flexShrink);
+  expect(shrink).toBe("0");
+
+  // No assistant bubble clips its own content (clientHeight == scrollHeight).
+  const clipped = await page
+    .locator(".bubble.assistant")
+    .evaluateAll(
+      (els) => els.filter((el) => el.clientHeight < el.scrollHeight - 1).length,
+    );
+  expect(clipped).toBe(0);
+});
+
 test("assistant chat: replies without echoing the user's message", async ({
   page,
 }) => {
