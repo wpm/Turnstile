@@ -329,6 +329,45 @@ test("opening a session loads the proof and prose", async ({ page }) => {
   });
 });
 
+test("loading a session over existing edits replaces the backend source, not concatenates it", async ({
+  page,
+}) => {
+  // Regression: the session-load listener replaced the editor doc with a
+  // transaction that the update listener then echoed back to the backend as an
+  // *incremental* change — applied on top of the source the backend had already
+  // set during the load. The diff (computed against the pre-load editor) double-
+  // applied, leaving the loaded source concatenated with leftover old text. The
+  // Proof Assistant's read_lean_source then saw two theorems glued together.
+  await openApp(page);
+
+  // The user has some prior content in the editor (and thus in the backend).
+  await typeInEditor(page, "theorem old : True := sorry");
+  await expect(page.locator(".cm-content")).toContainText("theorem old");
+
+  // Loading a session sets the backend source directly and re-populates the
+  // editor. The backend source must equal exactly the loaded proof.
+  await page.evaluate(() => {
+    window.__turnstileFake?.emit("menu-event", "open_session");
+  });
+  await expect(page.locator(".cm-content")).toContainText("sqrt2_irrational", {
+    timeout: 5_000,
+  });
+
+  const source = await page.evaluate(
+    () => window.__turnstileFake?.getSource() ?? "",
+  );
+  // No residue of the pre-load content, and no duplicated declarations.
+  expect(source).not.toContain("theorem old");
+  expect(source).toContain("sqrt2_irrational");
+  // The editor and the backend agree exactly.
+  const editorText = await page.evaluate(
+    () => document.querySelector(".cm-content")?.textContent ?? "",
+  );
+  expect(source.replace(/\s+/g, " ").trim()).toBe(
+    editorText.replace(/\s+/g, " ").trim(),
+  );
+});
+
 test("theme toggle switches the document between light and dark", async ({
   page,
 }) => {
