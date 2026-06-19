@@ -18,7 +18,9 @@
     goalState,
     lspStatus as lspStatusStore,
     showMessage,
+    assistantStatus,
   } from "$lib/turnstile_messages";
+  import type { DisconnectReason } from "$lib/DisconnectReason";
   import {
     proseGenerating,
     proseHash,
@@ -85,6 +87,21 @@
     toasts = toasts.filter((t) => t.id !== id);
   }
   /* eslint-enable @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment */
+
+  /**
+   * Toast copy for each disconnect reason — names the cause AND the fix, so the
+   * failure is never vague. Driven by the backend `DisconnectReason` (#58).
+   */
+  function disconnectToastMessage(reason: DisconnectReason): string {
+    switch (reason) {
+      case "noKey":
+        return "Proof Assistant unavailable — no API key set. Add one in Settings.";
+      case "keyRejected":
+        return "Proof Assistant unavailable — API key was rejected. Update it in Settings.";
+      case "storeUnavailable":
+        return "Proof Assistant unavailable — the OS secret store could not be reached. Set the ANTHROPIC_API_KEY environment variable.";
+    }
+  }
 
   function currentLayout(): UiLayout {
     return {
@@ -160,6 +177,23 @@
       addToast(msg.severity as ToastItem["severity"], msg.message);
     });
 
+    // Surface assistant disconnection as an error toast (which requires manual
+    // dismissal). Only toast on a *transition* into a disconnected reason — not
+    // on every store emit — so reconnecting and re-failing doesn't spam, but a
+    // changed reason (e.g. noKey → keyRejected) does re-notify.
+    let lastDisconnectReason: DisconnectReason | null = null;
+    const unsubscribeAssistant = assistantStatus.subscribe((status) => {
+      if (status === null) return;
+      if (status.state === "disconnected") {
+        if (status.reason !== lastDisconnectReason) {
+          lastDisconnectReason = status.reason;
+          addToast("error", disconnectToastMessage(status.reason));
+        }
+      } else {
+        lastDisconnectReason = null;
+      }
+    });
+
     const unsubscribeSetup = setupProgress.subscribe((progress) => {
       if (progress?.phase === "error") {
         addToast("error", progress.message);
@@ -224,6 +258,7 @@
       unsubscribeGoal();
       unsubscribeLsp();
       unsubscribeShowMessage();
+      unsubscribeAssistant();
       unsubscribeSetup();
       unsubscribeProse();
       unlistenProse?.();
