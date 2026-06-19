@@ -30,6 +30,45 @@
   // user comes up connected without a relaunch.
   const needsKey = $derived(firstRun && !keyPresent && !apiKey.trim());
 
+  // Tabbed layout. The three groups (Models & API key, Font sizes, Prompts)
+  // each get their own panel; the shared `draft` keeps edits alive when the
+  // user switches tabs. The API key lives in the Models tab (#66).
+  const tabs = [
+    { id: "models", label: "Models & API key" },
+    { id: "fonts", label: "Font sizes" },
+    { id: "prompts", label: "Prompts" },
+  ] as const;
+  type TabId = (typeof tabs)[number]["id"];
+  let activeTab = $state<TabId>("models");
+  let tabRefs = $state<HTMLButtonElement[]>([]);
+
+  // Roving-tabindex arrow navigation: only the active tab is in the tab order,
+  // and arrow/Home/End keys move focus (and selection) between tabs.
+  function onTabKeydown(e: KeyboardEvent, index: number) {
+    let next: number;
+    switch (e.key) {
+      case "ArrowRight":
+      case "ArrowDown":
+        next = (index + 1) % tabs.length;
+        break;
+      case "ArrowLeft":
+      case "ArrowUp":
+        next = (index - 1 + tabs.length) % tabs.length;
+        break;
+      case "Home":
+        next = 0;
+        break;
+      case "End":
+        next = tabs.length - 1;
+        break;
+      default:
+        return;
+    }
+    e.preventDefault();
+    activeTab = tabs[next].id;
+    tabRefs[next]?.focus();
+  }
+
   onMount(async () => {
     try {
       const [s, m, ap, tp, hasKey] = await Promise.all([
@@ -123,108 +162,158 @@
           </p>
         {/if}
 
-        <fieldset>
-          <legend>Anthropic API key</legend>
-          <label class="key-label">
-            <span>{keyPresent ? "Replace key" : "API key"}</span>
-            <input
-              type="password"
-              autocomplete="off"
-              placeholder={keyPresent
-                ? "A key is already stored — leave blank to keep it"
-                : "sk-ant-…"}
-              bind:value={apiKey}
-            />
-          </label>
-          <p class="hint">
-            Stored encrypted in your OS keychain — never written to disk in
-            plaintext or logged.
-          </p>
-        </fieldset>
+        <div class="tablist" role="tablist" aria-label="Settings sections">
+          {#each tabs as tab, i (tab.id)}
+            <button
+              bind:this={tabRefs[i]}
+              type="button"
+              role="tab"
+              id="settings-tab-{tab.id}"
+              aria-controls="settings-panel-{tab.id}"
+              aria-selected={activeTab === tab.id}
+              tabindex={activeTab === tab.id ? 0 : -1}
+              class="tab"
+              class:active={activeTab === tab.id}
+              onclick={() => {
+                activeTab = tab.id;
+              }}
+              onkeydown={(e) => {
+                onTabKeydown(e, i);
+              }}
+            >
+              {tab.label}
+            </button>
+          {/each}
+        </div>
 
-        <fieldset>
-          <legend>Models</legend>
-          <label>
-            <span>Assistant</span>
-            <select bind:value={draft.assistant_model}>
-              <option value={null}>Default</option>
-              {#each models as m (m.id)}
-                <option value={m.id}>{m.display_name}</option>
-              {/each}
-            </select>
-          </label>
-          <label>
-            <span>Prose translation</span>
-            <select bind:value={draft.translation_model}>
-              <option value={null}>Default</option>
-              {#each models as m (m.id)}
-                <option value={m.id}>{m.display_name}</option>
-              {/each}
-            </select>
-          </label>
-        </fieldset>
+        <div
+          role="tabpanel"
+          id="settings-panel-models"
+          aria-labelledby="settings-tab-models"
+          tabindex="0"
+          hidden={activeTab !== "models"}
+        >
+          <fieldset>
+            <legend>Anthropic API key</legend>
+            <label class="key-label">
+              <span>{keyPresent ? "Replace key" : "API key"}</span>
+              <input
+                type="password"
+                autocomplete="off"
+                placeholder={keyPresent
+                  ? "A key is already stored — leave blank to keep it"
+                  : "sk-ant-…"}
+                bind:value={apiKey}
+              />
+            </label>
+            <p class="hint">
+              Stored encrypted in your OS keychain — never written to disk in
+              plaintext or logged.
+            </p>
+          </fieldset>
 
-        <fieldset>
-          <legend>Font sizes (pt)</legend>
-          <div class="font-grid">
-            <label>
-              <span>Editor</span>
-              <input
-                type="number"
-                min="8"
-                max="32"
-                bind:value={draft.editor_font_size}
-              />
-            </label>
-            <label>
-              <span>Goal state</span>
-              <input
-                type="number"
-                min="8"
-                max="32"
-                bind:value={draft.goal_state_font_size}
-              />
-            </label>
-            <label>
-              <span>Prose proof</span>
-              <input
-                type="number"
-                min="8"
-                max="32"
-                bind:value={draft.prose_proof_font_size}
-              />
-            </label>
+          <fieldset>
+            <legend>Models</legend>
             <label>
               <span>Assistant</span>
-              <input
-                type="number"
-                min="8"
-                max="32"
-                bind:value={draft.assistant_font_size}
-              />
+              <select bind:value={draft.assistant_model}>
+                <option value={null}>Default</option>
+                {#each models as m (m.id)}
+                  <option value={m.id}>{m.display_name}</option>
+                {/each}
+              </select>
             </label>
-          </div>
-        </fieldset>
+            <label>
+              <span>Prose translation</span>
+              <select bind:value={draft.translation_model}>
+                <option value={null}>Default</option>
+                {#each models as m (m.id)}
+                  <option value={m.id}>{m.display_name}</option>
+                {/each}
+              </select>
+            </label>
+          </fieldset>
+        </div>
 
-        <fieldset>
-          <legend>Prompts</legend>
-          <label class="prompt-label">
-            <span>Assistant system prompt (leave empty for the default)</span>
-            <textarea
-              rows="5"
-              placeholder={defaultAssistantPrompt.slice(0, 200) + "…"}
-              bind:value={draft.assistant_prompt}
-            ></textarea>
-          </label>
-          <label class="prompt-label">
-            <span>Translation system prompt (leave empty for the default)</span>
-            <textarea
-              rows="5"
-              placeholder={defaultTranslationPrompt.slice(0, 200) + "…"}
-              bind:value={draft.translation_prompt}
-            ></textarea>
-          </label>
-        </fieldset>
+        <div
+          role="tabpanel"
+          id="settings-panel-fonts"
+          aria-labelledby="settings-tab-fonts"
+          tabindex="0"
+          hidden={activeTab !== "fonts"}
+        >
+          <fieldset>
+            <legend>Font sizes (pt)</legend>
+            <div class="font-grid">
+              <label>
+                <span>Editor</span>
+                <input
+                  type="number"
+                  min="8"
+                  max="32"
+                  bind:value={draft.editor_font_size}
+                />
+              </label>
+              <label>
+                <span>Goal state</span>
+                <input
+                  type="number"
+                  min="8"
+                  max="32"
+                  bind:value={draft.goal_state_font_size}
+                />
+              </label>
+              <label>
+                <span>Prose proof</span>
+                <input
+                  type="number"
+                  min="8"
+                  max="32"
+                  bind:value={draft.prose_proof_font_size}
+                />
+              </label>
+              <label>
+                <span>Assistant</span>
+                <input
+                  type="number"
+                  min="8"
+                  max="32"
+                  bind:value={draft.assistant_font_size}
+                />
+              </label>
+            </div>
+          </fieldset>
+        </div>
+
+        <div
+          role="tabpanel"
+          id="settings-panel-prompts"
+          aria-labelledby="settings-tab-prompts"
+          tabindex="0"
+          hidden={activeTab !== "prompts"}
+        >
+          <fieldset>
+            <legend>Prompts</legend>
+            <label class="prompt-label">
+              <span>Assistant system prompt (leave empty for the default)</span>
+              <textarea
+                rows="5"
+                placeholder={defaultAssistantPrompt.slice(0, 200) + "…"}
+                bind:value={draft.assistant_prompt}
+              ></textarea>
+            </label>
+            <label class="prompt-label">
+              <span
+                >Translation system prompt (leave empty for the default)</span
+              >
+              <textarea
+                rows="5"
+                placeholder={defaultTranslationPrompt.slice(0, 200) + "…"}
+                bind:value={draft.translation_prompt}
+              ></textarea>
+            </label>
+          </fieldset>
+        </div>
 
         {#if error}
           <div class="error">{error}</div>
@@ -299,6 +388,47 @@
     gap: 0.5rem;
     padding: 0.75rem 1rem;
     border-top: 1px solid var(--color-border);
+  }
+
+  .tablist {
+    display: flex;
+    gap: 0.25rem;
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .tab {
+    padding: 0.375rem 0.75rem;
+    border-radius: 0.375rem 0.375rem 0 0;
+    background: transparent;
+    color: var(--color-text-muted);
+    font-size: 0.8125rem;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+  }
+
+  .tab:hover {
+    color: var(--color-text);
+  }
+
+  .tab.active {
+    color: var(--color-text);
+    border-bottom-color: var(--color-accent);
+  }
+
+  [role="tabpanel"] {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  /* An explicit `display` would otherwise win over the `hidden` attribute's
+     UA `display: none`, leaving inactive panels visible. */
+  [role="tabpanel"][hidden] {
+    display: none;
+  }
+
+  [role="tabpanel"]:focus-visible {
+    outline: none;
   }
 
   fieldset {
