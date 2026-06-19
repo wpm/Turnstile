@@ -4,6 +4,7 @@
   import { listen } from "@tauri-apps/api/event";
   import Divider from "./Divider.svelte";
   import { renderMathInMarkdown } from "./render";
+  import { assistantStatus } from "./turnstile_messages";
 
   type Role = "user" | "assistant" | "error";
   interface Message {
@@ -28,6 +29,17 @@
   let messages = $state<Message[]>([]);
   let input = $state("");
   let busy = $state(false);
+
+  // Disable input while the assistant is disconnected (no usable backend), so
+  // the user can't send a message that will only fail. The status arrives via
+  // the `assistantStatus` store (#58); before the first status we treat it as
+  // usable so a slow status emit doesn't lock the input on a healthy app.
+  let disconnected = $state(false);
+  const placeholder = $derived(
+    disconnected
+      ? "Proof Assistant unavailable — set your API key in Settings"
+      : "Message Proof Assistant…",
+  );
   /** Streaming text of the in-flight assistant turn ("" = thinking). */
   let streamingText = $state("");
   let transcriptEl: HTMLDivElement | undefined;
@@ -83,7 +95,7 @@
 
   async function send() {
     const text = input.trim();
-    if (!text || busy) return;
+    if (!text || busy || disconnected) return;
     messages.push({ id: nextId++, role: "user", text });
     input = "";
     busy = true;
@@ -111,6 +123,12 @@
     }
   }
 
+  const unsubscribeStatus = assistantStatus.subscribe((status) => {
+    // Null (no status yet) is treated as usable; only an explicit
+    // "disconnected" disables the input.
+    disconnected = status?.state === "disconnected";
+  });
+
   onMount(async () => {
     await loadTranscript();
     unlistenDelta = await listen<string>("assistant-delta", (e) => {
@@ -126,6 +144,7 @@
   onDestroy(() => {
     unlistenDelta?.();
     unlistenSessionLoaded?.();
+    unsubscribeStatus();
   });
 </script>
 
@@ -181,12 +200,13 @@
     <textarea
       bind:value={input}
       onkeydown={onKeydown}
-      placeholder="Message Proof Assistant…"
+      {placeholder}
+      disabled={disconnected}
       rows="1"
     ></textarea>
     <button
       onclick={() => void send()}
-      disabled={!input.trim() || busy}
+      disabled={!input.trim() || busy || disconnected}
       aria-label="Send message"
       title="Send"
     >
@@ -359,6 +379,12 @@
 
   textarea:focus {
     border-color: var(--color-accent);
+  }
+
+  textarea:disabled {
+    background: var(--color-header-bg);
+    color: var(--color-text-muted);
+    cursor: not-allowed;
   }
 
   button {
