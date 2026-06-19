@@ -155,20 +155,27 @@ test("assistant chat: bubbles hug their text whether or not the transcript overf
   // past its own text.
   await openApp(page);
   const input = page.getByPlaceholder("Message Proof Assistant…");
-  // Send sequentially: send() is a no-op while a reply is still streaming, so
-  // pace on the user bubbles (one per send) and wait for the streaming bubble
-  // to settle into a finished reply before sending the next message.
+  // Send sequentially until the transcript overflows. send() is a no-op while a
+  // reply is still streaming, so a send fired too early is silently dropped
+  // (this flaked in WebKit). Pace by waiting for the user bubble (one per
+  // accepted send) and the matching finished assistant reply, and retry the
+  // send if the user bubble didn't appear — never racing the next send against
+  // an in-flight reply.
   const TURNS = 6;
   for (let i = 0; i < TURNS; i++) {
-    await input.fill(`overflow the transcript, message ${String(i)}`);
-    await input.press("Enter");
-    await expect(page.locator(".bubble.user")).toHaveCount(i + 1, {
+    await expect(async () => {
+      await input.fill(`overflow the transcript, message ${String(i)}`);
+      await input.press("Enter");
+      await expect(page.locator(".bubble.user")).toHaveCount(i + 1, {
+        timeout: 2_000,
+      });
+    }).toPass({ timeout: 15_000 });
+    // Reply finished: the streaming bubble has settled into a stored turn, so
+    // the assistant count matches the user count and no "thinking" dots remain.
+    await expect(page.locator(".thinking")).toHaveCount(0, { timeout: 10_000 });
+    await expect(page.locator(".bubble.assistant")).toHaveCount(i + 1, {
       timeout: 10_000,
     });
-    await expect(page.locator(".bubble.assistant").last()).toContainText(
-      "Proof Assistant",
-      { timeout: 10_000 },
-    );
   }
 
   // The CSS contract that defeats the WebKit stretch: rows are neither
