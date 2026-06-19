@@ -1,7 +1,8 @@
 import { writable } from "svelte/store";
 import { listen } from "@tauri-apps/api/event";
 import type { TurnstileMessage } from "./TurnstileMessage";
-import type { Annotation } from "./Annotation";
+import type { DerivedAnnotations } from "./DerivedAnnotations";
+import { EMPTY_ANNOTATIONS } from "./annotations";
 import type { FileProgressRange } from "./FileProgressRange";
 import type { LspStatus } from "./LspStatus";
 import type { AssistantStatus } from "./AssistantStatus";
@@ -9,8 +10,8 @@ import type { AssistantStatus } from "./AssistantStatus";
 /** Current file progress ranges (lines being elaborated). */
 export const fileProgress = writable<FileProgressRange[]>([]);
 
-/** Current annotations (semantic tokens + diagnostics). */
-export const annotations = writable<Annotation[]>([]);
+/** Current CodeMirror-ready annotation views (offsets resolved in Rust). */
+export const annotations = writable<DerivedAnnotations>(EMPTY_ANNOTATIONS);
 
 /** Current LSP server status, or null before first status message. */
 export const lspStatus = writable<LspStatus | null>(null);
@@ -44,7 +45,7 @@ export async function startMessageListener(): Promise<() => void> {
         fileProgress.set(msg.items);
         break;
       case "annotationsUpdated":
-        annotations.set(msg.items);
+        annotations.set(msg.annotations);
         break;
       case "lspStatus":
         lspStatus.set({ state: msg.state, message: msg.message });

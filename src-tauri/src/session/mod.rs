@@ -34,7 +34,6 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_dialog::{DialogExt, FilePath};
 
-use crate::proof::Annotations;
 use crate::AppState;
 
 /// Current `.turn` format version. Increment when making breaking changes.
@@ -106,10 +105,6 @@ pub struct SessionState {
     pub turns: Vec<TranscriptTurn>,
     /// LLM-generated summary of earlier conversation history, if present.
     pub summary: Option<String>,
-    /// Span annotations (tokens + diagnostics) from the last LSP response.
-    /// Absent in older session files; defaults to empty.
-    #[serde(default)]
-    pub annotations: Annotations,
 }
 
 impl SessionState {
@@ -128,7 +123,6 @@ impl SessionState {
             prose: ProseData::default(),
             turns: Vec::new(),
             summary: None,
-            annotations: Annotations::default(),
         }
     }
 }
@@ -214,14 +208,10 @@ pub(crate) fn build_zip(state: &SessionState) -> Result<Vec<u8>, String> {
             .map_err(|e| format!("ZIP write error: {e}"))?;
     }
 
-    if !state.annotations.items.is_empty() {
-        let annotations_json = serde_json::to_string_pretty(&state.annotations)
-            .map_err(|e| format!("Failed to serialize annotations: {e}"))?;
-        zip.start_file("annotations.json", options)
-            .map_err(|e| format!("ZIP error: {e}"))?;
-        zip.write_all(annotations_json.as_bytes())
-            .map_err(|e| format!("ZIP write error: {e}"))?;
-    }
+    // Annotations are not persisted: they are derived from the Lean LSP and
+    // regenerate on load once the document re-elaborates, so there is nothing
+    // durable to save. (Older session files may carry an annotations.json; it
+    // is simply ignored on read.)
 
     let cursor = zip.finish().map_err(|e| format!("ZIP finish error: {e}"))?;
     Ok(cursor.into_inner())
@@ -294,16 +284,8 @@ pub(crate) fn parse_zip(bytes: &[u8]) -> Result<SessionState, String> {
         Err(_) => None,
     };
 
-    let annotations = match zip.by_name("annotations.json") {
-        Ok(mut file) => {
-            let mut s = String::new();
-            file.read_to_string(&mut s)
-                .map_err(|e| format!("Failed to read annotations.json: {e}"))?;
-            serde_json::from_str(&s)
-                .map_err(|e| format!("Failed to parse annotations.json: {e}"))?
-        }
-        Err(_) => Annotations::default(),
-    };
+    // annotations.json (if present in an older file) is intentionally ignored:
+    // annotations are derived from the LSP and regenerate on load.
 
     Ok(SessionState {
         meta,
@@ -311,7 +293,6 @@ pub(crate) fn parse_zip(bytes: &[u8]) -> Result<SessionState, String> {
         prose,
         turns,
         summary,
-        annotations,
     })
 }
 
@@ -425,14 +406,30 @@ async fn apply_loaded_session(
             .collect();
     }
 
-    // Restore proof (formal + prose; goal state will refresh from LSP).
+    // Restore proof (formal + prose; goal state and annotations refresh from
+    // the LSP once it re-elaborates the loaded document).
     {
         let mut proof = state.proof.lock().await;
         proof.formal.source.clone_from(&session.proof_lean);
+        proof.formal.annotations = crate::proof::LSPAnnotation::default();
         proof.prose.text.clone_from(&session.prose.text);
         proof.prose.goal_state_hash = session.prose.tactic_state_hash.clone().unwrap_or_default();
         proof.goal_state = crate::proof::GoalState::default();
-        proof.annotations = session.annotations.clone();
+    }
+
+    // The backend is authoritative for the loaded text: push the whole document
+    // to the LSP so its copy matches, rather than relying on incremental edits
+    // (there are none on a load). This keeps the version counter in step too.
+    {
+        let lock = state.lsp_client.lock().await;
+        if let Some(client) = lock.as_ref() {
+            // replace_document is synchronous (no server round-trip awaited), so
+            // holding the client lock across it is fine. It bumps the Protocol
+            // version counter, keeping the LSP's view in step with ours.
+            if let Err(e) = client.replace_document(session.proof_lean.clone()) {
+                tracing::warn!("session load: failed to push document to LSP: {e}");
+            }
+        }
     }
 
     // Update session path and clear dirty flag.
@@ -642,8 +639,6 @@ async fn do_save(
     let summary = transcript.summary.clone();
     drop(transcript);
 
-    let annotations = state.proof.lock().await.annotations.clone();
-
     // Preserve created_at from the passed meta; update saved_at.
     let mut final_meta = meta;
     final_meta.saved_at = Utc::now().to_rfc3339();
@@ -662,7 +657,6 @@ async fn do_save(
         },
         turns,
         summary,
-        annotations,
     };
 
     save(&session, path)?;
@@ -806,7 +800,6 @@ mod tests {
                 },
             ],
             summary: Some("Earlier we discussed rfl.".to_string()),
-            annotations: Annotations::default(),
         }
     }
 
@@ -819,41 +812,6 @@ mod tests {
         let loaded = load(tmp.path())?;
 
         assert_eq!(loaded, original);
-        Ok(())
-    }
-
-    #[test]
-    fn round_trip_preserves_annotations() -> TestResult {
-        use crate::proof::{Annotation, DiagnosticSeverity, TokenType};
-        let mut state = sample_state();
-        state.annotations = Annotations {
-            items: vec![
-                Annotation::Token {
-                    line: 1,
-                    col: 0,
-                    length: 7,
-                    token_type: TokenType::Keyword,
-                    modifiers: vec!["declaration".to_string()],
-                },
-                Annotation::Diagnostic {
-                    start_line: 2,
-                    start_col: 2,
-                    end_line: 2,
-                    end_col: 9,
-                    severity: DiagnosticSeverity::Warning,
-                    message: "uses sorry".to_string(),
-                },
-            ],
-        };
-
-        let tmp = NamedTempFile::new()?;
-        save(&state, tmp.path())?;
-        let loaded = load(tmp.path())?;
-
-        // Both the build_zip write branch and the parse_zip read branch for
-        // annotations.json are exercised by this round trip.
-        assert_eq!(loaded.annotations, state.annotations);
-        assert_eq!(loaded, state);
         Ok(())
     }
 
@@ -1010,7 +968,6 @@ mod tests {
         assert!(state.prose.tactic_state_hash.is_none());
         assert!(state.turns.is_empty());
         assert!(state.summary.is_none());
-        assert!(state.annotations.items.is_empty());
     }
 
     #[test]

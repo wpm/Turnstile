@@ -123,39 +123,6 @@ export const PROSE_GEN_MS = 300;
 
 // ── Lean-ish elaboration ────────────────────────────────────────────────
 
-interface LspPosition {
-  line: number;
-  character: number;
-}
-interface ContentChange {
-  range: { start: LspPosition; end: LspPosition };
-  text: string;
-}
-
-function posToOffset(doc: string, pos: LspPosition): number {
-  const lines = doc.split("\n");
-  let offset = 0;
-  for (let i = 0; i < pos.line && i < lines.length; i++) {
-    offset += lines[i].length + 1;
-  }
-  return Math.min(offset + pos.character, doc.length);
-}
-
-function applyChanges(doc: string, changes: ContentChange[]): string {
-  const edits = changes
-    .map((c) => ({
-      start: posToOffset(doc, c.range.start),
-      end: posToOffset(doc, c.range.end),
-      text: c.text,
-    }))
-    .sort((a, b) => b.start - a.start);
-  let out = doc;
-  for (const e of edits) {
-    out = out.slice(0, e.start) + e.text + out.slice(e.end);
-  }
-  return out;
-}
-
 const LEAN_KEYWORDS = new Set([
   "theorem",
   "lemma",
@@ -183,50 +150,69 @@ const LEAN_KEYWORDS = new Set([
   "constructor",
 ]);
 
-/** Token + diagnostic annotations a real Lean session would produce. */
+/**
+ * The CodeMirror-ready annotation views a real Lean session would produce —
+ * mirroring the backend's `LSPAnnotation::derive`: offsets are resolved to
+ * absolute UTF-16 code units (the unit CodeMirror addresses the document in).
+ */
 function computeAnnotations(doc: string) {
-  const annotations: object[] = [];
+  // UTF-16 offset of the start of each line (0-indexed by line number).
+  const lineStarts: number[] = [0];
+  let off = 0;
+  for (const ch of doc) {
+    off += ch.length; // JS string .length counts UTF-16 code units
+    if (ch === "\n") lineStarts.push(off);
+  }
+  const resolve = (line: number, col: number) => {
+    const idx = Math.min(Math.max(line - 1, 0), lineStarts.length - 1);
+    return lineStarts[idx] + col;
+  };
+
+  const syntaxColoring: object[] = [];
+  const underlines: object[] = [];
+  const gutter: { line: number; severity: string }[] = [];
+  const hover: object[] = [];
+
   doc.split("\n").forEach((lineText, i) => {
+    const line = i + 1;
     const re = /[A-Za-z_][A-Za-z0-9_.']*/g;
     let m;
     while ((m = re.exec(lineText)) !== null) {
       if (LEAN_KEYWORDS.has(m[0])) {
-        annotations.push({
-          kind: "token",
-          line: i + 1,
-          col: m.index,
-          length: m[0].length,
+        const from = resolve(line, m.index);
+        syntaxColoring.push({
+          from,
+          to: from + m[0].length,
           tokenType: "keyword",
-          modifiers: [],
         });
       }
     }
+    const addDiagnostic = (
+      col: number,
+      len: number,
+      severity: string,
+      message: string,
+    ) => {
+      const from = resolve(line, col);
+      const to = from + len;
+      underlines.push({ from, to, severity });
+      hover.push({ from, to, severity, message });
+      // One mark per line, error beats warning.
+      const existing = gutter.find((g) => g.line === line);
+      if (!existing) gutter.push({ line, severity });
+      else if (existing.severity !== "error" && severity === "error")
+        existing.severity = "error";
+    };
     const sorryIdx = lineText.indexOf("sorry");
-    if (sorryIdx >= 0) {
-      annotations.push({
-        kind: "diagnostic",
-        startLine: i + 1,
-        startCol: sorryIdx,
-        endLine: i + 1,
-        endCol: sorryIdx + 5,
-        severity: "warning",
-        message: "declaration uses 'sorry'",
-      });
-    }
+    if (sorryIdx >= 0)
+      addDiagnostic(sorryIdx, 5, "warning", "declaration uses 'sorry'");
     const oopsIdx = lineText.indexOf("oops");
-    if (oopsIdx >= 0) {
-      annotations.push({
-        kind: "diagnostic",
-        startLine: i + 1,
-        startCol: oopsIdx,
-        endLine: i + 1,
-        endCol: oopsIdx + 4,
-        severity: "error",
-        message: `unknown identifier 'oops'`,
-      });
-    }
+    if (oopsIdx >= 0)
+      addDiagnostic(oopsIdx, 4, "error", "unknown identifier 'oops'");
   });
-  return annotations;
+
+  gutter.sort((a, b) => a.line - b.line);
+  return { syntaxColoring, underlines, gutter, hover };
 }
 
 function computeGoalState(doc: string): string {
@@ -256,7 +242,7 @@ function elaborate(): void {
     if (seq !== elaborationSeq) return;
     emit("turnstile-message", {
       type: "annotationsUpdated",
-      items: computeAnnotations(source),
+      annotations: computeAnnotations(source),
     });
     emit("turnstile-message", { type: "elaborationDone" });
     goalState = computeGoalState(source);
@@ -366,10 +352,9 @@ export async function fakeInvoke(
 ): Promise<unknown> {
   switch (cmd) {
     case "update_document":
-      source = applyChanges(
-        source,
-        (args?.changes as ContentChange[] | undefined) ?? [],
-      );
+      // Route (3): the backend is the source of truth and assigns the whole
+      // document the editor sends, rather than replaying the incremental diff.
+      source = (args?.fullText as string | undefined) ?? source;
       elaborate();
       return null;
     case "get_lsp_status":

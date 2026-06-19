@@ -21,6 +21,7 @@
     annotationField,
     diagnosticGutter,
     setAnnotations,
+    EMPTY_ANNOTATIONS,
   } from "./annotations";
   import { lspHoverTooltip } from "./hover";
   import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
@@ -139,10 +140,11 @@
               });
             }
             if (!update.docChanged) return;
-            proofSource.set(update.state.doc.toString());
+            const fullText = update.state.doc.toString();
+            proofSource.set(fullText);
             // A programmatic replacement (session load) is already reflected in
-            // the backend source; forwarding it as an incremental change would
-            // double-apply it. Keep the UI store above in sync, but stop here.
+            // the backend source; forwarding it would echo the load back into
+            // the edit path. Keep the UI store above in sync, but stop here.
             if (
               update.transactions.some((tr) =>
                 tr.annotation(programmaticUpdate),
@@ -150,6 +152,10 @@
             ) {
               return;
             }
+            // Route (3): the backend is the source of truth. Send the whole
+            // document for it to assign verbatim (correct by construction), and
+            // the incremental changes for it to forward to the LSP as a ranged
+            // didChange — the LSP's native protocol.
             const oldDoc = update.startState.doc;
             const changes: ContentChange[] = [];
             update.changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
@@ -161,7 +167,7 @@
                 text: inserted.toString(),
               });
             });
-            void invoke("update_document", { changes });
+            void invoke("update_document", { fullText, changes });
           }),
         ],
       }),
@@ -188,7 +194,7 @@
         view.dispatch({
           changes: { from: 0, to: view.state.doc.length, insert: newContent },
           // Clear stale annotations from the previous document immediately.
-          effects: setAnnotations.of([]),
+          effects: setAnnotations.of(EMPTY_ANNOTATIONS),
           // The backend already set its source to this content during the load;
           // tag the transaction so the update listener doesn't echo it back as
           // an incremental change applied on top of the already-set source.

@@ -17,84 +17,61 @@ import {
   type Tooltip,
 } from "@codemirror/view";
 
-export type TokenType =
-  | "namespace"
-  | "type"
-  | "class"
-  | "enum"
-  | "interface"
-  | "struct"
-  | "typeParameter"
-  | "parameter"
-  | "variable"
-  | "property"
-  | "enumMember"
-  | "event"
-  | "function"
-  | "method"
-  | "macro"
-  | "keyword"
-  | "modifier"
-  | "comment"
-  | "string"
-  | "number"
-  | "regexp"
-  | "operator"
-  | "decorator"
-  | "unknown";
+import type { DiagnosticSeverity } from "./DiagnosticSeverity";
+import type { DerivedAnnotations } from "./DerivedAnnotations";
 
-export type DiagnosticSeverity = "error" | "warning" | "info" | "hint";
+/**
+ * An empty annotation snapshot. Used as the field default and to clear
+ * annotations on session load before the LSP repopulates them.
+ */
+export const EMPTY_ANNOTATIONS: DerivedAnnotations = {
+  syntaxColoring: [],
+  underlines: [],
+  gutter: [],
+  hover: [],
+};
 
-export type Annotation =
-  | {
-      kind: "token";
-      line: number;
-      col: number;
-      length: number;
-      tokenType: TokenType;
-      modifiers: string[];
-    }
-  | {
-      kind: "diagnostic";
-      startLine: number;
-      startCol: number;
-      endLine: number;
-      endCol: number;
-      severity: DiagnosticSeverity;
-      message: string;
-    };
+/**
+ * Clamp a Rust-resolved `[from, to)` UTF-16 offset range to the live document.
+ * Offsets are resolved in the backend against its authoritative source; if the
+ * user has typed since, they may point just past the current document, so we
+ * guard rather than trust them blindly. Returns null if the range is unusable.
+ */
+function clampRange(
+  state: EditorState,
+  from: number,
+  to: number,
+): { from: number; to: number } | null {
+  const len = state.doc.length;
+  if (from < 0 || from >= to || to > len) return null;
+  return { from, to };
+}
 
 export function buildAnnotationDecorations(
   state: EditorState,
-  annotations: Annotation[],
+  derived: DerivedAnnotations,
 ) {
   const marks: Range<Decoration>[] = [];
-  for (const ann of annotations) {
-    if (ann.kind === "token") {
-      if (ann.line < 1 || ann.line > state.doc.lines) continue;
-      const lineObj = state.doc.line(ann.line);
-      const from = lineObj.from + ann.col;
-      const to = from + ann.length;
-      if (from >= to || to > lineObj.to) continue;
-      marks.push(
-        Decoration.mark({ class: `cm-tok-${ann.tokenType}` }).range(from, to),
-      );
-    } else {
-      if (ann.startLine < 1 || ann.startLine > state.doc.lines) continue;
-      if (ann.endLine < 1 || ann.endLine > state.doc.lines) continue;
-      const from = state.doc.line(ann.startLine).from + ann.startCol;
-      const to = state.doc.line(ann.endLine).from + ann.endCol;
-      if (from >= to) continue;
-      marks.push(
-        Decoration.mark({ class: `cm-diag-${ann.severity}` }).range(from, to),
-      );
-    }
+  // Offsets arrive pre-resolved from Rust; the renderer just maps them to marks.
+  for (const tok of derived.syntaxColoring) {
+    const r = clampRange(state, tok.from, tok.to);
+    if (!r) continue;
+    marks.push(
+      Decoration.mark({ class: `cm-tok-${tok.tokenType}` }).range(r.from, r.to),
+    );
+  }
+  for (const d of derived.underlines) {
+    const r = clampRange(state, d.from, d.to);
+    if (!r) continue;
+    marks.push(
+      Decoration.mark({ class: `cm-diag-${d.severity}` }).range(r.from, r.to),
+    );
   }
   marks.sort((a, b) => a.from - b.from);
   return Decoration.set(marks, true);
 }
 
-export const setAnnotations = StateEffect.define<Annotation[]>();
+export const setAnnotations = StateEffect.define<DerivedAnnotations>();
 
 export const annotationField = StateField.define<DecorationSet>({
   create: () => Decoration.none,
@@ -113,8 +90,8 @@ export const annotationField = StateField.define<DecorationSet>({
   provide: (f) => EditorView.decorations.from(f),
 });
 
-export const annotationsDataField = StateField.define<Annotation[]>({
-  create: () => [],
+export const annotationsDataField = StateField.define<DerivedAnnotations>({
+  create: () => EMPTY_ANNOTATIONS,
   update(data, tr) {
     for (const effect of tr.effects) {
       if (effect.is(setAnnotations)) return effect.value;
@@ -129,17 +106,13 @@ export function buildDiagnosticTooltip(
   state: EditorState,
   pos: number,
 ): Tooltip | null {
-  const annotations = state.field(annotationsDataField);
-  const hits = annotations.filter(
-    (a): a is Extract<Annotation, { kind: "diagnostic" }> => {
-      if (a.kind !== "diagnostic") return false;
-      if (a.startLine < 1 || a.startLine > state.doc.lines) return false;
-      if (a.endLine < 1 || a.endLine > state.doc.lines) return false;
-      const from = state.doc.line(a.startLine).from + a.startCol;
-      const to = state.doc.line(a.endLine).from + a.endCol;
-      return pos >= from && pos <= to;
-    },
-  );
+  // Hover spans arrive pre-resolved from Rust; collect every diagnostic whose
+  // span contains the cursor (offset resolution is the one thing TS still does,
+  // here only as a containment test against the clamped span).
+  const hits = state.field(annotationsDataField).hover.filter((h) => {
+    const r = clampRange(state, h.from, h.to);
+    return r !== null && pos >= r.from && pos <= r.to;
+  });
 
   if (hits.length === 0) return null;
 
@@ -181,8 +154,6 @@ export const diagnosticTooltip = hoverTooltip(
 
 // ── Diagnostic gutter markers ──────────────────────────────────────────
 
-const GUTTER_SEVERITIES = new Set<DiagnosticSeverity>(["error", "warning"]);
-
 class DiagnosticGutterMarker extends GutterMarker {
   constructor(readonly severity: DiagnosticSeverity) {
     super();
@@ -200,23 +171,13 @@ class DiagnosticGutterMarker extends GutterMarker {
 }
 
 export function buildGutterMarkers(state: EditorState): RangeSet<GutterMarker> {
-  const annotations = state.field(annotationsDataField);
-  const lineMap = new Map<number, DiagnosticSeverity>();
-  for (const a of annotations) {
-    if (a.kind !== "diagnostic") continue;
-    if (!GUTTER_SEVERITIES.has(a.severity)) continue;
-    const existing = lineMap.get(a.startLine);
-    if (!existing || (existing !== "error" && a.severity === "error")) {
-      lineMap.set(a.startLine, a.severity);
-    }
-  }
-
-  const sorted = [...lineMap.entries()].sort((a, b) => a[0] - b[0]);
+  // The gutter list arrives pre-deduped from Rust (one mark per line, most
+  // severe wins, info/hint excluded) and sorted by line, so we just place each.
   const builder = new RangeSetBuilder<GutterMarker>();
-  for (const [lineNum, severity] of sorted) {
-    if (lineNum < 1 || lineNum > state.doc.lines) continue;
-    const lineFrom = state.doc.line(lineNum).from;
-    builder.add(lineFrom, lineFrom, new DiagnosticGutterMarker(severity));
+  for (const mark of state.field(annotationsDataField).gutter) {
+    if (mark.line < 1 || mark.line > state.doc.lines) continue;
+    const lineFrom = state.doc.line(mark.line).from;
+    builder.add(lineFrom, lineFrom, new DiagnosticGutterMarker(mark.severity));
   }
   return builder.finish();
 }
