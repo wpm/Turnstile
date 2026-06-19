@@ -338,6 +338,10 @@ describe("settings, prompts and models", () => {
   it("load_transcript is accepted as a no-op", async () => {
     expect(await fakeInvoke("load_transcript")).toBeNull();
   });
+
+  it("take_settings_load_warning returns null (no corrupt settings in fake)", async () => {
+    expect(await fakeInvoke("take_settings_load_warning")).toBeNull();
+  });
 });
 
 describe("session lifecycle", () => {
