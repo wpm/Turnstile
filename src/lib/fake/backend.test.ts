@@ -227,14 +227,17 @@ describe("update_document elaboration", () => {
 });
 
 describe("assistant send_message", () => {
-  it("echoes ordinary content and records both turns", async () => {
+  it("replies without echoing and records both turns", async () => {
     const deltas = collect("assistant-delta");
     const done = collect("assistant-stream-done");
     const p = fakeInvoke("send_message", { content: "hi there" });
     await vi.runAllTimersAsync();
-    const reply = await p;
-    expect(reply).toBe("[echo] hi there");
-    expect(deltas.payloads.join("")).toBe("[echo] hi there");
+    const reply = (await p) as string;
+    // The fake must never echo the user's text back (#57/#62).
+    expect(reply).not.toContain("[echo]");
+    expect(reply).not.toContain("hi there");
+    expect(reply).toContain("Proof Assistant");
+    expect(deltas.payloads.join("")).toBe(reply);
     expect(done.payloads.length).toBe(1);
 
     const transcript = (await fakeInvoke("get_transcript")) as {
@@ -270,7 +273,16 @@ describe("assistant send_message", () => {
   it("defaults to empty content when none is supplied", async () => {
     const p = fakeInvoke("send_message");
     await vi.runAllTimersAsync();
-    expect((await p) as string).toBe("[echo] ");
+    const reply = (await p) as string;
+    expect(reply).not.toContain("[echo]");
+    expect(reply).toContain("Proof Assistant");
+  });
+
+  it("reports a key present and connected status by default", async () => {
+    expect(await fakeInvoke("has_api_key")).toBe(true);
+    expect(await fakeInvoke("get_assistant_status")).toEqual({
+      state: "connected",
+    });
   });
 });
 

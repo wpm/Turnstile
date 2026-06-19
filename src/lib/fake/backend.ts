@@ -33,10 +33,37 @@ const eagerLsp =
   typeof window !== "undefined" &&
   new URLSearchParams(window.location.search).get("eager-lsp") === "1";
 
+/**
+ * Simulate the assistant's disconnected state for e2e. `?assistant=disconnected`
+ * (optionally `disconnected:keyRejected` / `:storeUnavailable`) makes the fake
+ * report a `Disconnected` status — so the disabled-input + error-toast UI can be
+ * exercised in browser mode. Absent or any other value → connected.
+ */
+const assistantParam =
+  typeof window !== "undefined"
+    ? (new URLSearchParams(window.location.search).get("assistant") ?? "")
+    : "";
+
+function parseAssistantStatus():
+  | { state: "connected" }
+  | { state: "disconnected"; reason: string } {
+  if (assistantParam.startsWith("disconnected")) {
+    const reason = assistantParam.split(":")[1] || "noKey";
+    return { state: "disconnected", reason };
+  }
+  return { state: "connected" };
+}
+
 function announceConnected() {
   lspAnnounced = true;
   lastLspStatus = { state: "connected", message: "connected" };
   emit("turnstile-message", { type: "lspStatus", ...lastLspStatus });
+  // Announce the assistant status alongside the LSP one, mirroring the real
+  // backend's startup emit. (Recoverable via get_assistant_status either way.)
+  emit("turnstile-message", {
+    type: "assistantStatus",
+    ...lastAssistantStatus,
+  });
 }
 
 export function fakeListen(event: string, cb: Listener): () => void {
@@ -61,13 +88,11 @@ export function emit(event: string, payload: unknown): void {
 
 let lspAnnounced = false;
 let lastLspStatus: { state: string; message: string } | null = null;
-// The browser fake reports the assistant as connected by default. The
-// disconnected-state simulation (for exercising the toast + disabled input)
-// lands with the e2e work in #62.
+// The assistant status the fake reports — connected by default, or the
+// disconnected variant selected via `?assistant=disconnected[:reason]`.
 const lastAssistantStatus:
   | { state: "connected" }
-  | { state: "disconnected"; reason: string }
-  | null = { state: "connected" };
+  | { state: "disconnected"; reason: string } = parseAssistantStatus();
 let source = "";
 let goalState = "";
 const transcript: {
@@ -288,7 +313,11 @@ async function sendMessage(content: string): Promise<string> {
         ? "There is no goal state yet — the editor is empty."
         : `The current goal is:\n\n$$${goalState.split("⊢").pop()?.trim() ?? ""}$$\n\nWe can finish by infinite descent.`;
   } else {
-    reply = `[echo] ${content}`;
+    // A deterministic, non-echo reply. The real assistant never echoes (#57),
+    // so the fake must not either — tests assert on this fixed sentence rather
+    // than the user's text bounced back.
+    reply =
+      "I'm the Proof Assistant. Ask me about the current goal and I'll help you make progress.";
   }
   await streamReply(reply);
   transcript.turns.push({
@@ -371,9 +400,10 @@ export async function fakeInvoke(
       settings = { ...(args?.settings as typeof settings) };
       return null;
     case "has_api_key":
-      // The browser fake behaves as if a key is already present, so the
-      // first-run modal doesn't pop in dev/e2e. The disconnected-state
-      // simulation lands with the e2e work in #62.
+      // Report a key present so the first-run modal never pops in dev/e2e — even
+      // under `?assistant=disconnected`, which simulates a *rejected* key (one
+      // is stored, the API refused it), so the disconnected toast + disabled
+      // input can be tested without the onboarding modal covering them.
       return true;
     case "set_api_key":
     case "clear_api_key":
