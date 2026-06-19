@@ -1,4 +1,4 @@
-# ADR-0001: Cache Linux CI system dependencies via a shared composite action
+# ADR-0002: Cache Linux CI system dependencies via a shared composite action
 
 **Status:** Accepted
 **Date:** 2026-06-18
@@ -44,13 +44,13 @@ On a cache hit the action restores the packages from the Actions cache and skips
 
 ### Option A: Cache apt packages via composite action (chosen)
 
-| Dimension | Assessment |
-|-----------|------------|
-| Complexity | Low — one composite action, swap four call sites |
-| Cost | Free (GitHub Actions cache) |
-| Speed | ~10–20s on cache hit |
-| Team familiarity | High — plain Actions YAML |
-| Maintenance | Low — single package list |
+| Dimension        | Assessment                                       |
+| ---------------- | ------------------------------------------------ |
+| Complexity       | Low — one composite action, swap four call sites |
+| Cost             | Free (GitHub Actions cache)                      |
+| Speed            | ~10–20s on cache hit                             |
+| Team familiarity | High — plain Actions YAML                        |
+| Maintenance      | Low — single package list                        |
 
 **Pros:** Big speedup for minimal change; de-duplicates the package list; no external
 infrastructure to own.
@@ -59,13 +59,13 @@ post-install scripts (see Consequences).
 
 ### Option B: Prebuilt container image
 
-| Dimension | Assessment |
-|-----------|------------|
-| Complexity | Medium/High — build, publish, version an image |
-| Cost | ghcr storage; rebuild pipeline |
-| Speed | Fastest, fully deterministic |
-| Team familiarity | Medium |
-| Maintenance | Higher — own an image and its rebuild cadence |
+| Dimension        | Assessment                                     |
+| ---------------- | ---------------------------------------------- |
+| Complexity       | Medium/High — build, publish, version an image |
+| Cost             | ghcr storage; rebuild pipeline                 |
+| Speed            | Fastest, fully deterministic                   |
+| Team familiarity | Medium                                         |
+| Maintenance      | Higher — own an image and its rebuild cadence  |
 
 **Pros:** Fastest and most reproducible; no per-run apt at all.
 **Cons:** New artifact to maintain and keep current; overkill for current CI volume.
@@ -111,9 +111,9 @@ What we'll need to revisit:
 
 1. [ ] Add `.github/actions/linux-deps/action.yml` wrapping `cache-apt-pkgs-action`.
 2. [ ] Replace the inline install step in `ci.yml`, `release.yml`, `package-check.yml`,
-   and `linux-bundle.yml` (pass `extra-packages: xvfb` for the bundle job).
+       and `linux-bundle.yml` (pass `extra-packages: xvfb` for the bundle job).
 3. [ ] Confirm a second run on the same package list shows a cache hit and a shorter
-   install step.
+       install step.
 
 ## References
 
