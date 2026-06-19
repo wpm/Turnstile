@@ -27,8 +27,28 @@ use crate::assistant::{
 // Error type
 // ---------------------------------------------------------------------------
 
+/// Error message used when the backend has no usable API key. Callers map this
+/// (and API auth rejections) onto the disconnected status (#58).
+pub const NO_API_KEY_ERROR: &str = "No Anthropic API key is configured.";
+
 #[derive(Debug, Serialize)]
 pub struct LlmError(pub String);
+
+impl LlmError {
+    /// Whether this error indicates a missing key (no key configured).
+    #[must_use]
+    pub fn is_missing_key(&self) -> bool {
+        self.0 == NO_API_KEY_ERROR
+    }
+
+    /// Whether this error indicates the API rejected the key (an auth failure).
+    /// `stream_request` formats HTTP failures as `API error {status}: …`, so a
+    /// 401/403 status is the signal that the key itself is bad.
+    #[must_use]
+    pub fn is_auth_error(&self) -> bool {
+        self.0.contains("API error 401") || self.0.contains("API error 403")
+    }
+}
 
 impl std::fmt::Display for LlmError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -299,9 +319,7 @@ impl Llm for AnthropicBackend {
         app: &AppHandle,
     ) -> Result<Turn, LlmError> {
         if self.api_key.is_empty() {
-            return Err(LlmError(
-                "ANTHROPIC_API_KEY is not set. Please set it and restart.".to_string(),
-            ));
+            return Err(LlmError(NO_API_KEY_ERROR.to_string()));
         }
 
         let messages = vec![serde_json::json!({ "role": "user", "content": user_content })];
@@ -322,11 +340,10 @@ impl Llm for AnthropicBackend {
         user_content: &str,
     ) -> Result<Turn, LlmError> {
         if self.api_key.is_empty() {
-            let turn = Turn::assistant(
-                "ANTHROPIC_API_KEY is not set. Please set it and restart.".to_string(),
-            );
-            app.emit(COMPLETE_EVENT, &turn).ok();
-            return Ok(turn);
+            // No usable key: refuse with a structured error. Never fabricate a
+            // turn — the disconnected status (#58) is the single source of truth
+            // and the disabled input (#60) is the primary guard.
+            return Err(LlmError(NO_API_KEY_ERROR.to_string()));
         }
 
         // Build the initial messages array from transcript + new user message.
@@ -440,5 +457,32 @@ mod tests {
     fn llm_error_from_string() {
         let err = LlmError::from("msg".to_string());
         assert_eq!(err.0, "msg");
+    }
+
+    #[test]
+    fn missing_key_error_is_classified() {
+        let err = LlmError(NO_API_KEY_ERROR.to_string());
+        assert!(err.is_missing_key());
+        assert!(!err.is_auth_error());
+    }
+
+    #[test]
+    fn auth_error_is_classified_from_status() {
+        assert!(LlmError("API error 401 Unauthorized: bad key".into()).is_auth_error());
+        assert!(LlmError("API error 403 Forbidden: nope".into()).is_auth_error());
+        // A 5xx or network error is not an auth failure.
+        assert!(!LlmError("API error 500: server error".into()).is_auth_error());
+        assert!(!LlmError("API request failed: timeout".into()).is_auth_error());
+    }
+
+    #[test]
+    fn empty_key_backend_reports_missing_key_not_echo() {
+        // An empty-key backend must classify as missing-key (the send path maps
+        // this to Disconnected) and must never echo.
+        let backend = AnthropicBackend::new(String::new());
+        assert!(backend.api_key.is_empty());
+        let err = LlmError(NO_API_KEY_ERROR.to_string());
+        assert!(err.is_missing_key());
+        assert!(!err.0.contains("[echo]"));
     }
 }

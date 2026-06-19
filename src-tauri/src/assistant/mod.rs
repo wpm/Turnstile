@@ -433,10 +433,26 @@ pub async fn send_message(
     };
     let system_prompt = effective_system_prompt(&app).await;
     let model = effective_assistant_model(&app).await;
-    let assistant_turn = backend
+    let assistant_turn = match backend
         .send_with_tools(&system_prompt, &snapshot, &tools, &model, &app, &content)
         .await
-        .map_err(|e| e.0)?;
+    {
+        Ok(turn) => turn,
+        Err(e) => {
+            // A backend failure that implicates the key reconciles into the
+            // single disconnected representation (#58): a missing key or an API
+            // auth rejection flips the assistant to Disconnected so the
+            // indicator (#59) and toast (#60) update. Other errors (network,
+            // 5xx) leave the status untouched. The reason never carries the key.
+            use crate::lean::messages::turnstile::DisconnectReason;
+            if e.is_missing_key() {
+                crate::set_assistant_disconnected(&app, DisconnectReason::NoKey);
+            } else if e.is_auth_error() {
+                crate::set_assistant_disconnected(&app, DisconnectReason::KeyRejected);
+            }
+            return Err(e.0);
+        }
+    };
 
     let response_content = assistant_turn.content.clone();
 

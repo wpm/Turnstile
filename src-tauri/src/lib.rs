@@ -24,7 +24,8 @@ use std::sync::{Arc, Mutex};
 
 use lean::client::Client as LeanClient;
 use lean::messages::turnstile::{
-    emit_turnstile, GoalStateInfo, HoverInfo, LspStatus, TurnstileMessage,
+    emit_turnstile, AssistantStatus, DisconnectReason, GoalStateInfo, HoverInfo, LspStatus,
+    TurnstileMessage,
 };
 use lean::messages::DisplayLspParams;
 use tauri::{AppHandle, Emitter, Manager};
@@ -51,6 +52,10 @@ pub struct AppState {
     /// startup race where `start_lsp` emits "connected" before the frontend's
     /// `turnstile-message` listener is registered.
     pub last_lsp_status: Arc<Mutex<Option<LspStatus>>>,
+    /// Latest Proof Assistant connection status emitted to the frontend.
+    /// Recorded on every emit so a late-subscribing webview can recover it via
+    /// `get_assistant_status`, mirroring `last_lsp_status`.
+    pub last_assistant_status: Arc<Mutex<Option<AssistantStatus>>>,
     /// Whether the formal proof has changed since the last prose generation.
     pub prose_dirty: Arc<AtomicBool>,
     /// Monotonically increasing sequence number for prose generation requests.
@@ -171,6 +176,9 @@ fn dispatch_turnstile_message(app: &AppHandle, msg: TurnstileMessage) {
         TurnstileMessage::LspStatus(status) => {
             emit_lsp_status(app, status);
         }
+        TurnstileMessage::AssistantStatus(status) => {
+            emit_assistant_status(app, status);
+        }
         msg @ (TurnstileMessage::FileProgress { .. }
         | TurnstileMessage::ShowMessage { .. }
         | TurnstileMessage::AnnotationsUpdated { .. }
@@ -192,6 +200,24 @@ fn emit_lsp_status(app: &AppHandle, status: LspStatus) {
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .replace(status.clone());
     emit_turnstile(app, &TurnstileMessage::LspStatus(status));
+}
+
+/// Record the latest Proof Assistant status in app state, then emit it to the
+/// frontend. Recording lets a late-subscribing webview recover the status via
+/// `get_assistant_status`, mirroring [`emit_lsp_status`].
+fn emit_assistant_status(app: &AppHandle, status: AssistantStatus) {
+    app.state::<AppState>()
+        .last_assistant_status
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .replace(status.clone());
+    emit_turnstile(app, &TurnstileMessage::AssistantStatus(status));
+}
+
+/// Flip the Proof Assistant to `Disconnected` with the given reason and emit it.
+/// Called from the send path when a backend failure implicates the key.
+pub fn set_assistant_disconnected(app: &AppHandle, reason: DisconnectReason) {
+    emit_assistant_status(app, AssistantStatus::Disconnected { reason });
 }
 
 async fn start_lsp(app: AppHandle) -> Result<(), String> {
@@ -748,6 +774,54 @@ fn get_lsp_status(state: tauri::State<'_, AppState>) -> Option<LspStatus> {
         .clone()
 }
 
+/// Return the most recently emitted Proof Assistant status, if any. The
+/// frontend calls this on mount to recover a status it may have missed during
+/// startup, mirroring `get_lsp_status`.
+// Tauri commands must take `State` by value; clippy can't see that.
+#[allow(clippy::needless_pass_by_value)]
+#[tauri::command]
+fn get_assistant_status(state: tauri::State<'_, AppState>) -> Option<AssistantStatus> {
+    state
+        .last_assistant_status
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone()
+}
+
+/// Resolve the API key for the backend and the initial [`AssistantStatus`].
+///
+/// Resolution order matches [`secret::resolve_api_key`]: Turnstile's keychain
+/// entry first, then the `ANTHROPIC_API_KEY` env var. The returned key string is
+/// empty when none is available (the backend then refuses to call the API). The
+/// status distinguishes a missing key from an unavailable secret store so the
+/// toast (#60) can name the right fix. A present key is reported `Connected`
+/// optimistically; an actual API auth rejection downgrades it to
+/// `Disconnected { KeyRejected }` at send time.
+fn resolve_key_and_status() -> (String, AssistantStatus) {
+    // Probe the secret store directly so we can tell "no key stored" from "the
+    // store itself failed". ANY read error (store missing, locked, access
+    // denied) means we could not consult the store, so the right fix to suggest
+    // is the env-var fallback — not "add a key in Settings". A store error does
+    // not abort: we still honor the env var below.
+    let store_errored = secret::read_api_key().is_err();
+
+    if let Some(key) = secret::resolve_api_key() {
+        if !key.is_empty() {
+            return (key.expose().to_string(), AssistantStatus::Connected);
+        }
+    }
+
+    // No usable key. If the store errored (and the env var didn't save us),
+    // report StoreUnavailable so the toast points at the env-var fallback;
+    // otherwise the store simply had no entry → NoKey.
+    let reason = if store_errored {
+        DisconnectReason::StoreUnavailable
+    } else {
+        DisconnectReason::NoKey
+    };
+    (String::new(), AssistantStatus::Disconnected { reason })
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 /// # Panics
 ///
@@ -790,13 +864,11 @@ pub fn run() {
             let initial_settings = settings::load_settings(&app_data_dir);
 
             // Resolve the API key from the OS secret store (keychain first, then
-            // the ANTHROPIC_API_KEY env var). When no key is available the
-            // backend is built with an empty key, which reports the missing-key
-            // error on use rather than echoing. (#58 surfaces this as a
-            // disconnected status.)
-            let api_key = secret::resolve_api_key()
-                .map(|k| k.expose().to_string())
-                .unwrap_or_default();
+            // the ANTHROPIC_API_KEY env var) and derive the initial assistant
+            // status. When no key is available the backend is built with an
+            // empty key, which reports the missing-key error on use rather than
+            // echoing — and we mark the assistant Disconnected.
+            let (api_key, initial_assistant_status) = resolve_key_and_status();
             let llm_backend: Arc<dyn llm::Llm> = Arc::new(llm::AnthropicBackend::new(api_key));
 
             let setup_running = Arc::new(AtomicBool::new(false));
@@ -811,12 +883,17 @@ pub fn run() {
                 session_dirty: Arc::new(AtomicBool::new(false)),
                 current_diagnostics: Arc::new(Mutex::new(Vec::new())),
                 last_lsp_status: Arc::new(Mutex::new(None)),
+                last_assistant_status: Arc::new(Mutex::new(None)),
                 prose_dirty: Arc::new(AtomicBool::new(false)),
                 prose_generation_seq: Arc::new(AtomicU64::new(0)),
                 goal_state_seq: Arc::new(AtomicU64::new(0)),
                 token_types: Arc::new(Mutex::new(Vec::new())),
                 token_modifiers: Arc::new(Mutex::new(Vec::new())),
             });
+
+            // Emit the assistant status once at startup so the indicator (#59)
+            // and toast (#60) reflect reality before the user does anything.
+            emit_assistant_status(app.handle(), initial_assistant_status);
 
             // On startup: run setup if needed, then start the LSP.
             let app_handle = app.handle().clone();
@@ -872,6 +949,7 @@ pub fn run() {
             update_document,
             lsp_hover,
             get_lsp_status,
+            get_assistant_status,
             send_message,
             get_transcript,
             load_transcript,
@@ -1082,6 +1160,7 @@ mod tests {
             session_dirty: Arc::new(AtomicBool::new(false)),
             current_diagnostics: Arc::new(Mutex::new(Vec::new())),
             last_lsp_status: Arc::new(Mutex::new(None)),
+            last_assistant_status: Arc::new(Mutex::new(None)),
             prose_dirty: Arc::new(AtomicBool::new(false)),
             prose_generation_seq: Arc::new(AtomicU64::new(0)),
             goal_state_seq: Arc::new(AtomicU64::new(0)),

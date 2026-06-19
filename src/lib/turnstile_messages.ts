@@ -4,6 +4,7 @@ import type { TurnstileMessage } from "./TurnstileMessage";
 import type { Annotation } from "./Annotation";
 import type { FileProgressRange } from "./FileProgressRange";
 import type { LspStatus } from "./LspStatus";
+import type { AssistantStatus } from "./AssistantStatus";
 
 /** Current file progress ranges (lines being elaborated). */
 export const fileProgress = writable<FileProgressRange[]>([]);
@@ -13,6 +14,14 @@ export const annotations = writable<Annotation[]>([]);
 
 /** Current LSP server status, or null before first status message. */
 export const lspStatus = writable<LspStatus | null>(null);
+
+/**
+ * Current Proof Assistant connection status, or null before the first status
+ * message. The backend emits this on startup and whenever the status changes;
+ * the store can also be recovered on mount via the `get_assistant_status`
+ * command (mirroring `lspStatus`).
+ */
+export const assistantStatus = writable<AssistantStatus | null>(null);
 
 /** Current goal state text (the `.full` string from GoalStateInfo). */
 export const goalState = writable<string>("");
@@ -39,6 +48,13 @@ export async function startMessageListener(): Promise<() => void> {
         break;
       case "lspStatus":
         lspStatus.set({ state: msg.state, message: msg.message });
+        break;
+      case "assistantStatus":
+        assistantStatus.set(
+          msg.state === "connected"
+            ? { state: "connected" }
+            : { state: "disconnected", reason: msg.reason },
+        );
         break;
       case "goalStateUpdated":
         goalState.set(msg.full);
