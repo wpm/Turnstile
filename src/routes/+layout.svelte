@@ -1,9 +1,14 @@
 <script lang="ts">
   import "../app.css";
   import { onMount, onDestroy } from "svelte";
-  import { startMessageListener, lspStatus } from "$lib/turnstile_messages";
+  import {
+    startMessageListener,
+    lspStatus,
+    assistantStatus,
+  } from "$lib/turnstile_messages";
   import { invoke } from "@tauri-apps/api/core";
   import type { LspStatus } from "$lib/LspStatus";
+  import type { AssistantStatus } from "$lib/AssistantStatus";
   import type { Snippet } from "svelte";
   const { children }: { children: Snippet } = $props();
 
@@ -22,6 +27,18 @@
       if (status) lspStatus.update((current) => current ?? status);
     } catch {
       // No backend (e.g. browser/dev without Tauri): listener-driven only.
+    }
+    try {
+      // Recover the assistant status the backend emits on startup, which is
+      // dropped if it fires before this listener exists — same race as the LSP
+      // status above. Without this seed a fresh launch with a missing/bad key
+      // would show no disconnected indicator or toast.
+      const status = await invoke<AssistantStatus | null>(
+        "get_assistant_status",
+      );
+      if (status) assistantStatus.update((current) => current ?? status);
+    } catch {
+      // No backend (browser/dev without Tauri): listener-driven only.
     }
   });
 

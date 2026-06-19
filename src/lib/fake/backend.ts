@@ -61,6 +61,13 @@ export function emit(event: string, payload: unknown): void {
 
 let lspAnnounced = false;
 let lastLspStatus: { state: string; message: string } | null = null;
+// The browser fake reports the assistant as connected by default. The
+// disconnected-state simulation (for exercising the toast + disabled input)
+// lands with the e2e work in #62.
+const lastAssistantStatus:
+  | { state: "connected" }
+  | { state: "disconnected"; reason: string }
+  | null = { state: "connected" };
 let source = "";
 let goalState = "";
 const transcript: {
@@ -338,6 +345,8 @@ export async function fakeInvoke(
       return null;
     case "get_lsp_status":
       return lastLspStatus;
+    case "get_assistant_status":
+      return lastAssistantStatus;
     case "lsp_hover": {
       const doc = source.split("\n");
       const line = doc[(args?.line as number | undefined) ?? 0] ?? "";

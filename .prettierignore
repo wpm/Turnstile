@@ -13,8 +13,10 @@ e2e/lean-server/recordings/
 # own formatting; prettier must not fight it or every cargo test dirties
 # the tree)
 src/lib/Annotation.ts
+src/lib/AssistantStatus.ts
 src/lib/DiagnosticInfo.ts
 src/lib/DiagnosticSeverity.ts
+src/lib/DisconnectReason.ts
 src/lib/FileProgressRange.ts
 src/lib/GoalStateInfo.ts
 src/lib/LspStatus.ts

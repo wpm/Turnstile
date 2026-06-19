@@ -798,12 +798,12 @@ fn get_assistant_status(state: tauri::State<'_, AppState>) -> Option<AssistantSt
 /// optimistically; an actual API auth rejection downgrades it to
 /// `Disconnected { KeyRejected }` at send time.
 fn resolve_key_and_status() -> (String, AssistantStatus) {
-    // Probe the secret store directly so we can tell "no key" from "store
-    // unavailable". A store error doesn't abort — we still honor the env var.
-    let store_unavailable = matches!(
-        secret::read_api_key(),
-        Err(secret::SecretError::StoreUnavailable(_))
-    );
+    // Probe the secret store directly so we can tell "no key stored" from "the
+    // store itself failed". ANY read error (store missing, locked, access
+    // denied) means we could not consult the store, so the right fix to suggest
+    // is the env-var fallback — not "add a key in Settings". A store error does
+    // not abort: we still honor the env var below.
+    let store_errored = secret::read_api_key().is_err();
 
     if let Some(key) = secret::resolve_api_key() {
         if !key.is_empty() {
@@ -811,7 +811,10 @@ fn resolve_key_and_status() -> (String, AssistantStatus) {
         }
     }
 
-    let reason = if store_unavailable {
+    // No usable key. If the store errored (and the env var didn't save us),
+    // report StoreUnavailable so the toast points at the env-var fallback;
+    // otherwise the store simply had no entry → NoKey.
+    let reason = if store_errored {
         DisconnectReason::StoreUnavailable
     } else {
         DisconnectReason::NoKey
