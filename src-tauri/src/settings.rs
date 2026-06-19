@@ -64,17 +64,90 @@ fn settings_path(app_data_dir: &Path) -> std::path::PathBuf {
     app_data_dir.join("settings.json")
 }
 
+/// Outcome of loading settings from disk.
+///
+/// Distinguishes a normal load (or first-run absence) from recovery after a
+/// corrupt file, so the caller can warn the user that their settings were
+/// reset rather than silently discarding their models, prompts, and font
+/// sizes.
+pub struct SettingsLoad {
+    /// The settings to use — the loaded values, or defaults on absence or
+    /// corruption.
+    pub settings: Settings,
+    /// `Some(message)` when the file was present but unparseable and has been
+    /// reset to defaults (and the bad file backed up). `None` on a clean load
+    /// or a normal first-run absence. Surfaced to the user as a warning toast.
+    pub warning: Option<String>,
+}
+
+/// User-facing warning shown when `settings.json` was present but unreadable.
+const CORRUPT_SETTINGS_WARNING: &str =
+    "Your settings file was unreadable and has been reset to defaults.";
+
+/// Load settings from `{app_data_dir}/settings.json`.
+///
+/// Distinguishes an absent file (normal first run — stay silent) from a
+/// present-but-unparseable file (reset to defaults, back up the bad file, and
+/// warn). A missing or unreadable file falls back to defaults silently; only a
+/// file that exists but contains malformed JSON produces a warning.
+pub fn load_settings_checked(app_data_dir: &Path) -> SettingsLoad {
+    let path = settings_path(app_data_dir);
+    let Ok(raw) = std::fs::read_to_string(&path) else {
+        // Absent (or unreadable) file: normal first run, stay silent.
+        return SettingsLoad {
+            settings: Settings::default(),
+            warning: None,
+        };
+    };
+    match serde_json::from_str::<Settings>(&raw) {
+        Ok(settings) => SettingsLoad {
+            settings,
+            warning: None,
+        },
+        Err(e) => {
+            // Present but malformed: back up the bad file so it can be
+            // inspected/recovered, then reset to defaults and warn. Moving it
+            // aside also means the next launch sees an absent file and stays
+            // silent, so the warning fires once per corruption — not forever.
+            match backup_corrupt_settings(&path) {
+                Some(backup) => tracing::warn!(
+                    "settings.json was unparseable ({e}); reset to defaults, backed up to {}",
+                    backup.display()
+                ),
+                None => {
+                    tracing::warn!("settings.json was unparseable ({e}); reset to defaults");
+                }
+            }
+            SettingsLoad {
+                settings: Settings::default(),
+                warning: Some(CORRUPT_SETTINGS_WARNING.to_string()),
+            }
+        }
+    }
+}
+
+/// Move a corrupt `settings.json` aside to `settings.json.bak` so it isn't
+/// silently lost. Returns the backup path on success; logs and returns `None`
+/// on failure (the reset still proceeds).
+fn backup_corrupt_settings(path: &Path) -> Option<std::path::PathBuf> {
+    let backup = path.with_extension("json.bak");
+    match std::fs::rename(path, &backup) {
+        Ok(()) => Some(backup),
+        Err(e) => {
+            tracing::warn!("failed to back up corrupt settings.json: {e}");
+            None
+        }
+    }
+}
+
 /// Load settings from `{app_data_dir}/settings.json`.
 ///
 /// Gracefully falls back to `Settings::default()` if the file is missing,
-/// unreadable, or contains malformed JSON.
+/// unreadable, or contains malformed JSON. Callers that need to distinguish a
+/// corrupt file (to warn the user) should use [`load_settings_checked`].
 #[must_use]
 pub fn load_settings(app_data_dir: &Path) -> Settings {
-    let path = settings_path(app_data_dir);
-    let Ok(raw) = std::fs::read_to_string(&path) else {
-        return Settings::default();
-    };
-    serde_json::from_str::<Settings>(&raw).unwrap_or_default()
+    load_settings_checked(app_data_dir).settings
 }
 
 /// Write `settings` to `{app_data_dir}/settings.json`, creating the directory
@@ -193,6 +266,56 @@ mod tests {
         std::fs::write(dir.path().join("settings.json"), b"not valid json").unwrap();
         let s = load_settings(dir.path());
         assert_eq!(s, Settings::default());
+    }
+
+    #[test]
+    fn checked_load_is_silent_when_file_absent() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = load_settings_checked(dir.path());
+        assert_eq!(out.settings, Settings::default());
+        assert!(out.warning.is_none());
+    }
+
+    #[test]
+    fn checked_load_is_silent_on_clean_load() {
+        let dir = tempfile::tempdir().unwrap();
+        let original = Settings {
+            editor_font_size: 18,
+            ..Settings::default()
+        };
+        save_settings_to_disk(&original, dir.path()).unwrap();
+        let out = load_settings_checked(dir.path());
+        assert_eq!(out.settings, original);
+        assert!(out.warning.is_none());
+    }
+
+    #[test]
+    fn checked_load_warns_and_backs_up_corrupt_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        std::fs::write(&path, b"not valid json").unwrap();
+
+        let out = load_settings_checked(dir.path());
+
+        assert_eq!(out.settings, Settings::default());
+        assert_eq!(out.warning.as_deref(), Some(CORRUPT_SETTINGS_WARNING));
+        // The bad file is moved aside, not silently discarded.
+        assert!(!path.exists(), "corrupt file should be moved aside");
+        let backup = dir.path().join("settings.json.bak");
+        assert!(backup.exists(), "corrupt file should be backed up");
+        assert_eq!(std::fs::read(&backup).unwrap(), b"not valid json");
+    }
+
+    #[test]
+    fn checked_load_after_corruption_is_silent_next_launch() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("settings.json"), b"not valid json").unwrap();
+
+        // First load recovers and warns.
+        assert!(load_settings_checked(dir.path()).warning.is_some());
+        // The file was moved aside, so the next launch sees no file and stays
+        // silent — the warning fires once per corruption, not every launch.
+        assert!(load_settings_checked(dir.path()).warning.is_none());
     }
 
     #[test]

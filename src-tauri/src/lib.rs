@@ -41,6 +41,12 @@ pub struct AppState {
     pub llm: Arc<dyn llm::Llm>,
     /// Persisted user settings.
     pub settings: Arc<tokio::sync::Mutex<settings::Settings>>,
+    /// Warning to surface once if `settings.json` was present but unparseable at
+    /// startup (the user's settings were reset to defaults). `None` on a clean
+    /// load. The frontend drains this on mount via `take_settings_load_warning`
+    /// — recovering it by command rather than a startup emit avoids the race
+    /// where the toast fires before the webview's listener is registered.
+    pub settings_load_warning: Arc<Mutex<Option<String>>>,
     /// Path of the currently open `.turn` file (None if unsaved).
     pub current_session_path: Arc<tokio::sync::Mutex<Option<PathBuf>>>,
     /// Whether the session has unsaved changes.
@@ -58,6 +64,11 @@ pub struct AppState {
     pub last_assistant_status: Arc<Mutex<Option<AssistantStatus>>>,
     /// Whether the formal proof has changed since the last prose generation.
     pub prose_dirty: Arc<AtomicBool>,
+    /// Whether the last prose-translation attempt failed. Used to dedupe the
+    /// failure toast: it fires only on the transition working→failing, so
+    /// repeated edits against a broken translator (network / API error) don't
+    /// spam. Cleared on the next successful generation.
+    pub prose_translator_failed: Arc<AtomicBool>,
     /// Monotonically increasing sequence number for prose generation requests.
     /// Used to discard stale results when the source changes mid-generation.
     pub prose_generation_seq: Arc<AtomicU64>,
@@ -416,6 +427,12 @@ async fn update_document(app: AppHandle, changes: Vec<ContentChange>) -> Result<
 /// before attempting prose regeneration.
 const PROSE_DEBOUNCE: std::time::Duration = std::time::Duration::from_secs(2);
 
+/// User-facing toast shown when a prose-translation attempt fails (LLM /
+/// network / API error). Deliberately distinct wording from the chat-assistant
+/// disconnected toast (#58/#60) so the two failure paths are not confused.
+const PROSE_TRANSLATOR_FAILED_MESSAGE: &str =
+    "The Prose Proof couldn't be regenerated. Check your network connection and API key.";
+
 /// Outcome of the pre-flight checks that decide whether to run the LLM.
 #[derive(Debug)]
 enum ShouldGenerate {
@@ -502,36 +519,56 @@ fn spawn_prose_regeneration(app: AppHandle, seq: u64) {
             app.emit(proof::PROSE_GENERATING_EVENT, true).ok();
             let result = proof::translator::run_translator(backend.as_ref(), &source, &app).await;
             app.emit(proof::PROSE_GENERATING_EVENT, false).ok();
-            match &result {
-                Ok(raw) => debug!("prose: run_translator returned Ok ({} chars)", raw.len()),
-                Err(e) => debug!("prose: run_translator returned Err: {e}"),
-            }
 
             // Discard the result if a newer edit superseded us during the
-            // (potentially long) LLM call.
+            // (potentially long) LLM call. A superseded failure is not
+            // surfaced — the in-flight newer generation speaks for the latest
+            // edit.
             if state.prose_generation_seq.load(Ordering::SeqCst) != seq {
                 debug!("prose: superseded after generation (seq {seq}), discarding");
                 return;
             }
 
-            if let Ok(raw) = result {
-                let prose_text = proof::translator::render_katex(&raw);
-                {
-                    let mut proof_guard = state.proof.lock().await;
-                    proof_guard.prose.text.clone_from(&prose_text);
-                    proof_guard.prose.goal_state_hash.clone_from(&hash);
+            match result {
+                Ok(raw) => {
+                    debug!("prose: run_translator returned Ok ({} chars)", raw.len());
+                    // A successful generation clears any prior failure, so a
+                    // later failure re-toasts (working→failing transition).
+                    state.prose_translator_failed.store(false, Ordering::SeqCst);
+
+                    let prose_text = proof::translator::render_katex(&raw);
+                    {
+                        let mut proof_guard = state.proof.lock().await;
+                        proof_guard.prose.text.clone_from(&prose_text);
+                        proof_guard.prose.goal_state_hash.clone_from(&hash);
+                    }
+
+                    app.emit(
+                        proof::PROSE_UPDATED_EVENT,
+                        &proof::ProsePayload {
+                            text: prose_text,
+                            hash: Some(hash),
+                        },
+                    )
+                    .ok();
+
+                    state.session_dirty.store(true, Ordering::SeqCst);
                 }
-
-                app.emit(
-                    proof::PROSE_UPDATED_EVENT,
-                    &proof::ProsePayload {
-                        text: prose_text,
-                        hash: Some(hash),
-                    },
-                )
-                .ok();
-
-                state.session_dirty.store(true, Ordering::SeqCst);
+                Err(e) => {
+                    debug!("prose: run_translator returned Err: {e}");
+                    // Surface the failure as an error toast, deduped: only on
+                    // the transition working→failing, so repeated edits against
+                    // a broken translator don't spam.
+                    if !state.prose_translator_failed.swap(true, Ordering::SeqCst) {
+                        emit_turnstile(
+                            &app,
+                            &TurnstileMessage::ShowMessage {
+                                severity: "error".to_string(),
+                                message: PROSE_TRANSLATOR_FAILED_MESSAGE.to_string(),
+                            },
+                        );
+                    }
+                }
             }
 
             // If an edit arrived during generation, loop back to re-debounce
@@ -829,6 +866,21 @@ fn get_assistant_status(state: tauri::State<'_, AppState>) -> Option<AssistantSt
         .clone()
 }
 
+/// Return — and clear — the one-shot warning produced when `settings.json` was
+/// present but unparseable at startup (the user's settings were reset to
+/// defaults). The frontend drains this on mount and surfaces it as a warning
+/// toast. Returns `None` on a clean load or after it has already been drained.
+// Tauri commands must take `State` by value; clippy can't see that.
+#[allow(clippy::needless_pass_by_value)]
+#[tauri::command]
+fn take_settings_load_warning(state: tauri::State<'_, AppState>) -> Option<String> {
+    state
+        .settings_load_warning
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .take()
+}
+
 /// Resolve the API key for the backend and the initial [`AssistantStatus`].
 ///
 /// Resolution order matches [`secret::resolve_api_key`]: Turnstile's keychain
@@ -902,7 +954,10 @@ pub fn run() {
 
             let project_path = app_data_dir.join("lean-project");
 
-            let initial_settings = settings::load_settings(&app_data_dir);
+            let settings::SettingsLoad {
+                settings: initial_settings,
+                warning: settings_warning,
+            } = settings::load_settings_checked(&app_data_dir);
 
             // Resolve the API key from the OS secret store (keychain first, then
             // the ANTHROPIC_API_KEY env var) and derive the initial assistant
@@ -920,12 +975,14 @@ pub fn run() {
                 transcript: Arc::new(tokio::sync::Mutex::new(assistant::Transcript::default())),
                 llm: llm_backend,
                 settings: Arc::new(tokio::sync::Mutex::new(initial_settings)),
+                settings_load_warning: Arc::new(Mutex::new(settings_warning)),
                 current_session_path: Arc::new(tokio::sync::Mutex::new(None)),
                 session_dirty: Arc::new(AtomicBool::new(false)),
                 current_diagnostics: Arc::new(Mutex::new(Vec::new())),
                 last_lsp_status: Arc::new(Mutex::new(None)),
                 last_assistant_status: Arc::new(Mutex::new(None)),
                 prose_dirty: Arc::new(AtomicBool::new(false)),
+                prose_translator_failed: Arc::new(AtomicBool::new(false)),
                 prose_generation_seq: Arc::new(AtomicU64::new(0)),
                 goal_state_seq: Arc::new(AtomicU64::new(0)),
                 token_types: Arc::new(Mutex::new(Vec::new())),
@@ -996,6 +1053,7 @@ pub fn run() {
             load_transcript,
             get_settings,
             save_settings,
+            take_settings_load_warning,
             get_default_assistant_prompt,
             get_default_translation_prompt,
             get_available_models,
@@ -1197,12 +1255,14 @@ mod tests {
             // empty-key Anthropic backend is sufficient.
             llm: Arc::new(llm::AnthropicBackend::new(String::new())),
             settings: Arc::new(tokio::sync::Mutex::new(crate::settings::Settings::default())),
+            settings_load_warning: Arc::new(Mutex::new(None)),
             current_session_path: Arc::new(tokio::sync::Mutex::new(None)),
             session_dirty: Arc::new(AtomicBool::new(false)),
             current_diagnostics: Arc::new(Mutex::new(Vec::new())),
             last_lsp_status: Arc::new(Mutex::new(None)),
             last_assistant_status: Arc::new(Mutex::new(None)),
             prose_dirty: Arc::new(AtomicBool::new(false)),
+            prose_translator_failed: Arc::new(AtomicBool::new(false)),
             prose_generation_seq: Arc::new(AtomicU64::new(0)),
             goal_state_seq: Arc::new(AtomicU64::new(0)),
             token_types: Arc::new(Mutex::new(Vec::new())),

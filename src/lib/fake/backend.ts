@@ -399,6 +399,9 @@ export async function fakeInvoke(
     case "save_settings":
       settings = { ...(args?.settings as typeof settings) };
       return null;
+    case "take_settings_load_warning":
+      // The fake backend never has a corrupt settings file to recover from.
+      return null;
     case "has_api_key":
       // Report a key present so the first-run modal never pops in dev/e2e — even
       // under `?assistant=disconnected`, which simulates a *rejected* key (one
