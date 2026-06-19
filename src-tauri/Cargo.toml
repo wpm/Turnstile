@@ -50,6 +50,7 @@ tempfile = "3"
 # the user's shell config at startup. Not published to crates.io, so pinned to a
 # git revision.
 fix-path-env = { git = "https://github.com/tauri-apps/fix-path-env-rs", rev = "c4c45d503ea115a839aae718d02f79e7c7f0f673" }
+keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
 
 # Lint policy lives here (not in CLI flags) so every clippy invocation -
 # pre-commit hook, `pnpm verify`, CI, editors - agrees on the lint set.
