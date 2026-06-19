@@ -370,6 +370,14 @@ export async function fakeInvoke(
     case "save_settings":
       settings = { ...(args?.settings as typeof settings) };
       return null;
+    case "has_api_key":
+      // The browser fake behaves as if a key is already present, so the
+      // first-run modal doesn't pop in dev/e2e. The disconnected-state
+      // simulation lands with the e2e work in #62.
+      return true;
+    case "set_api_key":
+    case "clear_api_key":
+      return null;
     case "get_default_assistant_prompt":
       return "You are a proof collaborator. (fake default)";
     case "get_default_translation_prompt":

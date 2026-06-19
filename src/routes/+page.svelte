@@ -48,6 +48,7 @@
   let prose = $state("");
   let lspReady = $state(false);
   let settingsOpen = $state(false);
+  let firstRunOpen = $state(false);
   let restorePromptOpen = $state(false);
 
   let toasts = $state<ToastItem[]>([]);
@@ -241,6 +242,16 @@
         id: "save_session",
         enabled: true,
       }).catch(() => undefined);
+      // First-run pre-check: only prompt for a key when none is already
+      // available (keychain entry or ANTHROPIC_API_KEY env var — resolved by
+      // has_api_key on the backend). If a key exists, skip onboarding entirely.
+      try {
+        if (!(await invoke<boolean>("has_api_key"))) {
+          firstRunOpen = true;
+        }
+      } catch {
+        // No backend (browser/dev): skip onboarding.
+      }
       try {
         if (await invoke<boolean>("check_auto_save")) {
           restorePromptOpen = true;
@@ -395,6 +406,10 @@
 
   {#if settingsOpen}
     <SettingsDialog onClose={() => (settingsOpen = false)} />
+  {/if}
+
+  {#if firstRunOpen}
+    <SettingsDialog firstRun onClose={() => (firstRunOpen = false)} />
   {/if}
 
   {#if restorePromptOpen}

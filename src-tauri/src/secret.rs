@@ -192,34 +192,12 @@ pub fn api_key_available() -> bool {
 // ── Tauri commands ────────────────────────────────────────────────────
 
 /// Store the API key in the OS secret store.
-///
-/// # Errors
-///
-/// Returns a human-readable error string (never containing the key) if the
-/// secret store is unavailable or the write fails.
-#[tauri::command]
-#[tracing::instrument(level = "debug", skip_all)]
-pub fn set_api_key(key: &str) -> Result<(), String> {
-    store_api_key(key).map_err(|e| e.to_string())
-}
-
 /// Whether a usable API key is available (keychain or env var).
 #[tauri::command]
 #[tracing::instrument(level = "debug")]
 #[must_use]
 pub fn has_api_key() -> bool {
     api_key_available()
-}
-
-/// Remove the stored API key from the OS secret store.
-///
-/// # Errors
-///
-/// Returns a human-readable error string if the deletion fails.
-#[tauri::command]
-#[tracing::instrument(level = "debug", skip_all)]
-pub fn clear_api_key() -> Result<(), String> {
-    delete_api_key().map_err(|e| e.to_string())
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────

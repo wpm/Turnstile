@@ -102,6 +102,11 @@ pub trait Llm: Send + Sync {
         app: &AppHandle,
         user_content: &str,
     ) -> Result<Turn, LlmError>;
+
+    /// Adopt a new API key at runtime so a key entered in the first-run modal
+    /// (#64) or Settings takes effect without a relaunch. Default no-op for
+    /// backends that don't use a key.
+    fn update_api_key(&self, _api_key: String) {}
 }
 
 // ---------------------------------------------------------------------------
@@ -110,8 +115,10 @@ pub trait Llm: Send + Sync {
 
 pub struct AnthropicBackend {
     /// The API key, wrapped in a redacting type so it can never be logged or
-    /// serialized. Never add `#[derive(Debug)]` / `Serialize` to this struct.
-    api_key: crate::secret::ApiKey,
+    /// serialized, and behind an `RwLock` so the running backend can adopt a
+    /// new key (e.g. from the first-run modal, #64) without a relaunch. Never
+    /// add `#[derive(Debug)]` / `Serialize` to this struct.
+    api_key: std::sync::RwLock<crate::secret::ApiKey>,
     client: reqwest::Client,
 }
 
@@ -122,9 +129,28 @@ impl AnthropicBackend {
     #[must_use]
     pub fn new(api_key: String) -> Self {
         Self {
-            api_key: crate::secret::ApiKey::new(api_key),
+            api_key: std::sync::RwLock::new(crate::secret::ApiKey::new(api_key)),
             client: reqwest::Client::new(),
         }
+    }
+
+    /// Replace the backend's API key in place, so a key entered at runtime takes
+    /// effect without rebuilding the backend or relaunching the app.
+    pub fn set_key(&self, api_key: String) {
+        *self
+            .api_key
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) =
+            crate::secret::ApiKey::new(api_key);
+    }
+
+    /// Snapshot the current key for a request. Returned by value so the lock
+    /// isn't held across the await of the HTTP call.
+    fn key_snapshot(&self) -> crate::secret::ApiKey {
+        self.api_key
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
 
     /// Construct a backend from the `ANTHROPIC_API_KEY` environment variable,
@@ -173,10 +199,12 @@ impl AnthropicBackend {
             body["tools"] = serde_json::Value::Array(tools_json);
         }
 
+        // Snapshot the key so the lock isn't held across the network await.
+        let api_key = self.key_snapshot();
         let response = self
             .client
             .post("https://api.anthropic.com/v1/messages")
-            .header("x-api-key", self.api_key.expose())
+            .header("x-api-key", api_key.expose())
             .header("anthropic-version", "2023-06-01")
             .header("content-type", "application/json")
             .json(&body)
@@ -318,7 +346,7 @@ impl Llm for AnthropicBackend {
         model: &str,
         app: &AppHandle,
     ) -> Result<Turn, LlmError> {
-        if self.api_key.is_empty() {
+        if self.key_snapshot().is_empty() {
             return Err(LlmError(NO_API_KEY_ERROR.to_string()));
         }
 
@@ -339,7 +367,7 @@ impl Llm for AnthropicBackend {
         app: &AppHandle,
         user_content: &str,
     ) -> Result<Turn, LlmError> {
-        if self.api_key.is_empty() {
+        if self.key_snapshot().is_empty() {
             // No usable key: refuse with a structured error. Never fabricate a
             // turn — the disconnected status (#58) is the single source of truth
             // and the disabled input (#60) is the primary guard.
@@ -423,6 +451,10 @@ impl Llm for AnthropicBackend {
         app.emit(COMPLETE_EVENT, &turn).ok();
         Ok(turn)
     }
+
+    fn update_api_key(&self, api_key: String) {
+        self.set_key(api_key);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -480,9 +512,18 @@ mod tests {
         // An empty-key backend must classify as missing-key (the send path maps
         // this to Disconnected) and must never echo.
         let backend = AnthropicBackend::new(String::new());
-        assert!(backend.api_key.is_empty());
+        assert!(backend.key_snapshot().is_empty());
         let err = LlmError(NO_API_KEY_ERROR.to_string());
         assert!(err.is_missing_key());
         assert!(!err.0.contains("[echo]"));
+    }
+
+    #[test]
+    fn set_key_updates_backend_in_place() {
+        let backend = AnthropicBackend::new(String::new());
+        assert!(backend.key_snapshot().is_empty());
+        backend.set_key("sk-ant-runtime".to_string());
+        assert!(!backend.key_snapshot().is_empty());
+        assert_eq!(backend.key_snapshot().expose(), "sk-ant-runtime");
     }
 }
