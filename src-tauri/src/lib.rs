@@ -13,6 +13,7 @@ mod lean;
 pub mod llm;
 pub mod menu;
 pub mod proof;
+pub mod secret;
 pub mod session;
 pub mod settings;
 mod setup;
@@ -779,7 +780,15 @@ pub fn run() {
 
             let initial_settings = settings::load_settings(&app_data_dir);
 
-            let llm_backend: Arc<dyn llm::Llm> = Arc::new(llm::AnthropicBackend::from_env());
+            // Resolve the API key from the OS secret store (keychain first, then
+            // the ANTHROPIC_API_KEY env var). When no key is available the
+            // backend is built with an empty key, which reports the missing-key
+            // error on use rather than echoing. (#58 surfaces this as a
+            // disconnected status.)
+            let api_key = secret::resolve_api_key()
+                .map(|k| k.expose().to_string())
+                .unwrap_or_default();
+            let llm_backend: Arc<dyn llm::Llm> = Arc::new(llm::AnthropicBackend::new(api_key));
 
             let setup_running = Arc::new(AtomicBool::new(false));
 
@@ -874,6 +883,9 @@ pub fn run() {
             set_last_session,
             set_window_title,
             set_menu_item_enabled,
+            secret::set_api_key,
+            secret::has_api_key,
+            secret::clear_api_key,
         ])
         .run(tauri::generate_context!())
         .expect("error while running turnstile");

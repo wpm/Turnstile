@@ -45,6 +45,7 @@ async-lsp = "0.2.3"
 tower = "0.5"
 tokio-util = { version = "0.7", features = ["compat"] }
 tempfile = "3"
+keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
 
 # Lint policy lives here (not in CLI flags) so every clippy invocation -
 # pre-commit hook, `pnpm verify`, CI, editors - agrees on the lint set.

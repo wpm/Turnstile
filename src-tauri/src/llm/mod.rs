@@ -89,7 +89,9 @@ pub trait Llm: Send + Sync {
 // ---------------------------------------------------------------------------
 
 pub struct AnthropicBackend {
-    api_key: String,
+    /// The API key, wrapped in a redacting type so it can never be logged or
+    /// serialized. Never add `#[derive(Debug)]` / `Serialize` to this struct.
+    api_key: crate::secret::ApiKey,
     client: reqwest::Client,
 }
 
@@ -100,7 +102,7 @@ impl AnthropicBackend {
     #[must_use]
     pub fn new(api_key: String) -> Self {
         Self {
-            api_key,
+            api_key: crate::secret::ApiKey::new(api_key),
             client: reqwest::Client::new(),
         }
     }
@@ -154,7 +156,7 @@ impl AnthropicBackend {
         let response = self
             .client
             .post("https://api.anthropic.com/v1/messages")
-            .header("x-api-key", &self.api_key)
+            .header("x-api-key", self.api_key.expose())
             .header("anthropic-version", "2023-06-01")
             .header("content-type", "application/json")
             .json(&body)
