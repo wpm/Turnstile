@@ -269,6 +269,12 @@ test("settings dialog opens from the menu, edits persist", async ({ page }) => {
   const dialog = page.getByRole("dialog", { name: "Settings" });
   await expect(dialog).toBeVisible();
 
+  // Three tabs; the Models tab is selected first and shows the model selects.
+  await expect(dialog.getByRole("tab")).toHaveCount(3);
+  await expect(
+    dialog.getByRole("tab", { name: "Models & API key" }),
+  ).toHaveAttribute("aria-selected", "true");
+
   // Change the assistant model and save.
   await dialog.locator("select").first().selectOption("claude-sonnet-4-6");
   await dialog.getByRole("button", { name: "Save" }).click();
@@ -281,6 +287,51 @@ test("settings dialog opens from the menu, edits persist", async ({ page }) => {
   await expect(
     page.getByRole("dialog", { name: "Settings" }).locator("select").first(),
   ).toHaveValue("claude-sonnet-4-6");
+});
+
+test("settings tabs: arrow-key navigation and unsaved edits survive switching", async ({
+  page,
+}) => {
+  await openApp(page);
+  await page.evaluate(() => {
+    window.__turnstileFake?.emit("menu-event", "settings");
+  });
+  const dialog = page.getByRole("dialog", { name: "Settings" });
+  await expect(dialog).toBeVisible();
+
+  // The Models tab holds the masked API-key field (#66).
+  const keyField = dialog.locator("input[type='password']");
+  await expect(keyField).toBeVisible();
+
+  // Roving tabindex + arrow-key navigation: focusing the selected tab and
+  // pressing Right moves both selection and focus to the next tab.
+  const modelsTab = dialog.getByRole("tab", { name: "Models & API key" });
+  const fontsTab = dialog.getByRole("tab", { name: "Font sizes" });
+  const promptsTab = dialog.getByRole("tab", { name: "Prompts" });
+  await modelsTab.focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(fontsTab).toHaveAttribute("aria-selected", "true");
+  await expect(fontsTab).toBeFocused();
+  await page.keyboard.press("End");
+  await expect(promptsTab).toHaveAttribute("aria-selected", "true");
+  await page.keyboard.press("Home");
+  await expect(modelsTab).toHaveAttribute("aria-selected", "true");
+
+  // Unsaved edits survive tab switches because every panel binds the shared
+  // draft. Edit the key in Models, switch to Font sizes (its field hidden),
+  // edit a font, then switch back — both edits are intact.
+  await keyField.fill("sk-ant-draft-key");
+  await fontsTab.click();
+  await expect(keyField).toBeHidden();
+  const editorFont = dialog
+    .getByRole("tabpanel", { name: "Font sizes" })
+    .locator("input[type='number']")
+    .first();
+  await editorFont.fill("20");
+  await modelsTab.click();
+  await expect(keyField).toHaveValue("sk-ant-draft-key");
+  await fontsTab.click();
+  await expect(editorFont).toHaveValue("20");
 });
 
 test("word wrap toggles via the View menu", async ({ page }) => {
