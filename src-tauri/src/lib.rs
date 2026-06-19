@@ -768,6 +768,15 @@ pub fn run() {
     init_tracing();
     tracing_log::LogTracer::init().ok();
 
+    // GUI launches from Finder/Dock don't inherit the login shell's PATH, so the
+    // elan/lake/lean tooling we spawn during setup and for the LSP can't be
+    // found. Pull the real PATH from the user's shell config before anything is
+    // spawned. Log and continue on failure — a missing PATH fix is recoverable
+    // (setup still prepends elan's bin dir to whatever PATH is present).
+    if let Err(e) = fix_path_env::fix() {
+        log::warn!("fix_path_env::fix() failed; PATH may be incomplete for GUI launches: {e}");
+    }
+
     tauri::Builder::default()
         .setup(|app| {
             let app_data_dir = app
