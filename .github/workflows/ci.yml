@@ -82,8 +82,12 @@ jobs:
       - name: Release script tests (vitest)
         run: pnpm run test:scripts
 
-      - name: Install Playwright browser
-        run: pnpm exec playwright install --with-deps chromium
+      - name: Install Playwright browsers
+        # WebKit is the engine behind the macOS Tauri webview, so the e2e suite
+        # runs in both engines (see playwright.config.ts) to catch WebKit-only
+        # layout regressions. --with-deps pulls the system libraries WebKit
+        # needs on the Ubuntu runner.
+        run: pnpm exec playwright install --with-deps chromium webkit
 
       - name: End-to-end tests (Playwright)
         run: pnpm exec playwright test

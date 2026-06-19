@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
   import {
+    Annotation,
     Compartment,
     EditorState,
     StateEffect,
@@ -39,6 +40,13 @@
   import { cursorPosition, proofSource, settings, wordWrap } from "./appState";
 
   const setProgressLines = StateEffect.define<FileProgressRange[]>();
+
+  // Marks a transaction as a programmatic document replacement (e.g. restoring
+  // the editor on session load). The backend already holds the authoritative
+  // source for these, so the update listener must NOT forward them back as
+  // incremental LSP changes — doing so applies a diff on top of the
+  // already-set source and corrupts it (duplicated/concatenated text).
+  const programmaticUpdate = Annotation.define<boolean>();
 
   const progressDecoration = Decoration.line({ class: "cm-elaborating" });
 
@@ -132,6 +140,16 @@
             }
             if (!update.docChanged) return;
             proofSource.set(update.state.doc.toString());
+            // A programmatic replacement (session load) is already reflected in
+            // the backend source; forwarding it as an incremental change would
+            // double-apply it. Keep the UI store above in sync, but stop here.
+            if (
+              update.transactions.some((tr) =>
+                tr.annotation(programmaticUpdate),
+              )
+            ) {
+              return;
+            }
             const oldDoc = update.startState.doc;
             const changes: ContentChange[] = [];
             update.changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
@@ -171,6 +189,10 @@
           changes: { from: 0, to: view.state.doc.length, insert: newContent },
           // Clear stale annotations from the previous document immediately.
           effects: setAnnotations.of([]),
+          // The backend already set its source to this content during the load;
+          // tag the transaction so the update listener doesn't echo it back as
+          // an incremental change applied on top of the already-set source.
+          annotations: programmaticUpdate.of(true),
         });
       },
     );

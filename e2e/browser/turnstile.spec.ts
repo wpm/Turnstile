@@ -142,6 +142,72 @@ test("assistant chat: streams a reply about the goal and renders math", async ({
   );
 });
 
+test("assistant chat: bubbles hug their text whether or not the transcript overflows", async ({
+  page,
+}) => {
+  // Regression: in WebKit (the macOS Tauri webview) the transcript's flex rows
+  // got a stretched used height — too short, clipping the bubble's text when
+  // the turns overflowed; too tall, leaving empty space below the text when
+  // they didn't. The fix pins each row to its content height
+  // (`flex: 0 0 auto; height: fit-content`) so the bubble is exactly as tall as
+  // its text and the transcript scrolls. Chromium doesn't reproduce the WebKit
+  // stretch, so assert the CSS contract plus that no bubble clips OR balloons
+  // past its own text.
+  await openApp(page);
+  const input = page.getByPlaceholder("Message Proof Assistant…");
+  // Send sequentially until the transcript overflows. send() is a no-op while a
+  // reply is still streaming, so a send fired too early is silently dropped
+  // (this flaked in WebKit). Pace by waiting for the user bubble (one per
+  // accepted send) and the matching finished assistant reply, and retry the
+  // send if the user bubble didn't appear — never racing the next send against
+  // an in-flight reply.
+  const TURNS = 6;
+  for (let i = 0; i < TURNS; i++) {
+    await expect(async () => {
+      await input.fill(`overflow the transcript, message ${String(i)}`);
+      await input.press("Enter");
+      await expect(page.locator(".bubble.user")).toHaveCount(i + 1, {
+        timeout: 2_000,
+      });
+    }).toPass({ timeout: 15_000 });
+    // Reply finished: the streaming bubble has settled into a stored turn, so
+    // the assistant count matches the user count and no "thinking" dots remain.
+    await expect(page.locator(".thinking")).toHaveCount(0, { timeout: 10_000 });
+    await expect(page.locator(".bubble.assistant")).toHaveCount(i + 1, {
+      timeout: 10_000,
+    });
+  }
+
+  // The CSS contract that defeats the WebKit stretch: rows are neither
+  // flex-grown nor -shrunk, so they take their content height. (computed
+  // `height` resolves to a used pixel value, not the `fit-content` keyword, so
+  // the behavioral check below is what proves the sizing.)
+  const row = page.locator(".bubble-row").first();
+  expect(await row.evaluate((el) => getComputedStyle(el).flexGrow)).toBe("0");
+  expect(await row.evaluate((el) => getComputedStyle(el).flexShrink)).toBe("0");
+
+  // Every assistant bubble is exactly as tall as its rendered text: it neither
+  // clips (box shorter than content) nor balloons (box taller than the text
+  // extent + padding).
+  const bad = await page.locator(".bubble.assistant").evaluateAll(
+    (els) =>
+      els.filter((el) => {
+        const clipped = el.clientHeight < el.scrollHeight - 1;
+        const kids = [...el.children];
+        const cs = getComputedStyle(el);
+        const pad = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
+        const top = Math.min(...kids.map((k) => k.getBoundingClientRect().top));
+        const bot = Math.max(
+          ...kids.map((k) => k.getBoundingClientRect().bottom),
+        );
+        const textExtent = bot - top + pad;
+        const ballooned = el.getBoundingClientRect().height > textExtent + 6;
+        return clipped || ballooned;
+      }).length,
+  );
+  expect(bad).toBe(0);
+});
+
 test("assistant chat: replies without echoing the user's message", async ({
   page,
 }) => {
@@ -261,6 +327,45 @@ test("opening a session loads the proof and prose", async ({ page }) => {
   await expect(page.locator(".cm-content")).toContainText("sqrt2_irrational", {
     timeout: 5_000,
   });
+});
+
+test("loading a session over existing edits replaces the backend source, not concatenates it", async ({
+  page,
+}) => {
+  // Regression: the session-load listener replaced the editor doc with a
+  // transaction that the update listener then echoed back to the backend as an
+  // *incremental* change — applied on top of the source the backend had already
+  // set during the load. The diff (computed against the pre-load editor) double-
+  // applied, leaving the loaded source concatenated with leftover old text. The
+  // Proof Assistant's read_lean_source then saw two theorems glued together.
+  await openApp(page);
+
+  // The user has some prior content in the editor (and thus in the backend).
+  await typeInEditor(page, "theorem old : True := sorry");
+  await expect(page.locator(".cm-content")).toContainText("theorem old");
+
+  // Loading a session sets the backend source directly and re-populates the
+  // editor. The backend source must equal exactly the loaded proof.
+  await page.evaluate(() => {
+    window.__turnstileFake?.emit("menu-event", "open_session");
+  });
+  await expect(page.locator(".cm-content")).toContainText("sqrt2_irrational", {
+    timeout: 5_000,
+  });
+
+  const source = await page.evaluate(
+    () => window.__turnstileFake?.getSource() ?? "",
+  );
+  // No residue of the pre-load content, and no duplicated declarations.
+  expect(source).not.toContain("theorem old");
+  expect(source).toContain("sqrt2_irrational");
+  // The editor and the backend agree exactly.
+  const editorText = await page.evaluate(
+    () => document.querySelector(".cm-content")?.textContent ?? "",
+  );
+  expect(source.replace(/\s+/g, " ").trim()).toBe(
+    editorText.replace(/\s+/g, " ").trim(),
+  );
 });
 
 test("theme toggle switches the document between light and dark", async ({
