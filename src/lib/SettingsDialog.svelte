@@ -8,7 +8,10 @@
     display_name: string;
   }
 
-  let { onClose }: { onClose: () => void } = $props();
+  let {
+    onClose,
+    firstRun = false,
+  }: { onClose: () => void; firstRun?: boolean } = $props();
 
   let models = $state<ModelInfo[]>([]);
   let draft = $state<Settings | null>(null);
@@ -17,18 +20,30 @@
   let saving = $state(false);
   let error = $state<string | null>(null);
 
+  // API key handling. We never read the key back from the backend (it lives in
+  // the OS keychain, #63) — we only learn whether one is present, and let the
+  // user enter a new one. A blank field on save leaves the stored key untouched.
+  let keyPresent = $state(false);
+  let apiKey = $state("");
+
+  // On first run we require a key before the dialog can be dismissed, so the
+  // user comes up connected without a relaunch.
+  const needsKey = $derived(firstRun && !keyPresent && !apiKey.trim());
+
   onMount(async () => {
     try {
-      const [s, m, ap, tp] = await Promise.all([
+      const [s, m, ap, tp, hasKey] = await Promise.all([
         invoke<Settings>("get_settings"),
         invoke<ModelInfo[]>("get_available_models"),
         invoke<string>("get_default_assistant_prompt"),
         invoke<string>("get_default_translation_prompt"),
+        invoke<boolean>("has_api_key"),
       ]);
       draft = { ...s };
       models = m;
       defaultAssistantPrompt = ap;
       defaultTranslationPrompt = tp;
+      keyPresent = hasKey;
     } catch (e) {
       error = String(e);
     }
@@ -39,6 +54,15 @@
     saving = true;
     error = null;
     try {
+      const trimmedKey = apiKey.trim();
+      // Store a newly entered key first; a blank field leaves the existing key
+      // untouched (the user need not re-type it to change other settings).
+      if (trimmedKey) {
+        await invoke("set_api_key", { key: trimmedKey });
+        keyPresent = true;
+        apiKey = "";
+      }
+
       // Empty prompt overrides mean "use the default".
       const cleaned: Settings = {
         ...draft,
@@ -59,8 +83,15 @@
     }
   }
 
+  // On first run with no key, the dialog can't be dismissed without entering
+  // one — there's no usable app state to return to.
+  function requestClose() {
+    if (needsKey) return;
+    onClose();
+  }
+
   function onKeydown(e: KeyboardEvent) {
-    if (e.key === "Escape") onClose();
+    if (e.key === "Escape") requestClose();
   }
 </script>
 
@@ -70,14 +101,47 @@
   class="overlay"
   role="presentation"
   onclick={(e) => {
-    if (e.target === e.currentTarget) onClose();
+    if (e.target === e.currentTarget) requestClose();
   }}
 >
-  <div class="dialog" role="dialog" aria-modal="true" aria-label="Settings">
-    <div class="dialog-header">Settings</div>
+  <div
+    class="dialog"
+    role="dialog"
+    aria-modal="true"
+    aria-label={firstRun ? "Welcome to Turnstile" : "Settings"}
+  >
+    <div class="dialog-header">
+      {firstRun ? "Welcome to Turnstile" : "Settings"}
+    </div>
 
     {#if draft}
       <div class="dialog-body">
+        {#if firstRun}
+          <p class="intro">
+            To use the Proof Assistant, add your Anthropic API key. You can
+            change it and the model choices any time from Settings.
+          </p>
+        {/if}
+
+        <fieldset>
+          <legend>Anthropic API key</legend>
+          <label class="key-label">
+            <span>{keyPresent ? "Replace key" : "API key"}</span>
+            <input
+              type="password"
+              autocomplete="off"
+              placeholder={keyPresent
+                ? "A key is already stored — leave blank to keep it"
+                : "sk-ant-…"}
+              bind:value={apiKey}
+            />
+          </label>
+          <p class="hint">
+            Stored encrypted in your OS keychain — never written to disk in
+            plaintext or logged.
+          </p>
+        </fieldset>
+
         <fieldset>
           <legend>Models</legend>
           <label>
@@ -168,9 +232,15 @@
       </div>
 
       <div class="dialog-footer">
-        <button class="secondary" onclick={onClose}>Cancel</button>
-        <button class="primary" disabled={saving} onclick={() => void save()}>
-          {saving ? "Saving…" : "Save"}
+        {#if !firstRun}
+          <button class="secondary" onclick={requestClose}>Cancel</button>
+        {/if}
+        <button
+          class="primary"
+          disabled={saving || needsKey}
+          onclick={() => void save()}
+        >
+          {saving ? "Saving…" : firstRun ? "Get started" : "Save"}
         </button>
       </div>
     {:else if error}
@@ -297,6 +367,30 @@
   .error {
     color: #dc2626;
     font-size: 0.8125rem;
+  }
+
+  .intro {
+    margin: 0;
+    font-size: 0.8125rem;
+    line-height: 1.5;
+    color: var(--color-text-muted);
+  }
+
+  .hint {
+    margin: 0;
+    font-size: 0.75rem;
+    line-height: 1.4;
+    color: var(--color-text-muted);
+  }
+
+  .key-label {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.375rem;
+  }
+
+  .key-label input {
+    width: 100%;
   }
 
   button {

@@ -220,6 +220,47 @@ pub fn set_assistant_disconnected(app: &AppHandle, reason: DisconnectReason) {
     emit_assistant_status(app, AssistantStatus::Disconnected { reason });
 }
 
+/// Store a new API key in the OS keychain, adopt it into the running backend,
+/// and emit the resulting `Connected` status — so a key entered in the
+/// first-run modal or Settings takes effect without a relaunch.
+///
+/// # Errors
+///
+/// Returns a human-readable error (never containing the key) if the secret
+/// store write fails.
+// Tauri commands take `AppHandle`/`String` by value across the IPC boundary.
+#[allow(clippy::needless_pass_by_value)]
+#[tauri::command]
+#[tracing::instrument(level = "debug", skip_all)]
+fn set_api_key(app: AppHandle, key: String) -> Result<(), String> {
+    secret::store_api_key(&key).map_err(|e| e.to_string())?;
+    app.state::<AppState>().llm.update_api_key(key);
+    emit_assistant_status(&app, AssistantStatus::Connected);
+    Ok(())
+}
+
+/// Remove the stored API key, clear it from the running backend, and emit the
+/// resulting `Disconnected { NoKey }` status.
+///
+/// # Errors
+///
+/// Returns a human-readable error if the deletion fails.
+// Tauri commands take `AppHandle` by value across the IPC boundary.
+#[allow(clippy::needless_pass_by_value)]
+#[tauri::command]
+#[tracing::instrument(level = "debug", skip_all)]
+fn clear_api_key(app: AppHandle) -> Result<(), String> {
+    secret::delete_api_key().map_err(|e| e.to_string())?;
+    app.state::<AppState>().llm.update_api_key(String::new());
+    emit_assistant_status(
+        &app,
+        AssistantStatus::Disconnected {
+            reason: DisconnectReason::NoKey,
+        },
+    );
+    Ok(())
+}
+
 async fn start_lsp(app: AppHandle) -> Result<(), String> {
     let state = app.state::<AppState>();
 
@@ -970,9 +1011,9 @@ pub fn run() {
             set_last_session,
             set_window_title,
             set_menu_item_enabled,
-            secret::set_api_key,
+            set_api_key,
             secret::has_api_key,
-            secret::clear_api_key,
+            clear_api_key,
         ])
         .run(tauri::generate_context!())
         .expect("error while running turnstile");
