@@ -25,7 +25,11 @@ function fake() {
 
 // A whole-document replace expressed as the LSP content change the editor sends.
 function replaceAll(text: string) {
+  // Route (3): the editor sends the whole document; the incremental `changes`
+  // are forwarded only to the LSP, so the fake (like the real backend) reads
+  // `fullText` to update its source.
   return {
+    fullText: text,
     changes: [
       {
         range: {
@@ -122,12 +126,15 @@ describe("update_document elaboration", () => {
 
     const ann = payloads.find(
       (p) => (p as { type: string }).type === "annotationsUpdated",
-    ) as { items: { kind: string; severity?: string }[] };
-    expect(ann.items.some((a) => a.kind === "token")).toBe(true);
+    ) as {
+      annotations: {
+        syntaxColoring: unknown[];
+        underlines: { severity: string }[];
+      };
+    };
+    expect(ann.annotations.syntaxColoring.length).toBeGreaterThan(0);
     expect(
-      ann.items.some(
-        (a) => a.kind === "diagnostic" && a.severity === "warning",
-      ),
+      ann.annotations.underlines.some((u) => u.severity === "warning"),
     ).toBe(true);
   });
 
@@ -139,10 +146,10 @@ describe("update_document elaboration", () => {
 
     const ann = payloads.find(
       (p) => (p as { type: string }).type === "annotationsUpdated",
-    ) as { items: { kind: string; severity?: string }[] };
-    expect(
-      ann.items.some((a) => a.kind === "diagnostic" && a.severity === "error"),
-    ).toBe(true);
+    ) as { annotations: { underlines: { severity: string }[] } };
+    expect(ann.annotations.underlines.some((u) => u.severity === "error")).toBe(
+      true,
+    );
     const goal = payloads.find(
       (p) => (p as { type: string }).type === "goalStateUpdated",
     ) as { full: string };
@@ -177,26 +184,21 @@ describe("update_document elaboration", () => {
     await vi.advanceTimersByTimeAsync(ELABORATION_MS + 5);
   });
 
-  it("applies multiple content changes back-to-front", async () => {
+  it("assigns the whole document and ignores incremental changes (route 3)", async () => {
     await fakeInvoke("update_document", replaceAll("abcd"));
     await vi.advanceTimersByTimeAsync(ELABORATION_MS + 5);
-    // Two disjoint single-char replacements in one batch: the dispatcher must
-    // sort them by descending start so earlier edits don't shift later offsets.
+    // The backend is the source of truth: it takes fullText verbatim. Any
+    // incremental `changes` are for the LSP only and must not be replayed onto
+    // the stored source, so the diff below is ignored in favor of fullText.
     await fakeInvoke("update_document", {
+      fullText: "XbcY",
       changes: [
         {
           range: {
             start: { line: 0, character: 0 },
             end: { line: 0, character: 1 },
           },
-          text: "X",
-        },
-        {
-          range: {
-            start: { line: 0, character: 3 },
-            end: { line: 0, character: 4 },
-          },
-          text: "Y",
+          text: "WRONG",
         },
       ],
     });

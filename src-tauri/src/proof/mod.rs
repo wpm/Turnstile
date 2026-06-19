@@ -101,77 +101,215 @@ impl DiagnosticSeverity {
     }
 }
 
-/// A span annotation on the formal proof source.
+/// The Lean LSP's view of the formal proof's visual annotations: the two
+/// producer-shaped lists it delivers, kept as the single source of truth for
+/// everything the editor renders over the source.
 ///
-/// Either a semantic token (for syntax highlighting) or a diagnostic
-/// (for error/warning squiggles). All line numbers are 1-indexed.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../../src/lib/")]
-#[serde(tag = "kind", rename_all = "camelCase")]
-pub enum Annotation {
-    #[serde(rename_all = "camelCase")]
-    Token {
-        line: u32,
-        col: u32,
-        length: u32,
-        token_type: TokenType,
-        modifiers: Vec<String>,
-    },
-    #[serde(rename_all = "camelCase")]
-    Diagnostic {
-        start_line: u32,
-        start_col: u32,
-        end_line: u32,
-        end_col: u32,
-        severity: DiagnosticSeverity,
-        message: String,
-    },
-}
-
-/// The complete set of span annotations on the formal proof, as last
-/// reported by the LSP. Tokens and diagnostics are stored together and
-/// replaced independently when new LSP responses arrive.
+/// The LSP produces two distinct atom types on two independent schedules —
+/// [`SemanticToken`]s (syntax colouring) via `semanticTokens`, and
+/// [`DiagnosticInfo`]s (error/warning underlines) via `publishDiagnostics`. We
+/// store them exactly as produced (1-indexed line/col, UTF-16 columns) and
+/// derive every CodeMirror-facing shape on demand via [`LSPAnnotation::derive`].
+///
+/// Tokens and diagnostics refresh independently: assigning `tokens` leaves
+/// `diagnostics` untouched and vice versa, which falls out structurally from
+/// them being separate fields rather than a filtered sum type.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Annotations {
-    pub items: Vec<Annotation>,
+pub struct LSPAnnotation {
+    pub tokens: Vec<SemanticToken>,
+    pub diagnostics: Vec<DiagnosticInfo>,
 }
 
-impl Annotations {
-    /// Replace all `Token` annotations with those derived from `tokens`,
-    /// leaving `Diagnostic` annotations untouched.
-    pub fn set_tokens(&mut self, tokens: &[SemanticToken]) {
-        self.items
-            .retain(|a| !matches!(a, Annotation::Token { .. }));
-        self.items.extend(tokens.iter().map(|t| Annotation::Token {
-            line: t.line,
-            col: t.col,
-            length: t.length,
-            token_type: t.token_type.parse().unwrap_or(TokenType::Unknown),
-            modifiers: t.token_modifiers.clone(),
-        }));
+impl LSPAnnotation {
+    /// Resolve every annotation into `CodeMirror`-ready structures.
+    ///
+    /// Offsets are computed in UTF-16 code units against `source` —
+    /// `CodeMirror`'s native coordinate system. This is the single producer of
+    /// everything the editor renders; the frontend is a pure renderer that maps
+    /// these straight onto decorations, gutter markers, and tooltips.
+    #[must_use]
+    pub fn derive(&self, source: &str) -> DerivedAnnotations {
+        // Precompute the UTF-16 offset of the start of each line once, then share
+        // it across every resolution below so the document is scanned a single
+        // time per refresh.
+        let line_starts = utf16_line_starts(source);
+
+        let syntax_coloring = self
+            .tokens
+            .iter()
+            .map(|t| {
+                let from = resolve_offset(&line_starts, t.line, t.col);
+                SyntaxColor {
+                    from,
+                    to: from + t.length,
+                    token_type: t.token_type.parse().unwrap_or(TokenType::Unknown),
+                }
+            })
+            .collect();
+
+        let underlines = self
+            .diagnostics
+            .iter()
+            .map(|d| Underline {
+                from: resolve_offset(&line_starts, d.start_line, d.start_col),
+                to: resolve_offset(&line_starts, d.end_line, d.end_col),
+                severity: DiagnosticSeverity::from_u8(d.severity),
+            })
+            .collect();
+
+        DerivedAnnotations {
+            syntax_coloring,
+            underlines,
+            gutter: self.gutter(),
+            hover: self.hover(&line_starts),
+        }
     }
 
-    /// Replace all `Diagnostic` annotations with those derived from `diags`,
-    /// leaving `Token` annotations untouched.
-    pub fn set_diagnostics(&mut self, diags: &[DiagnosticInfo]) {
-        self.items
-            .retain(|a| !matches!(a, Annotation::Diagnostic { .. }));
-        self.items
-            .extend(diags.iter().map(|d| Annotation::Diagnostic {
-                start_line: d.start_line,
-                start_col: d.start_col,
-                end_line: d.end_line,
-                end_col: d.end_col,
+    /// One gutter mark per line that has a diagnostic, deduped so the most
+    /// severe wins (error over warning). Info and hint diagnostics get no
+    /// gutter mark. Lines stay 1-indexed; the gutter addresses whole lines, so
+    /// no offset resolution is needed.
+    fn gutter(&self) -> Vec<GutterMark> {
+        let mut by_line: std::collections::BTreeMap<u32, DiagnosticSeverity> =
+            std::collections::BTreeMap::new();
+        for d in &self.diagnostics {
+            let severity = DiagnosticSeverity::from_u8(d.severity);
+            if !matches!(
+                severity,
+                DiagnosticSeverity::Error | DiagnosticSeverity::Warning
+            ) {
+                continue;
+            }
+            by_line
+                .entry(d.start_line)
+                .and_modify(|cur| {
+                    if severity == DiagnosticSeverity::Error {
+                        *cur = DiagnosticSeverity::Error;
+                    }
+                })
+                .or_insert(severity);
+        }
+        by_line
+            .into_iter()
+            .map(|(line, severity)| GutterMark { line, severity })
+            .collect()
+    }
+
+    /// One hover hit per diagnostic, with its span resolved to UTF-16 offsets
+    /// against the shared `line_starts`. The renderer tests the cursor position
+    /// against each hit's `[from, to]` and unions the messages of all hits under
+    /// the cursor.
+    fn hover(&self, line_starts: &[u32]) -> Vec<HoverHit> {
+        self.diagnostics
+            .iter()
+            .map(|d| HoverHit {
+                from: resolve_offset(line_starts, d.start_line, d.start_col),
+                to: resolve_offset(line_starts, d.end_line, d.end_col),
                 severity: DiagnosticSeverity::from_u8(d.severity),
                 message: d.message.clone(),
-            }));
+            })
+            .collect()
     }
 }
 
-/// The Lean source buffer.
+/// One syntax-colouring span: a half-open `[from, to)` UTF-16 offset range and
+/// the token type that selects its CSS class.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, TS)]
+#[ts(export, export_to = "../../src/lib/")]
+#[serde(rename_all = "camelCase")]
+pub struct SyntaxColor {
+    pub from: u32,
+    pub to: u32,
+    pub token_type: TokenType,
+}
+
+/// One diagnostic underline: a half-open `[from, to)` UTF-16 offset range and
+/// the severity that selects its CSS class.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, TS)]
+#[ts(export, export_to = "../../src/lib/")]
+#[serde(rename_all = "camelCase")]
+pub struct Underline {
+    pub from: u32,
+    pub to: u32,
+    pub severity: DiagnosticSeverity,
+}
+
+/// One gutter mark, addressing a whole (1-indexed) line.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, TS)]
+#[ts(export, export_to = "../../src/lib/")]
+#[serde(rename_all = "camelCase")]
+pub struct GutterMark {
+    pub line: u32,
+    pub severity: DiagnosticSeverity,
+}
+
+/// One diagnostic hover target: a `[from, to]` UTF-16 offset span and the
+/// message to show when the cursor falls within it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, TS)]
+#[ts(export, export_to = "../../src/lib/")]
+#[serde(rename_all = "camelCase")]
+pub struct HoverHit {
+    pub from: u32,
+    pub to: u32,
+    pub severity: DiagnosticSeverity,
+    pub message: String,
+}
+
+/// The complete set of `CodeMirror`-ready annotation views.
+///
+/// Derived from an [`LSPAnnotation`] against a specific source. This is the
+/// payload the frontend renders; it carries no line/col, only resolved offsets.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, TS)]
+#[ts(export, export_to = "../../src/lib/")]
+#[serde(rename_all = "camelCase")]
+pub struct DerivedAnnotations {
+    pub syntax_coloring: Vec<SyntaxColor>,
+    pub underlines: Vec<Underline>,
+    pub gutter: Vec<GutterMark>,
+    pub hover: Vec<HoverHit>,
+}
+
+/// The UTF-16 offset of the start of each line in `source`, indexed 0-based by
+/// line number (so element 0 is line 1's start, always 0).
+///
+/// `CodeMirror` addresses the document in UTF-16 code units, and the LSP reports
+/// columns in UTF-16, so resolving a (line, col) to an absolute offset is
+/// `line_starts[line-1] + col`.
+fn utf16_line_starts(source: &str) -> Vec<u32> {
+    let mut starts = vec![0u32];
+    let mut offset = 0u32;
+    for ch in source.chars() {
+        offset += u32::try_from(ch.len_utf16()).unwrap_or(2);
+        if ch == '\n' {
+            starts.push(offset);
+        }
+    }
+    starts
+}
+
+/// Resolve a 1-indexed (line, col) to an absolute UTF-16 offset using the
+/// precomputed `line_starts`. A line past the end clamps to the last line start.
+///
+/// Only the line start is bounded; `col` (and any `+ length` a caller adds) is
+/// trusted as the LSP reported it, so the returned offset — and especially a
+/// caller's `to` — may point past the end of the document if the annotation was
+/// computed against a since-edited source. The frontend renderer clamps every
+/// span to the live document before use, so out-of-range offsets are dropped
+/// rather than trusted.
+fn resolve_offset(line_starts: &[u32], line: u32, col: u32) -> u32 {
+    line_starts
+        .get((line as usize).saturating_sub(1))
+        .map_or_else(|| line_starts.last().copied().unwrap_or(0), |s| s + col)
+}
+
+/// The Lean source buffer together with the LSP annotations that index into it.
+///
+/// Co-locating them makes "the text and its annotations are one coupled unit"
+/// structural: annotations are always resolved against this exact `source`.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct FormalProof {
     pub source: String,
+    pub annotations: LSPAnnotation,
 }
 
 /// The prose proof draft, tagged with the hash of the goal state that
@@ -203,15 +341,14 @@ pub struct Proof {
     pub formal: FormalProof,
     pub prose: ProseProof,
     pub goal_state: GoalState,
-    pub annotations: Annotations,
 }
 
 impl Proof {
     /// Clear everything derived from the formal source: the goal state, the
     /// prose proof, and the prose's source hash. Used when the formal proof is
     /// deleted, so the goal-state and prose panels don't keep showing output
-    /// for source that no longer exists. Leaves `formal` and `annotations`
-    /// untouched (the caller owns the source; annotations clear via the LSP).
+    /// for source that no longer exists. Leaves `formal` untouched (the caller
+    /// owns the source; the LSP annotations within it clear via the LSP).
     pub fn clear_derived(&mut self) {
         self.goal_state.full.clear();
         self.prose.text.clear();
@@ -322,43 +459,42 @@ mod tests {
     }
 
     #[test]
-    fn annotation_serializes_with_camel_case_fields() {
-        let token = Annotation::Token {
-            line: 1,
-            col: 0,
-            length: 7,
-            token_type: TokenType::Keyword,
-            modifiers: vec![],
+    fn derived_annotations_serialize_camel_case() {
+        let derived = DerivedAnnotations {
+            syntax_coloring: vec![SyntaxColor {
+                from: 0,
+                to: 7,
+                token_type: TokenType::Keyword,
+            }],
+            underlines: vec![Underline {
+                from: 8,
+                to: 11,
+                severity: DiagnosticSeverity::Error,
+            }],
+            gutter: vec![GutterMark {
+                line: 1,
+                severity: DiagnosticSeverity::Error,
+            }],
+            hover: vec![HoverHit {
+                from: 8,
+                to: 11,
+                severity: DiagnosticSeverity::Error,
+                message: "boom".into(),
+            }],
         };
-        let diag = Annotation::Diagnostic {
-            start_line: 1,
-            start_col: 7,
-            end_line: 1,
-            end_col: 7,
-            severity: DiagnosticSeverity::Error,
-            message: "expected identifier".into(),
-        };
-        let token_json = serde_json::to_string(&token).unwrap();
-        let diag_json = serde_json::to_string(&diag).unwrap();
+        let json = serde_json::to_string(&derived).unwrap();
+        // The wire shape the renderer consumes must be camelCase.
         assert!(
-            token_json.contains("\"tokenType\""),
-            "token_type must serialize as tokenType, got: {token_json}"
+            json.contains("\"syntaxColoring\""),
+            "must serialize syntax_coloring as syntaxColoring, got: {json}"
         );
         assert!(
-            !token_json.contains("token_type"),
-            "must not contain snake_case token_type"
+            json.contains("\"tokenType\""),
+            "must serialize token_type as tokenType, got: {json}"
         );
         assert!(
-            diag_json.contains("\"startLine\""),
-            "start_line must serialize as startLine, got: {diag_json}"
-        );
-        assert!(
-            diag_json.contains("\"endLine\""),
-            "end_line must serialize as endLine, got: {diag_json}"
-        );
-        assert!(
-            !diag_json.contains("start_line"),
-            "must not contain snake_case start_line"
+            !json.contains("syntax_coloring") && !json.contains("token_type"),
+            "must not contain snake_case field names, got: {json}"
         );
     }
 
@@ -431,65 +567,111 @@ mod tests {
     }
 
     #[test]
-    fn set_tokens_replaces_tokens_and_preserves_diagnostics() {
-        let mut anns = Annotations::default();
-        anns.set_diagnostics(&[diag_info(1, 1)]);
-        anns.set_tokens(&[sem_token(2, "keyword"), sem_token(3, "bogusType")]);
+    #[allow(clippy::field_reassign_with_default)] // field-by-field assignment is the point
+    fn tokens_and_diagnostics_assign_independently() {
+        // Assigning one list leaves the other untouched — the independence the
+        // old filtered sum type simulated is now structural.
+        let mut anns = LSPAnnotation::default();
+        anns.diagnostics = vec![diag_info(1, 1)];
+        anns.tokens = vec![sem_token(2, "keyword"), sem_token(3, "bogusType")];
+        assert_eq!(anns.tokens.len(), 2);
+        assert_eq!(anns.diagnostics.len(), 1, "diagnostics survive a token set");
 
-        let token_count = anns
-            .items
-            .iter()
-            .filter(|a| matches!(a, Annotation::Token { .. }))
-            .count();
-        let diag_count = anns
-            .items
-            .iter()
-            .filter(|a| matches!(a, Annotation::Diagnostic { .. }))
-            .count();
-        assert_eq!(token_count, 2);
-        assert_eq!(diag_count, 1, "diagnostics must survive a token refresh");
-
-        // Unknown token-type strings fall back to TokenType::Unknown; modifiers carry over.
-        let unknown = anns.items.iter().find_map(|a| match a {
-            Annotation::Token {
-                token_type,
-                modifiers,
-                ..
-            } if *token_type == TokenType::Unknown => Some(modifiers.clone()),
-            _ => None,
-        });
-        assert_eq!(unknown, Some(vec!["declaration".to_string()]));
-
-        // A second set_tokens replaces, not appends.
-        anns.set_tokens(&[sem_token(5, "type")]);
-        let token_count = anns
-            .items
-            .iter()
-            .filter(|a| matches!(a, Annotation::Token { .. }))
-            .count();
-        assert_eq!(token_count, 1);
+        // A second token assignment replaces, not appends, and leaves diagnostics.
+        anns.tokens = vec![sem_token(5, "type")];
+        assert_eq!(anns.tokens.len(), 1);
+        assert_eq!(anns.diagnostics.len(), 1);
     }
 
     #[test]
-    fn set_diagnostics_replaces_diagnostics_and_preserves_tokens() {
-        let mut anns = Annotations::default();
-        anns.set_tokens(&[sem_token(1, "keyword")]);
-        anns.set_diagnostics(&[diag_info(2, 1), diag_info(3, 2)]);
-        anns.set_diagnostics(&[diag_info(4, 3)]); // replace
+    fn syntax_coloring_resolves_offsets_and_maps_unknown_type() {
+        let anns = LSPAnnotation {
+            tokens: vec![sem_token(1, "keyword"), sem_token(1, "bogusType")],
+            diagnostics: vec![],
+        };
+        let derived = anns.derive("theorem foo");
+        assert_eq!(derived.syntax_coloring.len(), 2);
+        // sem_token uses col 0, length 3 → [0, 3).
+        assert_eq!(derived.syntax_coloring[0].from, 0);
+        assert_eq!(derived.syntax_coloring[0].to, 3);
+        assert_eq!(derived.syntax_coloring[0].token_type, TokenType::Keyword);
+        // Unrecognized legend names fall back to Unknown.
+        assert_eq!(derived.syntax_coloring[1].token_type, TokenType::Unknown);
+    }
 
-        let diags: Vec<_> = anns
-            .items
-            .iter()
-            .filter_map(|a| match a {
-                Annotation::Diagnostic { severity, .. } => Some(severity.clone()),
-                Annotation::Token { .. } => None,
-            })
-            .collect();
-        assert_eq!(diags, vec![DiagnosticSeverity::Info]);
-        assert!(anns
-            .items
-            .iter()
-            .any(|a| matches!(a, Annotation::Token { .. })));
+    #[test]
+    fn offsets_count_utf16_code_units_across_multibyte_glyphs() {
+        // CodeMirror addresses the document in UTF-16. A token after the
+        // 3-byte glyph "∀" (1 UTF-16 unit) must resolve by code units, not
+        // bytes. Source: "∀ x" → a token at line 1, col 2, length 1 covers "x".
+        let token = SemanticToken {
+            line: 1,
+            col: 2,
+            length: 1,
+            token_type: "variable".to_string(),
+            token_modifiers: vec![],
+        };
+        let anns = LSPAnnotation {
+            tokens: vec![token],
+            diagnostics: vec![],
+        };
+        let derived = anns.derive("∀ x");
+        // "∀"=1 unit, " "=1 unit → x starts at UTF-16 offset 2 (not byte 4).
+        assert_eq!(derived.syntax_coloring[0].from, 2);
+        assert_eq!(derived.syntax_coloring[0].to, 3);
+    }
+
+    #[test]
+    fn offsets_resolve_on_later_lines() {
+        // Token on line 2 must account for line 1's length plus the newline.
+        let token = SemanticToken {
+            line: 2,
+            col: 0,
+            length: 3,
+            token_type: "keyword".to_string(),
+            token_modifiers: vec![],
+        };
+        let anns = LSPAnnotation {
+            tokens: vec![token],
+            diagnostics: vec![],
+        };
+        // "ab\ncd" → line 2 starts at UTF-16 offset 3 ("ab"=2 + "\n"=1).
+        let derived = anns.derive("ab\ncd");
+        assert_eq!(derived.syntax_coloring[0].from, 3);
+    }
+
+    #[test]
+    fn gutter_dedups_error_over_warning_and_excludes_info_hint() {
+        let anns = LSPAnnotation {
+            tokens: vec![],
+            diagnostics: vec![
+                diag_info(1, 2), // warning on line 1
+                diag_info(1, 1), // error on line 1 — should win
+                diag_info(2, 2), // warning on line 2
+                diag_info(3, 3), // info — excluded
+                diag_info(4, 4), // hint — excluded
+            ],
+        };
+        let derived = anns.derive("a\nb\nc\nd");
+        assert_eq!(derived.gutter.len(), 2, "only lines 1 and 2 get marks");
+        assert_eq!(derived.gutter[0].line, 1);
+        assert_eq!(derived.gutter[0].severity, DiagnosticSeverity::Error);
+        assert_eq!(derived.gutter[1].line, 2);
+        assert_eq!(derived.gutter[1].severity, DiagnosticSeverity::Warning);
+    }
+
+    #[test]
+    fn hover_carries_each_diagnostic_with_resolved_span() {
+        let anns = LSPAnnotation {
+            tokens: vec![],
+            diagnostics: vec![diag_info(1, 1)],
+        };
+        let derived = anns.derive("theorem foo");
+        assert_eq!(derived.hover.len(), 1);
+        assert_eq!(derived.hover[0].from, 0);
+        assert_eq!(derived.hover[0].to, 3);
+        assert_eq!(derived.hover[0].severity, DiagnosticSeverity::Error);
+        assert_eq!(derived.hover[0].message, "m");
     }
 
     #[test]
@@ -497,6 +679,10 @@ mod tests {
         let proof = Proof {
             formal: FormalProof {
                 source: "theorem foo : True := trivial".into(),
+                annotations: LSPAnnotation {
+                    tokens: vec![sem_token(1, "keyword")],
+                    diagnostics: vec![diag_info(1, 1)],
+                },
             },
             prose: ProseProof {
                 text: "This proves True.".into(),
@@ -505,7 +691,6 @@ mod tests {
             goal_state: GoalState {
                 full: "⊢ True".into(),
             },
-            annotations: Annotations::default(),
         };
         let json = serde_json::to_string(&proof).unwrap();
         let restored: Proof = serde_json::from_str(&json).unwrap();

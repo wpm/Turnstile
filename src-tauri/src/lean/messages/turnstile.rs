@@ -18,14 +18,14 @@ use lsp_types::{
     DocumentSymbolResponse, GotoDefinitionResponse, Hover, HoverContents, Location, LocationLink,
     MarkedString, MarkupKind, MessageType, PublishDiagnosticsParams, TextEdit, WorkspaceEdit,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fmt;
 use tracing::{debug, error, instrument, warn};
 use ts_rs::TS;
 // ── Public DTO types for Tauri events ─────────────────────────────────
 
-#[derive(Clone, Debug, Serialize, TS)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../src/lib/")]
 pub struct DiagnosticInfo {
     pub start_line: u32,
@@ -36,7 +36,7 @@ pub struct DiagnosticInfo {
     pub message: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, TS)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../src/lib/")]
 pub struct SemanticToken {
     pub line: u32,
@@ -219,10 +219,12 @@ pub enum TurnstileMessage {
     Diagnostics {
         items: Vec<DiagnosticInfo>,
     },
-    /// Proof annotations after fusion of LSP diagnostics with non-LSP
-    /// annotations. This is what the frontend renders as squiggles and gutter marks.
+    /// CodeMirror-ready annotation views derived from the proof's
+    /// [`LSPAnnotation`](crate::proof::LSPAnnotation) against the current
+    /// source. Offsets are already resolved (UTF-16); the frontend renders
+    /// these directly as squiggles, gutter marks, and hover tooltips.
     AnnotationsUpdated {
-        items: Vec<crate::proof::Annotation>,
+        annotations: crate::proof::DerivedAnnotations,
     },
     FileProgress {
         items: Vec<FileProgressRange>,
@@ -247,9 +249,12 @@ impl fmt::Display for TurnstileMessage {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Diagnostics { items } => write!(f, "diagnostics ({} items)", items.len()),
-            Self::AnnotationsUpdated { items } => {
-                write!(f, "annotationsUpdated ({} items)", items.len())
-            }
+            Self::AnnotationsUpdated { annotations } => write!(
+                f,
+                "annotationsUpdated ({} tokens, {} underlines)",
+                annotations.syntax_coloring.len(),
+                annotations.underlines.len()
+            ),
             Self::FileProgress { items } => write!(f, "fileProgress ({} ranges)", items.len()),
             Self::ElaborationDone => write!(f, "elaborationDone"),
             Self::ShowMessage { severity, message } => {
@@ -1623,8 +1628,10 @@ mod tests {
                 "diagnostics (0 items)",
             ),
             (
-                TurnstileMessage::AnnotationsUpdated { items: vec![] },
-                "annotationsUpdated (0 items)",
+                TurnstileMessage::AnnotationsUpdated {
+                    annotations: crate::proof::DerivedAnnotations::default(),
+                },
+                "annotationsUpdated (0 tokens, 0 underlines)",
             ),
             (
                 TurnstileMessage::FileProgress { items: vec![] },

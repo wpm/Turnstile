@@ -104,54 +104,6 @@ struct ContentChange {
     text: String,
 }
 
-/// Convert an LSP (line, character) position to a byte offset in `source`.
-/// Both line and character are 0-indexed; character counts UTF-16 code units.
-fn lsp_pos_to_offset(source: &str, target_line: u32, target_character: u32) -> usize {
-    let mut current_line = 0u32;
-    let mut utf16_col = 0u32;
-    let mut offset = 0;
-
-    for ch in source.chars() {
-        if current_line == target_line {
-            if utf16_col >= target_character {
-                return offset;
-            }
-            utf16_col += u32::try_from(ch.len_utf16()).unwrap_or(2);
-        } else if ch == '\n' {
-            current_line += 1;
-        }
-        offset += ch.len_utf8();
-    }
-    offset.min(source.len())
-}
-
-/// Apply a batch of incremental LSP content changes to `source` in order.
-/// Changes must be applied last-to-first so earlier offsets stay valid.
-fn apply_content_changes(source: &mut String, changes: &[ContentChange]) {
-    if changes.is_empty() {
-        return;
-    }
-    if changes.len() == 1 {
-        let c = &changes[0];
-        let start = lsp_pos_to_offset(source, c.range.start.line, c.range.start.character);
-        let end = lsp_pos_to_offset(source, c.range.end.line, c.range.end.character);
-        source.replace_range(start..end, &c.text);
-        return;
-    }
-    let mut edits: Vec<(usize, usize, &str)> = changes
-        .iter()
-        .map(|c| {
-            let start = lsp_pos_to_offset(source, c.range.start.line, c.range.start.character);
-            let end = lsp_pos_to_offset(source, c.range.end.line, c.range.end.character);
-            (start, end, c.text.as_str())
-        })
-        .collect();
-    edits.sort_by_key(|e| std::cmp::Reverse(e.0));
-    for (start, end, text) in edits {
-        source.replace_range(start..end, text);
-    }
-}
-
 fn dispatch_turnstile_message(app: &AppHandle, msg: TurnstileMessage) {
     use std::sync::atomic::Ordering;
 
@@ -166,12 +118,14 @@ fn dispatch_turnstile_message(app: &AppHandle, msg: TurnstileMessage) {
             let proof = state.proof.clone();
             let app = app.clone();
             tauri::async_runtime::spawn(async move {
-                let items = {
+                let annotations = {
                     let mut guard = proof.lock().await;
-                    guard.annotations.set_diagnostics(&diagnostics);
-                    guard.annotations.items.clone()
+                    guard.formal.annotations.diagnostics = diagnostics;
+                    // Resolve against the same source under the same lock so the
+                    // offsets match the text they index into.
+                    guard.formal.annotations.derive(&guard.formal.source)
                 };
-                emit_turnstile(&app, &TurnstileMessage::AnnotationsUpdated { items });
+                emit_turnstile(&app, &TurnstileMessage::AnnotationsUpdated { annotations });
             });
         }
         TurnstileMessage::ElaborationDone => {
@@ -334,26 +288,39 @@ fn apply_semantic_tokens(app: &AppHandle, tokens: &lsp_types::SemanticTokens) {
     let proof = state.proof.clone();
     let app_handle = app.clone();
     tauri::async_runtime::spawn(async move {
-        let items = {
+        let annotations = {
             let mut guard = proof.lock().await;
-            guard.annotations.set_tokens(&decoded);
-            guard.annotations.items.clone()
+            guard.formal.annotations.tokens = decoded;
+            guard.formal.annotations.derive(&guard.formal.source)
         };
-        emit_turnstile(&app_handle, &TurnstileMessage::AnnotationsUpdated { items });
+        emit_turnstile(
+            &app_handle,
+            &TurnstileMessage::AnnotationsUpdated { annotations },
+        );
     });
 }
 
 #[tauri::command]
 #[tracing::instrument(level = "debug", skip_all)]
-async fn update_document(app: AppHandle, changes: Vec<ContentChange>) -> Result<(), String> {
+async fn update_document(
+    app: AppHandle,
+    full_text: String,
+    changes: Vec<ContentChange>,
+) -> Result<(), String> {
     use lsp_types::TextDocumentContentChangeEvent;
 
     let state = app.state::<AppState>();
 
-    // Apply incremental changes to the stored source so `read_lean_source` stays in sync.
+    // The backend is the single source of truth for the formal proof. The editor
+    // sends the whole document it is displaying; we assign it verbatim rather
+    // than replaying the diff against our own copy, so the authoritative source
+    // is correct by construction (not by correct re-derivation). The incremental
+    // `changes` below are still forwarded to the LSP, which tracks the document
+    // via versioned `didChange` — that is the one incrementor we keep, because
+    // incrementalism is the LSP's native protocol.
     let source_is_empty = {
         let mut proof = state.proof.lock().await;
-        apply_content_changes(&mut proof.formal.source, &changes);
+        proof.formal.source = full_text;
         proof.formal.source.trim().is_empty()
     };
 
@@ -1104,9 +1071,8 @@ mod tests {
     use std::sync::Mutex;
 
     use super::{
-        apply_content_changes, assistant, end_of_document_position, last_non_whitespace_position,
-        llm, lsp_pos_to_offset, proof, should_generate_prose, AppState, ContentChange, LspPosition,
-        LspRange, ShouldGenerate,
+        assistant, end_of_document_position, last_non_whitespace_position, llm, proof,
+        should_generate_prose, AppState, ShouldGenerate,
     };
     use crate::lean;
     use std::sync::Arc;
@@ -1132,115 +1098,6 @@ mod tests {
         assert_eq!(last_non_whitespace_position("abc   "), (0, 2));
         // Trailing blank lines are skipped; we land on the last content line.
         assert_eq!(last_non_whitespace_position("abc\ndef\n\n  "), (1, 2));
-    }
-
-    // -- lsp_pos_to_offset --------------------------------------------------
-
-    fn pos(line: u32, character: u32) -> LspPosition {
-        LspPosition { line, character }
-    }
-
-    fn change(sl: u32, sc: u32, el: u32, ec: u32, text: &str) -> ContentChange {
-        ContentChange {
-            range: LspRange {
-                start: pos(sl, sc),
-                end: pos(el, ec),
-            },
-            text: text.to_string(),
-        }
-    }
-
-    #[test]
-    fn lsp_pos_to_offset_start_of_doc() {
-        assert_eq!(lsp_pos_to_offset("hello\nworld", 0, 0), 0);
-    }
-
-    #[test]
-    fn lsp_pos_to_offset_mid_first_line() {
-        assert_eq!(lsp_pos_to_offset("hello\nworld", 0, 3), 3);
-    }
-
-    #[test]
-    fn lsp_pos_to_offset_start_of_second_line() {
-        assert_eq!(lsp_pos_to_offset("hello\nworld", 1, 0), 6);
-    }
-
-    #[test]
-    fn lsp_pos_to_offset_mid_second_line() {
-        assert_eq!(lsp_pos_to_offset("hello\nworld", 1, 3), 9);
-    }
-
-    #[test]
-    fn lsp_pos_to_offset_empty_doc() {
-        assert_eq!(lsp_pos_to_offset("", 0, 0), 0);
-    }
-
-    #[test]
-    fn lsp_pos_to_offset_clamps_to_doc_length() {
-        assert_eq!(lsp_pos_to_offset("abc", 0, 100), 3);
-    }
-
-    #[test]
-    fn lsp_pos_to_offset_clamps_out_of_bounds_line() {
-        assert_eq!(lsp_pos_to_offset("hello\nworld", 5, 0), 11);
-    }
-
-    // -- apply_content_changes ----------------------------------------------
-
-    #[test]
-    fn apply_changes_single_insertion() {
-        let mut s = "hello world".to_string();
-        apply_content_changes(&mut s, &[change(0, 5, 0, 5, ",")]);
-        assert_eq!(s, "hello, world");
-    }
-
-    #[test]
-    fn apply_changes_single_deletion() {
-        let mut s = "hello world".to_string();
-        apply_content_changes(&mut s, &[change(0, 5, 0, 6, "")]);
-        assert_eq!(s, "helloworld");
-    }
-
-    #[test]
-    fn apply_changes_single_replacement() {
-        let mut s = "hello world".to_string();
-        apply_content_changes(&mut s, &[change(0, 6, 0, 11, "Lean")]);
-        assert_eq!(s, "hello Lean");
-    }
-
-    #[test]
-    fn apply_changes_append_newline_and_text() {
-        let mut s = "theorem foo".to_string();
-        apply_content_changes(&mut s, &[change(0, 11, 0, 11, " : True")]);
-        assert_eq!(s, "theorem foo : True");
-    }
-
-    #[test]
-    fn apply_changes_multiline_replacement() {
-        let mut s = "line0\nline1\nline2".to_string();
-        // Replace "line1" (line 1, chars 0–5) with "replaced"
-        apply_content_changes(&mut s, &[change(1, 0, 1, 5, "replaced")]);
-        assert_eq!(s, "line0\nreplaced\nline2");
-    }
-
-    #[test]
-    fn apply_changes_multiple_non_overlapping() {
-        // Two insertions on the same line at different positions.
-        // CodeMirror sends them in document order; we must apply last-first.
-        let mut s = "abcdef".to_string();
-        let changes = vec![
-            change(0, 2, 0, 2, "X"), // insert X at pos 2
-            change(0, 4, 0, 4, "Y"), // insert Y at pos 4 (in old doc)
-        ];
-        apply_content_changes(&mut s, &changes);
-        assert_eq!(s, "abXcdYef");
-    }
-
-    #[test]
-    fn apply_changes_empty_change_list() {
-        let mut s = "unchanged".to_string();
-        apply_content_changes(&mut s, &[]);
-        assert_eq!(s, "unchanged");
     }
 
     /// Minimal `AppState` suitable for exercising `should_generate_prose`. The
