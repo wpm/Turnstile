@@ -142,16 +142,17 @@ test("assistant chat: streams a reply about the goal and renders math", async ({
   );
 });
 
-test("assistant chat: bubbles keep their full height when the transcript overflows", async ({
+test("assistant chat: bubbles hug their text whether or not the transcript overflows", async ({
   page,
 }) => {
-  // Regression: in WebKit (the macOS Tauri webview), the assistant bubbles
-  // clipped their text once enough turns overflowed the scrollable transcript.
-  // The transcript is a column flex container, so a shrinkable bubble row gets
-  // squashed to fit and its text is cut off. The fix pins the rows to their
-  // natural height (`flex-shrink: 0`) and lets the transcript scroll. Chromium
-  // doesn't reproduce the squash, so assert the CSS contract that prevents it
-  // and that no rendered bubble clips its own content.
+  // Regression: in WebKit (the macOS Tauri webview) the transcript's flex rows
+  // got a stretched used height — too short, clipping the bubble's text when
+  // the turns overflowed; too tall, leaving empty space below the text when
+  // they didn't. The fix pins each row to its content height
+  // (`flex: 0 0 auto; height: fit-content`) so the bubble is exactly as tall as
+  // its text and the transcript scrolls. Chromium doesn't reproduce the WebKit
+  // stretch, so assert the CSS contract plus that no bubble clips OR balloons
+  // past its own text.
   await openApp(page);
   const input = page.getByPlaceholder("Message Proof Assistant…");
   // Send sequentially: send() is a no-op while a reply is still streaming, so
@@ -170,20 +171,34 @@ test("assistant chat: bubbles keep their full height when the transcript overflo
     );
   }
 
-  // Rows must not be shrinkable — that is what stops WebKit from clipping them.
-  const shrink = await page
-    .locator(".bubble-row")
-    .first()
-    .evaluate((el) => getComputedStyle(el).flexShrink);
-  expect(shrink).toBe("0");
+  // The CSS contract that defeats the WebKit stretch: rows are neither
+  // flex-grown nor -shrunk, so they take their content height. (computed
+  // `height` resolves to a used pixel value, not the `fit-content` keyword, so
+  // the behavioral check below is what proves the sizing.)
+  const row = page.locator(".bubble-row").first();
+  expect(await row.evaluate((el) => getComputedStyle(el).flexGrow)).toBe("0");
+  expect(await row.evaluate((el) => getComputedStyle(el).flexShrink)).toBe("0");
 
-  // No assistant bubble clips its own content (clientHeight == scrollHeight).
-  const clipped = await page
-    .locator(".bubble.assistant")
-    .evaluateAll(
-      (els) => els.filter((el) => el.clientHeight < el.scrollHeight - 1).length,
-    );
-  expect(clipped).toBe(0);
+  // Every assistant bubble is exactly as tall as its rendered text: it neither
+  // clips (box shorter than content) nor balloons (box taller than the text
+  // extent + padding).
+  const bad = await page.locator(".bubble.assistant").evaluateAll(
+    (els) =>
+      els.filter((el) => {
+        const clipped = el.clientHeight < el.scrollHeight - 1;
+        const kids = [...el.children];
+        const cs = getComputedStyle(el);
+        const pad = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
+        const top = Math.min(...kids.map((k) => k.getBoundingClientRect().top));
+        const bot = Math.max(
+          ...kids.map((k) => k.getBoundingClientRect().bottom),
+        );
+        const textExtent = bot - top + pad;
+        const ballooned = el.getBoundingClientRect().height > textExtent + 6;
+        return clipped || ballooned;
+      }).length,
+  );
+  expect(bad).toBe(0);
 });
 
 test("assistant chat: replies without echoing the user's message", async ({

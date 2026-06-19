@@ -252,11 +252,14 @@
 
   .bubble-row {
     display: flex;
-    /* The transcript is a scrollable column flex container. Without this,
-       WebKit (the macOS Tauri webview) shrinks each row to fit and clips the
-       bubble's text once the turns overflow the panel. Keep rows at their
-       natural height and let the transcript scroll instead. */
-    flex-shrink: 0;
+    /* The transcript is a scrollable column flex container. In WebKit (the
+       macOS Tauri webview) its rows otherwise get a stretched used height —
+       too short (clipping the bubble's text) when the turns overflow, too tall
+       (a bubble with empty space below the text) when they don't. Pinning each
+       row to its content height sizes the bubble to exactly its text and lets
+       the transcript scroll. */
+    flex: 0 0 auto;
+    height: fit-content;
   }
 
   .bubble-row.user {
