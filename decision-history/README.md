@@ -7,7 +7,7 @@ the choice made, the alternatives weighed, and the consequences accepted.
 An ADR is a point-in-time record, not living documentation. Once accepted, an ADR
 is not rewritten when the world changes; instead a new ADR supersedes it and the
 old one is marked `Superseded`. The trail of records is the value — it tells a
-future reader *why* the system is the way it is, including the roads not taken.
+future reader _why_ the system is the way it is, including the roads not taken.
 
 For the canonical description of the practice, see Michael Nygard's original
 article, [Documenting Architecture Decisions](https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions),
@@ -24,6 +24,6 @@ and the community hub at [adr.github.io](https://adr.github.io/).
 
 ## Index
 
-| ADR | Title | Status |
-|-----|-------|--------|
+| ADR                                   | Title                                          | Status   |
+| ------------------------------------- | ---------------------------------------------- | -------- |
 | [0001](0001-gui-viewers-over-nats.md) | GUI viewers over NATS with NATS-based playback | Accepted |
