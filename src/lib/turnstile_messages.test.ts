@@ -23,6 +23,7 @@ import {
   elaborationDone,
   showMessage,
 } from "./turnstile_messages";
+import { EMPTY_ANNOTATIONS } from "./annotations";
 
 function emit(payload: unknown) {
   if (!captured) throw new Error("no turnstile-message listener registered");
@@ -32,7 +33,7 @@ function emit(payload: unknown) {
 beforeEach(() => {
   captured = null;
   fileProgress.set([]);
-  annotations.set([]);
+  annotations.set(EMPTY_ANNOTATIONS);
   lspStatus.set(null);
   goalState.set("");
   elaborationDone.set(0);
@@ -56,9 +57,14 @@ describe("startMessageListener", () => {
 
   it("handles annotationsUpdated", async () => {
     await startMessageListener();
-    const items = [{ kind: "token", line: 1, col: 0, length: 2 }];
-    emit({ type: "annotationsUpdated", items });
-    expect(get(annotations)).toEqual(items);
+    const payload = {
+      syntaxColoring: [{ from: 0, to: 2, tokenType: "keyword" }],
+      underlines: [],
+      gutter: [],
+      hover: [],
+    };
+    emit({ type: "annotationsUpdated", annotations: payload });
+    expect(get(annotations)).toEqual(payload);
   });
 
   it("handles lspStatus", async () => {
@@ -95,7 +101,7 @@ describe("startMessageListener", () => {
     emit({ type: "semanticTokenRefresh" });
     emit({ type: "semanticTokens", items: [] });
     // None of these mutate the public stores.
-    expect(get(annotations)).toEqual([]);
+    expect(get(annotations)).toEqual(EMPTY_ANNOTATIONS);
     expect(get(goalState)).toBe("");
   });
 

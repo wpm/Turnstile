@@ -18,14 +18,14 @@ use lsp_types::{
     DocumentSymbolResponse, GotoDefinitionResponse, Hover, HoverContents, Location, LocationLink,
     MarkedString, MarkupKind, MessageType, PublishDiagnosticsParams, TextEdit, WorkspaceEdit,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fmt;
 use tracing::{debug, error, instrument, warn};
 use ts_rs::TS;
 // ── Public DTO types for Tauri events ─────────────────────────────────
 
-#[derive(Clone, Debug, Serialize, TS)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../src/lib/")]
 pub struct DiagnosticInfo {
     pub start_line: u32,
@@ -36,7 +36,7 @@ pub struct DiagnosticInfo {
     pub message: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, TS)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../src/lib/")]
 pub struct SemanticToken {
     pub line: u32,
@@ -51,6 +51,49 @@ pub struct SemanticToken {
 pub struct LspStatus {
     pub state: String, // "connected", "error", ""
     pub message: String,
+}
+
+/// Why the Proof Assistant is disconnected. Drives the distinct toast messages
+/// in the failure-surfacing story (#60). Never carries the API key.
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq, TS)]
+#[ts(export, export_to = "../../src/lib/")]
+#[serde(rename_all = "camelCase")]
+pub enum DisconnectReason {
+    /// No API key is stored or provided via the environment.
+    NoKey,
+    /// A key is present but the Anthropic API rejected it (auth error).
+    KeyRejected,
+    /// The OS secret store is unavailable on this platform (e.g. headless
+    /// Linux with no Secret Service); the env-var fallback is the way out.
+    StoreUnavailable,
+}
+
+impl DisconnectReason {
+    /// A short, user-facing explanation. Must never contain the key (#63).
+    #[must_use]
+    pub const fn message(self) -> &'static str {
+        match self {
+            Self::NoKey => "no API key set",
+            Self::KeyRejected => "API key was rejected",
+            Self::StoreUnavailable => "OS secret store unavailable",
+        }
+    }
+}
+
+/// Connection status of the Proof Assistant (the LLM backend).
+///
+/// Mirrors the [`LspStatus`] pattern: recorded in `AppState` and emitted to the
+/// frontend as a [`TurnstileMessage::AssistantStatus`] on startup and on change,
+/// recoverable via the `get_assistant_status` command. The `Disconnected`
+/// `reason` never contains the API key.
+#[derive(Clone, Debug, Serialize, PartialEq, Eq, TS)]
+#[ts(export, export_to = "../../src/lib/")]
+#[serde(tag = "state", rename_all = "camelCase")]
+pub enum AssistantStatus {
+    /// A usable key is present; the assistant can talk to the API.
+    Connected,
+    /// No usable backend. The assistant produces no turns — never an echo.
+    Disconnected { reason: DisconnectReason },
 }
 
 /// A single completion candidate from `textDocument/completion`.
@@ -176,10 +219,12 @@ pub enum TurnstileMessage {
     Diagnostics {
         items: Vec<DiagnosticInfo>,
     },
-    /// Proof annotations after fusion of LSP diagnostics with non-LSP
-    /// annotations. This is what the frontend renders as squiggles and gutter marks.
+    /// CodeMirror-ready annotation views derived from the proof's
+    /// [`LSPAnnotation`](crate::proof::LSPAnnotation) against the current
+    /// source. Offsets are already resolved (UTF-16); the frontend renders
+    /// these directly as squiggles, gutter marks, and hover tooltips.
     AnnotationsUpdated {
-        items: Vec<crate::proof::Annotation>,
+        annotations: crate::proof::DerivedAnnotations,
     },
     FileProgress {
         items: Vec<FileProgressRange>,
@@ -190,6 +235,7 @@ pub enum TurnstileMessage {
         message: String,
     },
     LspStatus(LspStatus),
+    AssistantStatus(AssistantStatus),
     SemanticTokenRefresh,
     SemanticTokens {
         items: Vec<SemanticToken>,
@@ -203,15 +249,19 @@ impl fmt::Display for TurnstileMessage {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Diagnostics { items } => write!(f, "diagnostics ({} items)", items.len()),
-            Self::AnnotationsUpdated { items } => {
-                write!(f, "annotationsUpdated ({} items)", items.len())
-            }
+            Self::AnnotationsUpdated { annotations } => write!(
+                f,
+                "annotationsUpdated ({} tokens, {} underlines)",
+                annotations.syntax_coloring.len(),
+                annotations.underlines.len()
+            ),
             Self::FileProgress { items } => write!(f, "fileProgress ({} ranges)", items.len()),
             Self::ElaborationDone => write!(f, "elaborationDone"),
             Self::ShowMessage { severity, message } => {
                 write!(f, "showMessage [{severity}]: {message}")
             }
             Self::LspStatus(s) => write!(f, "lspStatus [{}]: {}", s.state, s.message),
+            Self::AssistantStatus(s) => write!(f, "assistantStatus [{s}]"),
             Self::SemanticTokenRefresh => write!(f, "semanticTokenRefresh"),
             Self::SemanticTokens { items } => write!(f, "semanticTokens ({} tokens)", items.len()),
             Self::GoalStateUpdated(_) => write!(f, "goalStateUpdated"),
@@ -255,6 +305,15 @@ impl fmt::Display for LspStatus {
             write!(f, "{}", self.message)
         } else {
             write!(f, "{}: {}", self.state, self.message)
+        }
+    }
+}
+
+impl fmt::Display for AssistantStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Connected => write!(f, "connected"),
+            Self::Disconnected { reason } => write!(f, "disconnected: {}", reason.message()),
         }
     }
 }
@@ -803,6 +862,64 @@ mod tests {
     use super::*;
     use lsp_types::{DocumentSymbolResponse, GotoDefinitionResponse, Hover};
     use serde_json::json;
+
+    #[test]
+    fn assistant_status_connected_serializes_with_state_tag() {
+        let json = serde_json::to_value(AssistantStatus::Connected).unwrap();
+        assert_eq!(json, serde_json::json!({ "state": "connected" }));
+    }
+
+    #[test]
+    fn assistant_status_disconnected_serializes_reason() {
+        let status = AssistantStatus::Disconnected {
+            reason: DisconnectReason::NoKey,
+        };
+        let json = serde_json::to_value(&status).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({ "state": "disconnected", "reason": "noKey" })
+        );
+    }
+
+    #[test]
+    fn disconnect_reasons_serialize_camel_case() {
+        assert_eq!(
+            serde_json::to_value(DisconnectReason::KeyRejected).unwrap(),
+            serde_json::json!("keyRejected")
+        );
+        assert_eq!(
+            serde_json::to_value(DisconnectReason::StoreUnavailable).unwrap(),
+            serde_json::json!("storeUnavailable")
+        );
+    }
+
+    #[test]
+    fn disconnect_reason_messages_are_present_and_keyless() {
+        for reason in [
+            DisconnectReason::NoKey,
+            DisconnectReason::KeyRejected,
+            DisconnectReason::StoreUnavailable,
+        ] {
+            let msg = reason.message();
+            assert!(!msg.is_empty());
+            // Defense in depth: the human message must never look like a key.
+            assert!(!msg.contains("sk-"));
+        }
+    }
+
+    #[test]
+    fn assistant_status_display_is_human_readable() {
+        assert_eq!(format!("{}", AssistantStatus::Connected), "connected");
+        assert_eq!(
+            format!(
+                "{}",
+                AssistantStatus::Disconnected {
+                    reason: DisconnectReason::NoKey
+                }
+            ),
+            "disconnected: no API key set"
+        );
+    }
 
     fn tokens_from_raw(data: &[u32]) -> Vec<lsp_types::SemanticToken> {
         data.chunks_exact(5)
@@ -1511,8 +1628,10 @@ mod tests {
                 "diagnostics (0 items)",
             ),
             (
-                TurnstileMessage::AnnotationsUpdated { items: vec![] },
-                "annotationsUpdated (0 items)",
+                TurnstileMessage::AnnotationsUpdated {
+                    annotations: crate::proof::DerivedAnnotations::default(),
+                },
+                "annotationsUpdated (0 tokens, 0 underlines)",
             ),
             (
                 TurnstileMessage::FileProgress { items: vec![] },

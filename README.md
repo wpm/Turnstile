@@ -19,10 +19,11 @@ turnstile (⊢) separates what you have from what you must show.
 ## Running
 
 Requirements: [pnpm](https://pnpm.io), the [Rust
-toolchain](https://rustup.rs), and an `ANTHROPIC_API_KEY` in the
-environment (without one the assistant falls back to a mock that echoes).
-On first launch Turnstile installs elan, the pinned Lean toolchain, and
-the Mathlib cache automatically — the status bar tracks progress.
+toolchain](https://rustup.rs), and an Anthropic API key. Without a usable
+key the Proof Assistant reports a disconnected status rather than echoing
+or fabricating replies. On first launch Turnstile installs elan, the
+pinned Lean toolchain, and the Mathlib cache automatically — the status
+bar tracks progress.
 
 ```sh
 pnpm install

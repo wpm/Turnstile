@@ -18,7 +18,7 @@
     "test:scripts": "vitest run --project scripts",
     "tauri": "tauri",
     "brand:assets": "python3 brand/generate.py",
-    "test:e2e": "playwright install chromium && playwright test",
+    "test:e2e": "playwright install chromium webkit && playwright test",
     "test:lean-server": "vitest run --project lean-server",
     "verify": "pnpm run test && pnpm run test:scripts && pnpm run check && pnpm run lint && pnpm run format:check && pnpm run verify:rust && pnpm run test:e2e && pnpm run test:lean-server",
     "verify:rust": "cd src-tauri && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test"

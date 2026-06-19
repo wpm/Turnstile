@@ -33,10 +33,37 @@ const eagerLsp =
   typeof window !== "undefined" &&
   new URLSearchParams(window.location.search).get("eager-lsp") === "1";
 
+/**
+ * Simulate the assistant's disconnected state for e2e. `?assistant=disconnected`
+ * (optionally `disconnected:keyRejected` / `:storeUnavailable`) makes the fake
+ * report a `Disconnected` status — so the disabled-input + error-toast UI can be
+ * exercised in browser mode. Absent or any other value → connected.
+ */
+const assistantParam =
+  typeof window !== "undefined"
+    ? (new URLSearchParams(window.location.search).get("assistant") ?? "")
+    : "";
+
+function parseAssistantStatus():
+  | { state: "connected" }
+  | { state: "disconnected"; reason: string } {
+  if (assistantParam.startsWith("disconnected")) {
+    const reason = assistantParam.split(":")[1] || "noKey";
+    return { state: "disconnected", reason };
+  }
+  return { state: "connected" };
+}
+
 function announceConnected() {
   lspAnnounced = true;
   lastLspStatus = { state: "connected", message: "connected" };
   emit("turnstile-message", { type: "lspStatus", ...lastLspStatus });
+  // Announce the assistant status alongside the LSP one, mirroring the real
+  // backend's startup emit. (Recoverable via get_assistant_status either way.)
+  emit("turnstile-message", {
+    type: "assistantStatus",
+    ...lastAssistantStatus,
+  });
 }
 
 export function fakeListen(event: string, cb: Listener): () => void {
@@ -61,6 +88,11 @@ export function emit(event: string, payload: unknown): void {
 
 let lspAnnounced = false;
 let lastLspStatus: { state: string; message: string } | null = null;
+// The assistant status the fake reports — connected by default, or the
+// disconnected variant selected via `?assistant=disconnected[:reason]`.
+const lastAssistantStatus:
+  | { state: "connected" }
+  | { state: "disconnected"; reason: string } = parseAssistantStatus();
 let source = "";
 let goalState = "";
 const transcript: {
@@ -91,39 +123,6 @@ export const PROSE_GEN_MS = 300;
 
 // ── Lean-ish elaboration ────────────────────────────────────────────────
 
-interface LspPosition {
-  line: number;
-  character: number;
-}
-interface ContentChange {
-  range: { start: LspPosition; end: LspPosition };
-  text: string;
-}
-
-function posToOffset(doc: string, pos: LspPosition): number {
-  const lines = doc.split("\n");
-  let offset = 0;
-  for (let i = 0; i < pos.line && i < lines.length; i++) {
-    offset += lines[i].length + 1;
-  }
-  return Math.min(offset + pos.character, doc.length);
-}
-
-function applyChanges(doc: string, changes: ContentChange[]): string {
-  const edits = changes
-    .map((c) => ({
-      start: posToOffset(doc, c.range.start),
-      end: posToOffset(doc, c.range.end),
-      text: c.text,
-    }))
-    .sort((a, b) => b.start - a.start);
-  let out = doc;
-  for (const e of edits) {
-    out = out.slice(0, e.start) + e.text + out.slice(e.end);
-  }
-  return out;
-}
-
 const LEAN_KEYWORDS = new Set([
   "theorem",
   "lemma",
@@ -151,50 +150,69 @@ const LEAN_KEYWORDS = new Set([
   "constructor",
 ]);
 
-/** Token + diagnostic annotations a real Lean session would produce. */
+/**
+ * The CodeMirror-ready annotation views a real Lean session would produce —
+ * mirroring the backend's `LSPAnnotation::derive`: offsets are resolved to
+ * absolute UTF-16 code units (the unit CodeMirror addresses the document in).
+ */
 function computeAnnotations(doc: string) {
-  const annotations: object[] = [];
+  // UTF-16 offset of the start of each line (0-indexed by line number).
+  const lineStarts: number[] = [0];
+  let off = 0;
+  for (const ch of doc) {
+    off += ch.length; // JS string .length counts UTF-16 code units
+    if (ch === "\n") lineStarts.push(off);
+  }
+  const resolve = (line: number, col: number) => {
+    const idx = Math.min(Math.max(line - 1, 0), lineStarts.length - 1);
+    return lineStarts[idx] + col;
+  };
+
+  const syntaxColoring: object[] = [];
+  const underlines: object[] = [];
+  const gutter: { line: number; severity: string }[] = [];
+  const hover: object[] = [];
+
   doc.split("\n").forEach((lineText, i) => {
+    const line = i + 1;
     const re = /[A-Za-z_][A-Za-z0-9_.']*/g;
     let m;
     while ((m = re.exec(lineText)) !== null) {
       if (LEAN_KEYWORDS.has(m[0])) {
-        annotations.push({
-          kind: "token",
-          line: i + 1,
-          col: m.index,
-          length: m[0].length,
+        const from = resolve(line, m.index);
+        syntaxColoring.push({
+          from,
+          to: from + m[0].length,
           tokenType: "keyword",
-          modifiers: [],
         });
       }
     }
+    const addDiagnostic = (
+      col: number,
+      len: number,
+      severity: string,
+      message: string,
+    ) => {
+      const from = resolve(line, col);
+      const to = from + len;
+      underlines.push({ from, to, severity });
+      hover.push({ from, to, severity, message });
+      // One mark per line, error beats warning.
+      const existing = gutter.find((g) => g.line === line);
+      if (!existing) gutter.push({ line, severity });
+      else if (existing.severity !== "error" && severity === "error")
+        existing.severity = "error";
+    };
     const sorryIdx = lineText.indexOf("sorry");
-    if (sorryIdx >= 0) {
-      annotations.push({
-        kind: "diagnostic",
-        startLine: i + 1,
-        startCol: sorryIdx,
-        endLine: i + 1,
-        endCol: sorryIdx + 5,
-        severity: "warning",
-        message: "declaration uses 'sorry'",
-      });
-    }
+    if (sorryIdx >= 0)
+      addDiagnostic(sorryIdx, 5, "warning", "declaration uses 'sorry'");
     const oopsIdx = lineText.indexOf("oops");
-    if (oopsIdx >= 0) {
-      annotations.push({
-        kind: "diagnostic",
-        startLine: i + 1,
-        startCol: oopsIdx,
-        endLine: i + 1,
-        endCol: oopsIdx + 4,
-        severity: "error",
-        message: `unknown identifier 'oops'`,
-      });
-    }
+    if (oopsIdx >= 0)
+      addDiagnostic(oopsIdx, 4, "error", "unknown identifier 'oops'");
   });
-  return annotations;
+
+  gutter.sort((a, b) => a.line - b.line);
+  return { syntaxColoring, underlines, gutter, hover };
 }
 
 function computeGoalState(doc: string): string {
@@ -224,7 +242,7 @@ function elaborate(): void {
     if (seq !== elaborationSeq) return;
     emit("turnstile-message", {
       type: "annotationsUpdated",
-      items: computeAnnotations(source),
+      annotations: computeAnnotations(source),
     });
     emit("turnstile-message", { type: "elaborationDone" });
     goalState = computeGoalState(source);
@@ -281,7 +299,11 @@ async function sendMessage(content: string): Promise<string> {
         ? "There is no goal state yet — the editor is empty."
         : `The current goal is:\n\n$$${goalState.split("⊢").pop()?.trim() ?? ""}$$\n\nWe can finish by infinite descent.`;
   } else {
-    reply = `[echo] ${content}`;
+    // A deterministic, non-echo reply. The real assistant never echoes (#57),
+    // so the fake must not either — tests assert on this fixed sentence rather
+    // than the user's text bounced back.
+    reply =
+      "I'm the Proof Assistant. Ask me about the current goal and I'll help you make progress.";
   }
   await streamReply(reply);
   transcript.turns.push({
@@ -330,14 +352,15 @@ export async function fakeInvoke(
 ): Promise<unknown> {
   switch (cmd) {
     case "update_document":
-      source = applyChanges(
-        source,
-        (args?.changes as ContentChange[] | undefined) ?? [],
-      );
+      // Route (3): the backend is the source of truth and assigns the whole
+      // document the editor sends, rather than replaying the incremental diff.
+      source = (args?.fullText as string | undefined) ?? source;
       elaborate();
       return null;
     case "get_lsp_status":
       return lastLspStatus;
+    case "get_assistant_status":
+      return lastAssistantStatus;
     case "lsp_hover": {
       const doc = source.split("\n");
       const line = doc[(args?.line as number | undefined) ?? 0] ?? "";
@@ -360,6 +383,18 @@ export async function fakeInvoke(
       return { ...settings };
     case "save_settings":
       settings = { ...(args?.settings as typeof settings) };
+      return null;
+    case "take_settings_load_warning":
+      // The fake backend never has a corrupt settings file to recover from.
+      return null;
+    case "has_api_key":
+      // Report a key present so the first-run modal never pops in dev/e2e — even
+      // under `?assistant=disconnected`, which simulates a *rejected* key (one
+      // is stored, the API refused it), so the disconnected toast + disabled
+      // input can be tested without the onboarding modal covering them.
+      return true;
+    case "set_api_key":
+    case "clear_api_key":
       return null;
     case "get_default_assistant_prompt":
       return "You are a proof collaborator. (fake default)";

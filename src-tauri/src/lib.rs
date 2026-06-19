@@ -13,6 +13,7 @@ mod lean;
 pub mod llm;
 pub mod menu;
 pub mod proof;
+pub mod secret;
 pub mod session;
 pub mod settings;
 mod setup;
@@ -23,7 +24,8 @@ use std::sync::{Arc, Mutex};
 
 use lean::client::Client as LeanClient;
 use lean::messages::turnstile::{
-    emit_turnstile, GoalStateInfo, HoverInfo, LspStatus, TurnstileMessage,
+    emit_turnstile, AssistantStatus, DisconnectReason, GoalStateInfo, HoverInfo, LspStatus,
+    TurnstileMessage,
 };
 use lean::messages::DisplayLspParams;
 use tauri::{AppHandle, Emitter, Manager};
@@ -35,10 +37,16 @@ pub struct AppState {
     pub proof: Arc<tokio::sync::Mutex<proof::Proof>>,
     /// Assistant conversation state.
     pub transcript: Arc<tokio::sync::Mutex<assistant::Transcript>>,
-    /// LLM backend (mock or real Anthropic).
+    /// LLM backend (the Anthropic API client).
     pub llm: Arc<dyn llm::Llm>,
     /// Persisted user settings.
     pub settings: Arc<tokio::sync::Mutex<settings::Settings>>,
+    /// Warning to surface once if `settings.json` was present but unparseable at
+    /// startup (the user's settings were reset to defaults). `None` on a clean
+    /// load. The frontend drains this on mount via `take_settings_load_warning`
+    /// — recovering it by command rather than a startup emit avoids the race
+    /// where the toast fires before the webview's listener is registered.
+    pub settings_load_warning: Arc<Mutex<Option<String>>>,
     /// Path of the currently open `.turn` file (None if unsaved).
     pub current_session_path: Arc<tokio::sync::Mutex<Option<PathBuf>>>,
     /// Whether the session has unsaved changes.
@@ -50,8 +58,17 @@ pub struct AppState {
     /// startup race where `start_lsp` emits "connected" before the frontend's
     /// `turnstile-message` listener is registered.
     pub last_lsp_status: Arc<Mutex<Option<LspStatus>>>,
+    /// Latest Proof Assistant connection status emitted to the frontend.
+    /// Recorded on every emit so a late-subscribing webview can recover it via
+    /// `get_assistant_status`, mirroring `last_lsp_status`.
+    pub last_assistant_status: Arc<Mutex<Option<AssistantStatus>>>,
     /// Whether the formal proof has changed since the last prose generation.
     pub prose_dirty: Arc<AtomicBool>,
+    /// Whether the last prose-translation attempt failed. Used to dedupe the
+    /// failure toast: it fires only on the transition working→failing, so
+    /// repeated edits against a broken translator (network / API error) don't
+    /// spam. Cleared on the next successful generation.
+    pub prose_translator_failed: Arc<AtomicBool>,
     /// Monotonically increasing sequence number for prose generation requests.
     /// Used to discard stale results when the source changes mid-generation.
     pub prose_generation_seq: Arc<AtomicU64>,
@@ -87,54 +104,6 @@ struct ContentChange {
     text: String,
 }
 
-/// Convert an LSP (line, character) position to a byte offset in `source`.
-/// Both line and character are 0-indexed; character counts UTF-16 code units.
-fn lsp_pos_to_offset(source: &str, target_line: u32, target_character: u32) -> usize {
-    let mut current_line = 0u32;
-    let mut utf16_col = 0u32;
-    let mut offset = 0;
-
-    for ch in source.chars() {
-        if current_line == target_line {
-            if utf16_col >= target_character {
-                return offset;
-            }
-            utf16_col += u32::try_from(ch.len_utf16()).unwrap_or(2);
-        } else if ch == '\n' {
-            current_line += 1;
-        }
-        offset += ch.len_utf8();
-    }
-    offset.min(source.len())
-}
-
-/// Apply a batch of incremental LSP content changes to `source` in order.
-/// Changes must be applied last-to-first so earlier offsets stay valid.
-fn apply_content_changes(source: &mut String, changes: &[ContentChange]) {
-    if changes.is_empty() {
-        return;
-    }
-    if changes.len() == 1 {
-        let c = &changes[0];
-        let start = lsp_pos_to_offset(source, c.range.start.line, c.range.start.character);
-        let end = lsp_pos_to_offset(source, c.range.end.line, c.range.end.character);
-        source.replace_range(start..end, &c.text);
-        return;
-    }
-    let mut edits: Vec<(usize, usize, &str)> = changes
-        .iter()
-        .map(|c| {
-            let start = lsp_pos_to_offset(source, c.range.start.line, c.range.start.character);
-            let end = lsp_pos_to_offset(source, c.range.end.line, c.range.end.character);
-            (start, end, c.text.as_str())
-        })
-        .collect();
-    edits.sort_by_key(|e| std::cmp::Reverse(e.0));
-    for (start, end, text) in edits {
-        source.replace_range(start..end, text);
-    }
-}
-
 fn dispatch_turnstile_message(app: &AppHandle, msg: TurnstileMessage) {
     use std::sync::atomic::Ordering;
 
@@ -149,12 +118,14 @@ fn dispatch_turnstile_message(app: &AppHandle, msg: TurnstileMessage) {
             let proof = state.proof.clone();
             let app = app.clone();
             tauri::async_runtime::spawn(async move {
-                let items = {
+                let annotations = {
                     let mut guard = proof.lock().await;
-                    guard.annotations.set_diagnostics(&diagnostics);
-                    guard.annotations.items.clone()
+                    guard.formal.annotations.diagnostics = diagnostics;
+                    // Resolve against the same source under the same lock so the
+                    // offsets match the text they index into.
+                    guard.formal.annotations.derive(&guard.formal.source)
                 };
-                emit_turnstile(&app, &TurnstileMessage::AnnotationsUpdated { items });
+                emit_turnstile(&app, &TurnstileMessage::AnnotationsUpdated { annotations });
             });
         }
         TurnstileMessage::ElaborationDone => {
@@ -169,6 +140,9 @@ fn dispatch_turnstile_message(app: &AppHandle, msg: TurnstileMessage) {
         }
         TurnstileMessage::LspStatus(status) => {
             emit_lsp_status(app, status);
+        }
+        TurnstileMessage::AssistantStatus(status) => {
+            emit_assistant_status(app, status);
         }
         msg @ (TurnstileMessage::FileProgress { .. }
         | TurnstileMessage::ShowMessage { .. }
@@ -191,6 +165,65 @@ fn emit_lsp_status(app: &AppHandle, status: LspStatus) {
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .replace(status.clone());
     emit_turnstile(app, &TurnstileMessage::LspStatus(status));
+}
+
+/// Record the latest Proof Assistant status in app state, then emit it to the
+/// frontend. Recording lets a late-subscribing webview recover the status via
+/// `get_assistant_status`, mirroring [`emit_lsp_status`].
+fn emit_assistant_status(app: &AppHandle, status: AssistantStatus) {
+    app.state::<AppState>()
+        .last_assistant_status
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .replace(status.clone());
+    emit_turnstile(app, &TurnstileMessage::AssistantStatus(status));
+}
+
+/// Flip the Proof Assistant to `Disconnected` with the given reason and emit it.
+/// Called from the send path when a backend failure implicates the key.
+pub fn set_assistant_disconnected(app: &AppHandle, reason: DisconnectReason) {
+    emit_assistant_status(app, AssistantStatus::Disconnected { reason });
+}
+
+/// Store a new API key in the OS keychain, adopt it into the running backend,
+/// and emit the resulting `Connected` status — so a key entered in the
+/// first-run modal or Settings takes effect without a relaunch.
+///
+/// # Errors
+///
+/// Returns a human-readable error (never containing the key) if the secret
+/// store write fails.
+// Tauri commands take `AppHandle`/`String` by value across the IPC boundary.
+#[allow(clippy::needless_pass_by_value)]
+#[tauri::command]
+#[tracing::instrument(level = "debug", skip_all)]
+fn set_api_key(app: AppHandle, key: String) -> Result<(), String> {
+    secret::store_api_key(&key).map_err(|e| e.to_string())?;
+    app.state::<AppState>().llm.update_api_key(key);
+    emit_assistant_status(&app, AssistantStatus::Connected);
+    Ok(())
+}
+
+/// Remove the stored API key, clear it from the running backend, and emit the
+/// resulting `Disconnected { NoKey }` status.
+///
+/// # Errors
+///
+/// Returns a human-readable error if the deletion fails.
+// Tauri commands take `AppHandle` by value across the IPC boundary.
+#[allow(clippy::needless_pass_by_value)]
+#[tauri::command]
+#[tracing::instrument(level = "debug", skip_all)]
+fn clear_api_key(app: AppHandle) -> Result<(), String> {
+    secret::delete_api_key().map_err(|e| e.to_string())?;
+    app.state::<AppState>().llm.update_api_key(String::new());
+    emit_assistant_status(
+        &app,
+        AssistantStatus::Disconnected {
+            reason: DisconnectReason::NoKey,
+        },
+    );
+    Ok(())
 }
 
 async fn start_lsp(app: AppHandle) -> Result<(), String> {
@@ -255,26 +288,39 @@ fn apply_semantic_tokens(app: &AppHandle, tokens: &lsp_types::SemanticTokens) {
     let proof = state.proof.clone();
     let app_handle = app.clone();
     tauri::async_runtime::spawn(async move {
-        let items = {
+        let annotations = {
             let mut guard = proof.lock().await;
-            guard.annotations.set_tokens(&decoded);
-            guard.annotations.items.clone()
+            guard.formal.annotations.tokens = decoded;
+            guard.formal.annotations.derive(&guard.formal.source)
         };
-        emit_turnstile(&app_handle, &TurnstileMessage::AnnotationsUpdated { items });
+        emit_turnstile(
+            &app_handle,
+            &TurnstileMessage::AnnotationsUpdated { annotations },
+        );
     });
 }
 
 #[tauri::command]
 #[tracing::instrument(level = "debug", skip_all)]
-async fn update_document(app: AppHandle, changes: Vec<ContentChange>) -> Result<(), String> {
+async fn update_document(
+    app: AppHandle,
+    full_text: String,
+    changes: Vec<ContentChange>,
+) -> Result<(), String> {
     use lsp_types::TextDocumentContentChangeEvent;
 
     let state = app.state::<AppState>();
 
-    // Apply incremental changes to the stored source so `read_lean_source` stays in sync.
+    // The backend is the single source of truth for the formal proof. The editor
+    // sends the whole document it is displaying; we assign it verbatim rather
+    // than replaying the diff against our own copy, so the authoritative source
+    // is correct by construction (not by correct re-derivation). The incremental
+    // `changes` below are still forwarded to the LSP, which tracks the document
+    // via versioned `didChange` — that is the one incrementor we keep, because
+    // incrementalism is the LSP's native protocol.
     let source_is_empty = {
         let mut proof = state.proof.lock().await;
-        apply_content_changes(&mut proof.formal.source, &changes);
+        proof.formal.source = full_text;
         proof.formal.source.trim().is_empty()
     };
 
@@ -347,6 +393,12 @@ async fn update_document(app: AppHandle, changes: Vec<ContentChange>) -> Result<
 /// Debounce interval: how long to wait after an edit for the source to settle
 /// before attempting prose regeneration.
 const PROSE_DEBOUNCE: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// User-facing toast shown when a prose-translation attempt fails (LLM /
+/// network / API error). Deliberately distinct wording from the chat-assistant
+/// disconnected toast (#58/#60) so the two failure paths are not confused.
+const PROSE_TRANSLATOR_FAILED_MESSAGE: &str =
+    "The Prose Proof couldn't be regenerated. Check your network connection and API key.";
 
 /// Outcome of the pre-flight checks that decide whether to run the LLM.
 #[derive(Debug)]
@@ -434,36 +486,56 @@ fn spawn_prose_regeneration(app: AppHandle, seq: u64) {
             app.emit(proof::PROSE_GENERATING_EVENT, true).ok();
             let result = proof::translator::run_translator(backend.as_ref(), &source, &app).await;
             app.emit(proof::PROSE_GENERATING_EVENT, false).ok();
-            match &result {
-                Ok(raw) => debug!("prose: run_translator returned Ok ({} chars)", raw.len()),
-                Err(e) => debug!("prose: run_translator returned Err: {e}"),
-            }
 
             // Discard the result if a newer edit superseded us during the
-            // (potentially long) LLM call.
+            // (potentially long) LLM call. A superseded failure is not
+            // surfaced — the in-flight newer generation speaks for the latest
+            // edit.
             if state.prose_generation_seq.load(Ordering::SeqCst) != seq {
                 debug!("prose: superseded after generation (seq {seq}), discarding");
                 return;
             }
 
-            if let Ok(raw) = result {
-                let prose_text = proof::translator::render_katex(&raw);
-                {
-                    let mut proof_guard = state.proof.lock().await;
-                    proof_guard.prose.text.clone_from(&prose_text);
-                    proof_guard.prose.goal_state_hash.clone_from(&hash);
+            match result {
+                Ok(raw) => {
+                    debug!("prose: run_translator returned Ok ({} chars)", raw.len());
+                    // A successful generation clears any prior failure, so a
+                    // later failure re-toasts (working→failing transition).
+                    state.prose_translator_failed.store(false, Ordering::SeqCst);
+
+                    let prose_text = proof::translator::render_katex(&raw);
+                    {
+                        let mut proof_guard = state.proof.lock().await;
+                        proof_guard.prose.text.clone_from(&prose_text);
+                        proof_guard.prose.goal_state_hash.clone_from(&hash);
+                    }
+
+                    app.emit(
+                        proof::PROSE_UPDATED_EVENT,
+                        &proof::ProsePayload {
+                            text: prose_text,
+                            hash: Some(hash),
+                        },
+                    )
+                    .ok();
+
+                    state.session_dirty.store(true, Ordering::SeqCst);
                 }
-
-                app.emit(
-                    proof::PROSE_UPDATED_EVENT,
-                    &proof::ProsePayload {
-                        text: prose_text,
-                        hash: Some(hash),
-                    },
-                )
-                .ok();
-
-                state.session_dirty.store(true, Ordering::SeqCst);
+                Err(e) => {
+                    debug!("prose: run_translator returned Err: {e}");
+                    // Surface the failure as an error toast, deduped: only on
+                    // the transition working→failing, so repeated edits against
+                    // a broken translator don't spam.
+                    if !state.prose_translator_failed.swap(true, Ordering::SeqCst) {
+                        emit_turnstile(
+                            &app,
+                            &TurnstileMessage::ShowMessage {
+                                severity: "error".to_string(),
+                                message: PROSE_TRANSLATOR_FAILED_MESSAGE.to_string(),
+                            },
+                        );
+                    }
+                }
             }
 
             // If an edit arrived during generation, loop back to re-debounce
@@ -747,6 +819,69 @@ fn get_lsp_status(state: tauri::State<'_, AppState>) -> Option<LspStatus> {
         .clone()
 }
 
+/// Return the most recently emitted Proof Assistant status, if any. The
+/// frontend calls this on mount to recover a status it may have missed during
+/// startup, mirroring `get_lsp_status`.
+// Tauri commands must take `State` by value; clippy can't see that.
+#[allow(clippy::needless_pass_by_value)]
+#[tauri::command]
+fn get_assistant_status(state: tauri::State<'_, AppState>) -> Option<AssistantStatus> {
+    state
+        .last_assistant_status
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone()
+}
+
+/// Return — and clear — the one-shot warning produced when `settings.json` was
+/// present but unparseable at startup (the user's settings were reset to
+/// defaults). The frontend drains this on mount and surfaces it as a warning
+/// toast. Returns `None` on a clean load or after it has already been drained.
+// Tauri commands must take `State` by value; clippy can't see that.
+#[allow(clippy::needless_pass_by_value)]
+#[tauri::command]
+fn take_settings_load_warning(state: tauri::State<'_, AppState>) -> Option<String> {
+    state
+        .settings_load_warning
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .take()
+}
+
+/// Resolve the API key for the backend and the initial [`AssistantStatus`].
+///
+/// Resolution order matches [`secret::resolve_api_key`]: Turnstile's keychain
+/// entry first, then the `ANTHROPIC_API_KEY` env var. The returned key string is
+/// empty when none is available (the backend then refuses to call the API). The
+/// status distinguishes a missing key from an unavailable secret store so the
+/// toast (#60) can name the right fix. A present key is reported `Connected`
+/// optimistically; an actual API auth rejection downgrades it to
+/// `Disconnected { KeyRejected }` at send time.
+fn resolve_key_and_status() -> (String, AssistantStatus) {
+    // Probe the secret store directly so we can tell "no key stored" from "the
+    // store itself failed". ANY read error (store missing, locked, access
+    // denied) means we could not consult the store, so the right fix to suggest
+    // is the env-var fallback — not "add a key in Settings". A store error does
+    // not abort: we still honor the env var below.
+    let store_errored = secret::read_api_key().is_err();
+
+    if let Some(key) = secret::resolve_api_key() {
+        if !key.is_empty() {
+            return (key.expose().to_string(), AssistantStatus::Connected);
+        }
+    }
+
+    // No usable key. If the store errored (and the env var didn't save us),
+    // report StoreUnavailable so the toast points at the env-var fallback;
+    // otherwise the store simply had no entry → NoKey.
+    let reason = if store_errored {
+        DisconnectReason::StoreUnavailable
+    } else {
+        DisconnectReason::NoKey
+    };
+    (String::new(), AssistantStatus::Disconnected { reason })
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 /// # Panics
 ///
@@ -768,6 +903,15 @@ pub fn run() {
     init_tracing();
     tracing_log::LogTracer::init().ok();
 
+    // GUI launches from Finder/Dock don't inherit the login shell's PATH, so the
+    // elan/lake/lean tooling we spawn during setup and for the LSP can't be
+    // found. Pull the real PATH from the user's shell config before anything is
+    // spawned. Log and continue on failure — a missing PATH fix is recoverable
+    // (setup still prepends elan's bin dir to whatever PATH is present).
+    if let Err(e) = fix_path_env::fix() {
+        log::warn!("fix_path_env::fix() failed; PATH may be incomplete for GUI launches: {e}");
+    }
+
     tauri::Builder::default()
         .setup(|app| {
             let app_data_dir = app
@@ -777,18 +921,18 @@ pub fn run() {
 
             let project_path = app_data_dir.join("lean-project");
 
-            let initial_settings = settings::load_settings(&app_data_dir);
+            let settings::SettingsLoad {
+                settings: initial_settings,
+                warning: settings_warning,
+            } = settings::load_settings_checked(&app_data_dir);
 
-            #[cfg(feature = "mock-llm")]
-            let llm_backend: Arc<dyn llm::Llm> = Arc::new(llm::MockBackend::from_env());
-
-            #[cfg(not(feature = "mock-llm"))]
-            let llm_backend: Arc<dyn llm::Llm> = {
-                match llm::AnthropicBackend::from_env() {
-                    Ok(b) => Arc::new(b),
-                    Err(_) => Arc::new(llm::MockBackend::echo()),
-                }
-            };
+            // Resolve the API key from the OS secret store (keychain first, then
+            // the ANTHROPIC_API_KEY env var) and derive the initial assistant
+            // status. When no key is available the backend is built with an
+            // empty key, which reports the missing-key error on use rather than
+            // echoing — and we mark the assistant Disconnected.
+            let (api_key, initial_assistant_status) = resolve_key_and_status();
+            let llm_backend: Arc<dyn llm::Llm> = Arc::new(llm::AnthropicBackend::new(api_key));
 
             let setup_running = Arc::new(AtomicBool::new(false));
 
@@ -798,16 +942,23 @@ pub fn run() {
                 transcript: Arc::new(tokio::sync::Mutex::new(assistant::Transcript::default())),
                 llm: llm_backend,
                 settings: Arc::new(tokio::sync::Mutex::new(initial_settings)),
+                settings_load_warning: Arc::new(Mutex::new(settings_warning)),
                 current_session_path: Arc::new(tokio::sync::Mutex::new(None)),
                 session_dirty: Arc::new(AtomicBool::new(false)),
                 current_diagnostics: Arc::new(Mutex::new(Vec::new())),
                 last_lsp_status: Arc::new(Mutex::new(None)),
+                last_assistant_status: Arc::new(Mutex::new(None)),
                 prose_dirty: Arc::new(AtomicBool::new(false)),
+                prose_translator_failed: Arc::new(AtomicBool::new(false)),
                 prose_generation_seq: Arc::new(AtomicU64::new(0)),
                 goal_state_seq: Arc::new(AtomicU64::new(0)),
                 token_types: Arc::new(Mutex::new(Vec::new())),
                 token_modifiers: Arc::new(Mutex::new(Vec::new())),
             });
+
+            // Emit the assistant status once at startup so the indicator (#59)
+            // and toast (#60) reflect reality before the user does anything.
+            emit_assistant_status(app.handle(), initial_assistant_status);
 
             // On startup: run setup if needed, then start the LSP.
             let app_handle = app.handle().clone();
@@ -863,11 +1014,13 @@ pub fn run() {
             update_document,
             lsp_hover,
             get_lsp_status,
+            get_assistant_status,
             send_message,
             get_transcript,
             load_transcript,
             get_settings,
             save_settings,
+            take_settings_load_warning,
             get_default_assistant_prompt,
             get_default_translation_prompt,
             get_available_models,
@@ -883,6 +1036,9 @@ pub fn run() {
             set_last_session,
             set_window_title,
             set_menu_item_enabled,
+            set_api_key,
+            secret::has_api_key,
+            clear_api_key,
         ])
         .run(tauri::generate_context!())
         .expect("error while running turnstile");
@@ -915,9 +1071,8 @@ mod tests {
     use std::sync::Mutex;
 
     use super::{
-        apply_content_changes, assistant, end_of_document_position, last_non_whitespace_position,
-        llm, lsp_pos_to_offset, proof, should_generate_prose, AppState, ContentChange, LspPosition,
-        LspRange, ShouldGenerate,
+        assistant, end_of_document_position, last_non_whitespace_position, llm, proof,
+        should_generate_prose, AppState, ShouldGenerate,
     };
     use crate::lean;
     use std::sync::Arc;
@@ -945,115 +1100,6 @@ mod tests {
         assert_eq!(last_non_whitespace_position("abc\ndef\n\n  "), (1, 2));
     }
 
-    // -- lsp_pos_to_offset --------------------------------------------------
-
-    fn pos(line: u32, character: u32) -> LspPosition {
-        LspPosition { line, character }
-    }
-
-    fn change(sl: u32, sc: u32, el: u32, ec: u32, text: &str) -> ContentChange {
-        ContentChange {
-            range: LspRange {
-                start: pos(sl, sc),
-                end: pos(el, ec),
-            },
-            text: text.to_string(),
-        }
-    }
-
-    #[test]
-    fn lsp_pos_to_offset_start_of_doc() {
-        assert_eq!(lsp_pos_to_offset("hello\nworld", 0, 0), 0);
-    }
-
-    #[test]
-    fn lsp_pos_to_offset_mid_first_line() {
-        assert_eq!(lsp_pos_to_offset("hello\nworld", 0, 3), 3);
-    }
-
-    #[test]
-    fn lsp_pos_to_offset_start_of_second_line() {
-        assert_eq!(lsp_pos_to_offset("hello\nworld", 1, 0), 6);
-    }
-
-    #[test]
-    fn lsp_pos_to_offset_mid_second_line() {
-        assert_eq!(lsp_pos_to_offset("hello\nworld", 1, 3), 9);
-    }
-
-    #[test]
-    fn lsp_pos_to_offset_empty_doc() {
-        assert_eq!(lsp_pos_to_offset("", 0, 0), 0);
-    }
-
-    #[test]
-    fn lsp_pos_to_offset_clamps_to_doc_length() {
-        assert_eq!(lsp_pos_to_offset("abc", 0, 100), 3);
-    }
-
-    #[test]
-    fn lsp_pos_to_offset_clamps_out_of_bounds_line() {
-        assert_eq!(lsp_pos_to_offset("hello\nworld", 5, 0), 11);
-    }
-
-    // -- apply_content_changes ----------------------------------------------
-
-    #[test]
-    fn apply_changes_single_insertion() {
-        let mut s = "hello world".to_string();
-        apply_content_changes(&mut s, &[change(0, 5, 0, 5, ",")]);
-        assert_eq!(s, "hello, world");
-    }
-
-    #[test]
-    fn apply_changes_single_deletion() {
-        let mut s = "hello world".to_string();
-        apply_content_changes(&mut s, &[change(0, 5, 0, 6, "")]);
-        assert_eq!(s, "helloworld");
-    }
-
-    #[test]
-    fn apply_changes_single_replacement() {
-        let mut s = "hello world".to_string();
-        apply_content_changes(&mut s, &[change(0, 6, 0, 11, "Lean")]);
-        assert_eq!(s, "hello Lean");
-    }
-
-    #[test]
-    fn apply_changes_append_newline_and_text() {
-        let mut s = "theorem foo".to_string();
-        apply_content_changes(&mut s, &[change(0, 11, 0, 11, " : True")]);
-        assert_eq!(s, "theorem foo : True");
-    }
-
-    #[test]
-    fn apply_changes_multiline_replacement() {
-        let mut s = "line0\nline1\nline2".to_string();
-        // Replace "line1" (line 1, chars 0–5) with "replaced"
-        apply_content_changes(&mut s, &[change(1, 0, 1, 5, "replaced")]);
-        assert_eq!(s, "line0\nreplaced\nline2");
-    }
-
-    #[test]
-    fn apply_changes_multiple_non_overlapping() {
-        // Two insertions on the same line at different positions.
-        // CodeMirror sends them in document order; we must apply last-first.
-        let mut s = "abcdef".to_string();
-        let changes = vec![
-            change(0, 2, 0, 2, "X"), // insert X at pos 2
-            change(0, 4, 0, 4, "Y"), // insert Y at pos 4 (in old doc)
-        ];
-        apply_content_changes(&mut s, &changes);
-        assert_eq!(s, "abXcdYef");
-    }
-
-    #[test]
-    fn apply_changes_empty_change_list() {
-        let mut s = "unchanged".to_string();
-        apply_content_changes(&mut s, &[]);
-        assert_eq!(s, "unchanged");
-    }
-
     /// Minimal `AppState` suitable for exercising `should_generate_prose`. The
     /// LSP client, transcript, and session fields are not read by the
     /// pre-flight checks.
@@ -1062,13 +1108,18 @@ mod tests {
             lsp_client: Arc::new(tokio::sync::Mutex::new(None)),
             proof: Arc::new(tokio::sync::Mutex::new(proof::Proof::default())),
             transcript: Arc::new(tokio::sync::Mutex::new(assistant::Transcript::default())),
-            llm: Arc::new(llm::MockBackend::echo()),
+            // The pre-flight checks under test never call the backend, so an
+            // empty-key Anthropic backend is sufficient.
+            llm: Arc::new(llm::AnthropicBackend::new(String::new())),
             settings: Arc::new(tokio::sync::Mutex::new(crate::settings::Settings::default())),
+            settings_load_warning: Arc::new(Mutex::new(None)),
             current_session_path: Arc::new(tokio::sync::Mutex::new(None)),
             session_dirty: Arc::new(AtomicBool::new(false)),
             current_diagnostics: Arc::new(Mutex::new(Vec::new())),
             last_lsp_status: Arc::new(Mutex::new(None)),
+            last_assistant_status: Arc::new(Mutex::new(None)),
             prose_dirty: Arc::new(AtomicBool::new(false)),
+            prose_translator_failed: Arc::new(AtomicBool::new(false)),
             prose_generation_seq: Arc::new(AtomicU64::new(0)),
             goal_state_seq: Arc::new(AtomicU64::new(0)),
             token_types: Arc::new(Mutex::new(Vec::new())),

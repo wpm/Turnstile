@@ -25,7 +25,7 @@ bump version (package.json) ─► green CI on main ─► create + publish Rele
 > immediately, but the download files don't appear until the build +
 > notarization finish — usually 20–40 minutes later. During that window the
 > Release page shows your notes with no binaries attached. This is expected,
-> and it's the tradeoff for driving releases from the UI: a *draft* Release
+> and it's the tradeoff for driving releases from the UI: a _draft_ Release
 > doesn't trigger the build, so there's no way to attach binaries before
 > publishing.
 
@@ -132,7 +132,8 @@ This runs `test + check + lint + format:check + verify:rust + e2e +
 lean-server`. **Run it on macOS:** `verify:rust` includes `cargo test`, and the
 `lean-server` suite drives a real `lean --server` against Mathlib — the path
 that must be green before releasing. The first run provisions the Lean toolchain
-+ Mathlib cache and is slow; later runs are fast.
+
+- Mathlib cache and is slow; later runs are fast.
 
 ### 4. Confirm green CI on `main`
 

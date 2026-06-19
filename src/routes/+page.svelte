@@ -18,7 +18,9 @@
     goalState,
     lspStatus as lspStatusStore,
     showMessage,
+    assistantStatus,
   } from "$lib/turnstile_messages";
+  import type { DisconnectReason } from "$lib/DisconnectReason";
   import {
     proseGenerating,
     proseHash,
@@ -46,6 +48,7 @@
   let prose = $state("");
   let lspReady = $state(false);
   let settingsOpen = $state(false);
+  let firstRunOpen = $state(false);
   let restorePromptOpen = $state(false);
 
   let toasts = $state<ToastItem[]>([]);
@@ -85,6 +88,21 @@
     toasts = toasts.filter((t) => t.id !== id);
   }
   /* eslint-enable @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment */
+
+  /**
+   * Toast copy for each disconnect reason — names the cause AND the fix, so the
+   * failure is never vague. Driven by the backend `DisconnectReason` (#58).
+   */
+  function disconnectToastMessage(reason: DisconnectReason): string {
+    switch (reason) {
+      case "noKey":
+        return "Proof Assistant unavailable — no API key set. Add one in Settings.";
+      case "keyRejected":
+        return "Proof Assistant unavailable — API key was rejected. Update it in Settings.";
+      case "storeUnavailable":
+        return "Proof Assistant unavailable — the OS secret store could not be reached. Set the ANTHROPIC_API_KEY environment variable.";
+    }
+  }
 
   function currentLayout(): UiLayout {
     return {
@@ -160,6 +178,23 @@
       addToast(msg.severity as ToastItem["severity"], msg.message);
     });
 
+    // Surface assistant disconnection as an error toast (which requires manual
+    // dismissal). Only toast on a *transition* into a disconnected reason — not
+    // on every store emit — so reconnecting and re-failing doesn't spam, but a
+    // changed reason (e.g. noKey → keyRejected) does re-notify.
+    let lastDisconnectReason: DisconnectReason | null = null;
+    const unsubscribeAssistant = assistantStatus.subscribe((status) => {
+      if (status === null) return;
+      if (status.state === "disconnected") {
+        if (status.reason !== lastDisconnectReason) {
+          lastDisconnectReason = status.reason;
+          addToast("error", disconnectToastMessage(status.reason));
+        }
+      } else {
+        lastDisconnectReason = null;
+      }
+    });
+
     const unsubscribeSetup = setupProgress.subscribe((progress) => {
       if (progress?.phase === "error") {
         addToast("error", progress.message);
@@ -203,10 +238,32 @@
       } catch {
         // Defaults apply when settings can't be loaded.
       }
+      // Warn (once) if settings.json was present but unparseable at startup —
+      // the backend reset it to defaults and backed up the bad file. Drained
+      // by command rather than a startup emit so it can't fire before this
+      // listener exists.
+      try {
+        const warning = await invoke<string | null>(
+          "take_settings_load_warning",
+        );
+        if (warning) addToast("warning", warning);
+      } catch {
+        // No backend (browser/dev): nothing to drain.
+      }
       void invoke("set_menu_item_enabled", {
         id: "save_session",
         enabled: true,
       }).catch(() => undefined);
+      // First-run pre-check: only prompt for a key when none is already
+      // available (keychain entry or ANTHROPIC_API_KEY env var — resolved by
+      // has_api_key on the backend). If a key exists, skip onboarding entirely.
+      try {
+        if (!(await invoke<boolean>("has_api_key"))) {
+          firstRunOpen = true;
+        }
+      } catch {
+        // No backend (browser/dev): skip onboarding.
+      }
       try {
         if (await invoke<boolean>("check_auto_save")) {
           restorePromptOpen = true;
@@ -216,14 +273,33 @@
       }
     })();
 
+    // The 30s autosave is the crash-recovery safety net. Surface failures
+    // (disk full, permissions, missing app-data dir) as an error toast, but
+    // dedupe: toast only on the transition working→failing so a persistent
+    // problem doesn't fire every interval. A later success silently re-arms.
+    let autosaveFailing = false;
     const autosaveTimer = setInterval(() => {
-      autoSaveSession(currentLayout()).catch(() => undefined);
+      autoSaveSession(currentLayout()).then(
+        () => {
+          autosaveFailing = false;
+        },
+        (e: unknown) => {
+          if (!autosaveFailing) {
+            autosaveFailing = true;
+            addToast(
+              "error",
+              `Autosave failed — your recovery snapshot is not being updated. ${String(e)}`,
+            );
+          }
+        },
+      );
     }, AUTOSAVE_INTERVAL_MS);
 
     return () => {
       unsubscribeGoal();
       unsubscribeLsp();
       unsubscribeShowMessage();
+      unsubscribeAssistant();
       unsubscribeSetup();
       unsubscribeProse();
       unlistenProse?.();
@@ -360,6 +436,10 @@
 
   {#if settingsOpen}
     <SettingsDialog onClose={() => (settingsOpen = false)} />
+  {/if}
+
+  {#if firstRunOpen}
+    <SettingsDialog firstRun onClose={() => (firstRunOpen = false)} />
   {/if}
 
   {#if restorePromptOpen}

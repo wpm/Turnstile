@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
   import {
+    Annotation,
     Compartment,
     EditorState,
     StateEffect,
@@ -20,6 +21,7 @@
     annotationField,
     diagnosticGutter,
     setAnnotations,
+    EMPTY_ANNOTATIONS,
   } from "./annotations";
   import { lspHoverTooltip } from "./hover";
   import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
@@ -39,6 +41,13 @@
   import { cursorPosition, proofSource, settings, wordWrap } from "./appState";
 
   const setProgressLines = StateEffect.define<FileProgressRange[]>();
+
+  // Marks a transaction as a programmatic document replacement (e.g. restoring
+  // the editor on session load). The backend already holds the authoritative
+  // source for these, so the update listener must NOT forward them back as
+  // incremental LSP changes — doing so applies a diff on top of the
+  // already-set source and corrupts it (duplicated/concatenated text).
+  const programmaticUpdate = Annotation.define<boolean>();
 
   const progressDecoration = Decoration.line({ class: "cm-elaborating" });
 
@@ -131,7 +140,22 @@
               });
             }
             if (!update.docChanged) return;
-            proofSource.set(update.state.doc.toString());
+            const fullText = update.state.doc.toString();
+            proofSource.set(fullText);
+            // A programmatic replacement (session load) is already reflected in
+            // the backend source; forwarding it would echo the load back into
+            // the edit path. Keep the UI store above in sync, but stop here.
+            if (
+              update.transactions.some((tr) =>
+                tr.annotation(programmaticUpdate),
+              )
+            ) {
+              return;
+            }
+            // Route (3): the backend is the source of truth. Send the whole
+            // document for it to assign verbatim (correct by construction), and
+            // the incremental changes for it to forward to the LSP as a ranged
+            // didChange — the LSP's native protocol.
             const oldDoc = update.startState.doc;
             const changes: ContentChange[] = [];
             update.changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
@@ -143,7 +167,7 @@
                 text: inserted.toString(),
               });
             });
-            void invoke("update_document", { changes });
+            void invoke("update_document", { fullText, changes });
           }),
         ],
       }),
@@ -170,7 +194,11 @@
         view.dispatch({
           changes: { from: 0, to: view.state.doc.length, insert: newContent },
           // Clear stale annotations from the previous document immediately.
-          effects: setAnnotations.of([]),
+          effects: setAnnotations.of(EMPTY_ANNOTATIONS),
+          // The backend already set its source to this content during the load;
+          // tag the transaction so the update listener doesn't echo it back as
+          // an incremental change applied on top of the already-set source.
+          annotations: programmaticUpdate.of(true),
         });
       },
     );

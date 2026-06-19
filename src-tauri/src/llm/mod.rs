@@ -1,23 +1,19 @@
 //! LLM provider abstraction and wire protocol.
 //!
-//! The [`Llm`] trait hides whether the underlying provider is a real Anthropic
-//! API call or a test mock.  Two operations are supported:
+//! The [`Llm`] trait abstracts the Anthropic provider so the rest of the app
+//! can talk to it without knowing the wire details.  Two operations are
+//! supported:
 //!
 //! * [`Llm::complete`] — one-shot completion with a system prompt.  Used by the
 //!   translator (prose proof generation).
 //! * [`Llm::send_with_tools`] — multi-turn streaming with tool use.  Used by the
 //!   assistant to carry on a conversation with the user.
 //!
-//! # Backend selection
-//!
-//! Production: [`AnthropicBackend`] (reads `ANTHROPIC_API_KEY` from the environment).
-//! Testing / mock mode: [`MockBackend`], selected by either
-//! * the `mock-llm` Cargo feature flag, or
-//! * the `TURNSTILE_MOCK_LLM` environment variable (`echo` | `scripted` | `delay`).
+//! The only backend is [`AnthropicBackend`].  There is deliberately no mock or
+//! echo fallback: when no usable API key is available the assistant reports a
+//! disconnected status rather than silently substituting a fake reply.
 
 pub mod models;
-
-use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde::Serialize;
@@ -31,8 +27,28 @@ use crate::assistant::{
 // Error type
 // ---------------------------------------------------------------------------
 
+/// Error message used when the backend has no usable API key. Callers map this
+/// (and API auth rejections) onto the disconnected status (#58).
+pub const NO_API_KEY_ERROR: &str = "No Anthropic API key is configured.";
+
 #[derive(Debug, Serialize)]
 pub struct LlmError(pub String);
+
+impl LlmError {
+    /// Whether this error indicates a missing key (no key configured).
+    #[must_use]
+    pub fn is_missing_key(&self) -> bool {
+        self.0 == NO_API_KEY_ERROR
+    }
+
+    /// Whether this error indicates the API rejected the key (an auth failure).
+    /// `stream_request` formats HTTP failures as `API error {status}: …`, so a
+    /// 401/403 status is the signal that the key itself is bad.
+    #[must_use]
+    pub fn is_auth_error(&self) -> bool {
+        self.0.contains("API error 401") || self.0.contains("API error 403")
+    }
+}
 
 impl std::fmt::Display for LlmError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -86,155 +102,63 @@ pub trait Llm: Send + Sync {
         app: &AppHandle,
         user_content: &str,
     ) -> Result<Turn, LlmError>;
+
+    /// Adopt a new API key at runtime so a key entered in the first-run modal
+    /// (#64) or Settings takes effect without a relaunch. Default no-op for
+    /// backends that don't use a key.
+    fn update_api_key(&self, _api_key: String) {}
 }
 
 // ---------------------------------------------------------------------------
-// MockBackend
+// AnthropicBackend (the only LLM backend)
 // ---------------------------------------------------------------------------
 
-/// Mock mode selected by the `TURNSTILE_MOCK_LLM` env var or `mock-llm` feature.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum MockMode {
-    /// Returns the user message back, prefixed with `[echo] `.
-    Echo,
-    /// Plays back `Vec<String>` responses in order (cycling).
-    Scripted,
-    /// Like Echo but emits one character at a time with a 10 ms delay.
-    Delay,
-}
-
-pub struct MockBackend {
-    pub mode: MockMode,
-    /// Scripted responses (used when `mode == Scripted`).
-    pub script: Vec<String>,
-    /// Index into `script`, wrapped with Mutex for interior mutability.
-    script_idx: Arc<std::sync::Mutex<usize>>,
-}
-
-impl MockBackend {
-    #[must_use]
-    pub fn echo() -> Self {
-        Self {
-            mode: MockMode::Echo,
-            script: Vec::new(),
-            script_idx: Arc::new(std::sync::Mutex::new(0)),
-        }
-    }
-
-    #[must_use]
-    pub fn scripted(responses: Vec<String>) -> Self {
-        Self {
-            mode: MockMode::Scripted,
-            script: responses,
-            script_idx: Arc::new(std::sync::Mutex::new(0)),
-        }
-    }
-
-    #[must_use]
-    pub fn delay() -> Self {
-        Self {
-            mode: MockMode::Delay,
-            script: Vec::new(),
-            script_idx: Arc::new(std::sync::Mutex::new(0)),
-        }
-    }
-
-    /// Construct from the `TURNSTILE_MOCK_LLM` environment variable.
-    #[must_use]
-    pub fn from_env() -> Self {
-        match std::env::var("TURNSTILE_MOCK_LLM")
-            .unwrap_or_default()
-            .as_str()
-        {
-            "scripted" => {
-                let script: Vec<String> = std::env::var("TURNSTILE_MOCK_SCRIPT")
-                    .unwrap_or_default()
-                    .lines()
-                    .map(String::from)
-                    .collect();
-                Self::scripted(script)
-            }
-            "delay" => Self::delay(),
-            _ => Self::echo(),
-        }
-    }
-}
-
-#[async_trait]
-impl Llm for MockBackend {
-    async fn complete(
-        &self,
-        _system_prompt: &str,
-        user_content: &str,
-        _model: &str,
-        app: &AppHandle,
-    ) -> Result<Turn, LlmError> {
-        let turn = Turn::assistant(format!("[echo] {user_content}"));
-        app.emit(STREAM_DONE_EVENT, ()).ok();
-        Ok(turn)
-    }
-
-    async fn send_with_tools(
-        &self,
-        _system_prompt: &str,
-        _transcript: &Transcript,
-        _tools: &[ToolDefinition],
-        _model: &str,
-        app: &AppHandle,
-        user_content: &str,
-    ) -> Result<Turn, LlmError> {
-        let response = match self.mode {
-            MockMode::Echo => format!("[echo] {user_content}"),
-            MockMode::Scripted => {
-                if self.script.is_empty() {
-                    "[scripted: no responses]".to_string()
-                } else {
-                    let mut idx = self.script_idx.lock().unwrap();
-                    let r = self.script[*idx % self.script.len()].clone();
-                    *idx += 1;
-                    r
-                }
-            }
-            MockMode::Delay => {
-                let prefix = format!("[echo] {user_content}");
-                for ch in prefix.chars() {
-                    app.emit(STREAM_DELTA_EVENT, ch.to_string()).ok();
-                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-                }
-                prefix
-            }
-        };
-
-        let turn = Turn::assistant(response);
-
-        app.emit(STREAM_DONE_EVENT, ()).ok();
-        app.emit(COMPLETE_EVENT, &turn).ok();
-        Ok(turn)
-    }
-}
-
-// ---------------------------------------------------------------------------
-// AnthropicBackend (real LLM; excluded when mock-llm feature is active)
-// ---------------------------------------------------------------------------
-
-#[cfg(not(feature = "mock-llm"))]
 pub struct AnthropicBackend {
-    api_key: String,
+    /// The API key, wrapped in a redacting type so it can never be logged or
+    /// serialized, and behind an `RwLock` so the running backend can adopt a
+    /// new key (e.g. from the first-run modal, #64) without a relaunch. Never
+    /// add `#[derive(Debug)]` / `Serialize` to this struct.
+    api_key: std::sync::RwLock<crate::secret::ApiKey>,
     client: reqwest::Client,
 }
 
-#[cfg(not(feature = "mock-llm"))]
 impl AnthropicBackend {
-    /// # Errors
-    ///
-    /// Returns an error if `ANTHROPIC_API_KEY` is not set.
-    pub fn from_env() -> Result<Self, String> {
-        let api_key = std::env::var("ANTHROPIC_API_KEY")
-            .map_err(|_| "ANTHROPIC_API_KEY environment variable not set".to_string())?;
-        Ok(Self {
-            api_key,
+    /// Construct a backend from an explicit API key.  An empty key is allowed;
+    /// the request methods reject it with a structured error rather than
+    /// reaching the network.
+    #[must_use]
+    pub fn new(api_key: String) -> Self {
+        Self {
+            api_key: std::sync::RwLock::new(crate::secret::ApiKey::new(api_key)),
             client: reqwest::Client::new(),
-        })
+        }
+    }
+
+    /// Replace the backend's API key in place, so a key entered at runtime takes
+    /// effect without rebuilding the backend or relaunching the app.
+    pub fn set_key(&self, api_key: String) {
+        *self
+            .api_key
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) =
+            crate::secret::ApiKey::new(api_key);
+    }
+
+    /// Snapshot the current key for a request. Returned by value so the lock
+    /// isn't held across the await of the HTTP call.
+    fn key_snapshot(&self) -> crate::secret::ApiKey {
+        self.api_key
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Construct a backend from the `ANTHROPIC_API_KEY` environment variable,
+    /// defaulting to an empty key when it is unset.  An empty key yields a
+    /// backend that reports the missing-key error on use — never an echo.
+    #[must_use]
+    pub fn from_env() -> Self {
+        Self::new(std::env::var("ANTHROPIC_API_KEY").unwrap_or_default())
     }
 
     /// Stream one request to the Anthropic API and collect the full response.
@@ -275,10 +199,12 @@ impl AnthropicBackend {
             body["tools"] = serde_json::Value::Array(tools_json);
         }
 
+        // Snapshot the key so the lock isn't held across the network await.
+        let api_key = self.key_snapshot();
         let response = self
             .client
             .post("https://api.anthropic.com/v1/messages")
-            .header("x-api-key", &self.api_key)
+            .header("x-api-key", api_key.expose())
             .header("anthropic-version", "2023-06-01")
             .header("content-type", "application/json")
             .json(&body)
@@ -411,7 +337,6 @@ impl AnthropicBackend {
     }
 }
 
-#[cfg(not(feature = "mock-llm"))]
 #[async_trait]
 impl Llm for AnthropicBackend {
     async fn complete(
@@ -421,10 +346,8 @@ impl Llm for AnthropicBackend {
         model: &str,
         app: &AppHandle,
     ) -> Result<Turn, LlmError> {
-        if self.api_key.is_empty() {
-            return Err(LlmError(
-                "ANTHROPIC_API_KEY is not set. Please set it and restart.".to_string(),
-            ));
+        if self.key_snapshot().is_empty() {
+            return Err(LlmError(NO_API_KEY_ERROR.to_string()));
         }
 
         let messages = vec![serde_json::json!({ "role": "user", "content": user_content })];
@@ -444,12 +367,11 @@ impl Llm for AnthropicBackend {
         app: &AppHandle,
         user_content: &str,
     ) -> Result<Turn, LlmError> {
-        if self.api_key.is_empty() {
-            let turn = Turn::assistant(
-                "ANTHROPIC_API_KEY is not set. Please set it and restart.".to_string(),
-            );
-            app.emit(COMPLETE_EVENT, &turn).ok();
-            return Ok(turn);
+        if self.key_snapshot().is_empty() {
+            // No usable key: refuse with a structured error. Never fabricate a
+            // turn — the disconnected status (#58) is the single source of truth
+            // and the disabled input (#60) is the primary guard.
+            return Err(LlmError(NO_API_KEY_ERROR.to_string()));
         }
 
         // Build the initial messages array from transcript + new user message.
@@ -529,6 +451,10 @@ impl Llm for AnthropicBackend {
         app.emit(COMPLETE_EVENT, &turn).ok();
         Ok(turn)
     }
+
+    fn update_api_key(&self, api_key: String) {
+        self.set_key(api_key);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -565,70 +491,39 @@ mod tests {
         assert_eq!(err.0, "msg");
     }
 
-    // -- MockBackend -----------------------------------------------------
-
     #[test]
-    fn mock_echo_prefixes_message() {
-        // The echo logic is straightforward: just verify the format string.
-        let msg = "hello world";
-        let echoed = format!("[echo] {msg}");
-        assert_eq!(echoed, "[echo] hello world");
+    fn missing_key_error_is_classified() {
+        let err = LlmError(NO_API_KEY_ERROR.to_string());
+        assert!(err.is_missing_key());
+        assert!(!err.is_auth_error());
     }
 
     #[test]
-    fn mock_scripted_cycles_responses() {
-        let backend = MockBackend::scripted(vec!["first".into(), "second".into()]);
-        {
-            let mut idx = backend.script_idx.lock().unwrap();
-            let r0 = backend.script[*idx % backend.script.len()].clone();
-            *idx += 1;
-            let r1 = backend.script[*idx % backend.script.len()].clone();
-            *idx += 1;
-            let r2 = backend.script[*idx % backend.script.len()].clone();
-            drop(idx);
-            assert_eq!(r0, "first");
-            assert_eq!(r1, "second");
-            assert_eq!(r2, "first"); // cycles
-        }
-    }
-
-    // -- MockBackend::from_env -------------------------------------------
-
-    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-    #[test]
-    fn mock_backend_from_env_defaults_to_echo() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        std::env::remove_var("TURNSTILE_MOCK_LLM");
-        let backend = MockBackend::from_env();
-        assert_eq!(backend.mode, MockMode::Echo);
+    fn auth_error_is_classified_from_status() {
+        assert!(LlmError("API error 401 Unauthorized: bad key".into()).is_auth_error());
+        assert!(LlmError("API error 403 Forbidden: nope".into()).is_auth_error());
+        // A 5xx or network error is not an auth failure.
+        assert!(!LlmError("API error 500: server error".into()).is_auth_error());
+        assert!(!LlmError("API request failed: timeout".into()).is_auth_error());
     }
 
     #[test]
-    fn mock_backend_from_env_delay() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        std::env::set_var("TURNSTILE_MOCK_LLM", "delay");
-        let backend = MockBackend::from_env();
-        std::env::remove_var("TURNSTILE_MOCK_LLM");
-        assert_eq!(backend.mode, MockMode::Delay);
+    fn empty_key_backend_reports_missing_key_not_echo() {
+        // An empty-key backend must classify as missing-key (the send path maps
+        // this to Disconnected) and must never echo.
+        let backend = AnthropicBackend::new(String::new());
+        assert!(backend.key_snapshot().is_empty());
+        let err = LlmError(NO_API_KEY_ERROR.to_string());
+        assert!(err.is_missing_key());
+        assert!(!err.0.contains("[echo]"));
     }
 
     #[test]
-    fn mock_backend_from_env_scripted() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        std::env::set_var("TURNSTILE_MOCK_LLM", "scripted");
-        std::env::set_var("TURNSTILE_MOCK_SCRIPT", "line1\nline2");
-        let backend = MockBackend::from_env();
-        std::env::remove_var("TURNSTILE_MOCK_LLM");
-        std::env::remove_var("TURNSTILE_MOCK_SCRIPT");
-        assert_eq!(backend.mode, MockMode::Scripted);
-        assert_eq!(backend.script, vec!["line1", "line2"]);
-    }
-
-    #[test]
-    fn mock_backend_scripted_empty_vec() {
-        let backend = MockBackend::scripted(vec![]);
-        assert_eq!(backend.mode, MockMode::Scripted);
-        assert!(backend.script.is_empty());
+    fn set_key_updates_backend_in_place() {
+        let backend = AnthropicBackend::new(String::new());
+        assert!(backend.key_snapshot().is_empty());
+        backend.set_key("sk-ant-runtime".to_string());
+        assert!(!backend.key_snapshot().is_empty());
+        assert_eq!(backend.key_snapshot().expose(), "sk-ant-runtime");
     }
 }

@@ -1,9 +1,10 @@
 <script lang="ts">
-  import { lspStatus } from "./turnstile_messages";
+  import { lspStatus, assistantStatus } from "./turnstile_messages";
   import { setupProgress } from "./appState";
 
   const status = $derived($setupProgress);
   const lsp = $derived($lspStatus);
+  const assistant = $derived($assistantStatus);
 
   const text = $derived.by(() => {
     if (status) {
@@ -20,11 +21,32 @@
     if (status) return "busy";
     return lsp?.state === "connected" ? "ok" : "busy";
   });
+
+  // The Proof Assistant indicator reflects the live connection status. Before
+  // the first status arrives it stays neutral ("…") rather than asserting a
+  // connection state we don't yet know.
+  const assistantConnected = $derived(assistant?.state === "connected");
+  const assistantText = $derived.by(() => {
+    if (!assistant) return "Proof Assistant: …";
+    return assistantConnected
+      ? "Proof Assistant: connected"
+      : "Proof Assistant: disconnected";
+  });
+  const assistantKind = $derived.by(() => {
+    if (!assistant) return "busy";
+    return assistantConnected ? "ok" : "error";
+  });
 </script>
 
 <div class="status-bar" role="status">
-  <span class="dot dot--{kind}" aria-hidden="true"></span>
-  <span class="status-text">{text}</span>
+  <span class="status-group">
+    <span class="dot dot--{kind}" aria-hidden="true"></span>
+    <span class="status-text">{text}</span>
+  </span>
+  <span class="status-group status-group--right">
+    <span class="dot dot--{assistantKind}" aria-hidden="true"></span>
+    <span class="status-text">{assistantText}</span>
+  </span>
 </div>
 
 <style>
@@ -40,6 +62,18 @@
     background: var(--color-header-bg);
     border-top: 1px solid var(--color-border);
     user-select: none;
+  }
+
+  .status-group {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-width: 0;
+  }
+
+  /* Right-justify the Proof Assistant group; the left group keeps its place. */
+  .status-group--right {
+    margin-left: auto;
   }
 
   .status-text {
