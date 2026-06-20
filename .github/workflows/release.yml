@@ -1,19 +1,29 @@
-# Release: build the full installer matrix on a version tag and publish a
-# DRAFT GitHub Release with every artifact attached (issue #20).
+# Release: build the full installer matrix when a GitHub Release is published
+# and attach every artifact onto that Release (issue #54, superseding the
+# tag-trigger + draft-creation design of #20).
 #
 # Where the other workflows stop short of a shippable release, this one
 # produces it:
 #   - package-check.yml (#21)  compiles + validates config (--no-bundle), per PR
 #   - linux-bundle.yml  (#37)  builds the real Linux installers on main + smoke
-#   - release.yml       (#20)  builds macOS + Linux installers from a v* tag,
-#                              signs/notarizes macOS, normalizes to stable names
-#                              with SHA256SUMS (#24), and drafts the Release.
+#   - release.yml       (#54)  builds macOS + Linux installers when a Release is
+#                              published, signs/notarizes macOS, normalizes to
+#                              stable names with SHA256SUMS (#24), and uploads
+#                              the lot onto the triggering Release.
 #
-# Flow: a `v*` tag is pushed → the macOS and Linux legs build in parallel and
-# each stages its bundle(s) under stable, version-less names (#24) → the
-# `release` job collects all four artifacts, writes SHA256SUMS over the lot,
-# and creates/updates a single DRAFT Release. A human verifies the draft on
-# real hardware (#33/#34) before publishing. The full runbook is RELEASING.md.
+# Flow: a maintainer creates a Release in the GitHub UI (sets the tag, writes
+# notes, ticks pre-release for RCs, Publishes) → the `release: published` event
+# fires → the macOS and Linux legs build in parallel and each stages its
+# bundle(s) under stable, version-less names (#24) → the `attach` job collects
+# all four artifacts, writes SHA256SUMS over the lot, and uploads them onto the
+# published Release with `--clobber` (so re-runs replace assets rather than
+# fail). CI never creates a Release — the human owns that in the UI. The full
+# runbook is RELEASING.md.
+#
+# Known, accepted gap: the event fires only on publish and notarization takes a
+# few minutes, so the live Release shows notes with no downloads until the
+# attach job finishes. Re-run the run to recover from a transient failure — the
+# Release already exists, so the attach job re-uploads via --clobber.
 #
 # Signing/notarization: the macOS leg passes the six APPLE_* repo secrets (#30)
 # through to `tauri build`, which imports the cert into a temp keychain, signs
@@ -23,72 +33,45 @@
 # Apple secret never hard-fails the run.
 name: Release
 
-# Tag pushes cut a release; workflow_dispatch allows re-running against an
-# existing tag/ref from the Actions tab (e.g. a transient notarization failure)
-# without re-tagging. Re-runs update the existing draft rather than duplicating
-# it — see the `release` job.
+# Publishing a Release in the UI is the entry point. The event fires for both
+# normal and pre-release publishes; CI no longer triggers on tag pushes and
+# never creates a Release itself (#54).
 on:
-  push:
-    tags: ["v*"]
-  workflow_dispatch: {}
+  release:
+    types: [published]
 
-# Never let two runs for the same tag race to write the same draft Release.
+# Never let two publishes for the same tag race to attach the same assets.
 # Unlike CI we do NOT cancel in-progress runs: a release build is long and
 # expensive (the macOS notarization wait alone can be 20+ minutes), so we let a
-# running release finish rather than killing it on a re-dispatch.
+# running release finish rather than killing it on a re-publish.
 concurrency:
-  group: release-${{ github.workflow }}-${{ github.ref }}
+  group: release-${{ github.workflow }}-${{ github.event.release.tag_name }}
   cancel-in-progress: false
 
 jobs:
-  # ── Preflight ───────────────────────────────────────────────────────────
+  # ── Tag ↔ package.json check ────────────────────────────────────────────
   # Cheap gate that runs before the expensive build legs so a mis-tagged
-  # release fails in seconds rather than after a 30-minute macOS build:
-  #   - confirms the tag's base version matches the source version in
-  #     package.json (the single version source; see src-tauri/Cargo.toml's
-  #     0.0.0 note). This mirrors the version-consistency check CI enforces on
-  #     main (#25) — RELEASING.md promises the release workflow refuses to build
-  #     when the tag disagrees with the source.
-  #   - decides pre-release vs normal from the tag string and exports it for the
-  #     `release` job (#20: -rc/-beta/-alpha → pre-release).
-  meta:
-    name: Preflight (version + prerelease)
+  # Release fails in seconds rather than after a 30-minute macOS build. The
+  # build reads the version from package.json (the single source — #25); the
+  # tag is only a label, and this guard keeps the two honest so a typo'd tag
+  # can't ship mislabeled binaries.
+  check:
+    name: Check tag matches package.json
     runs-on: ubuntu-latest
-    outputs:
-      prerelease: ${{ steps.compute.outputs.prerelease }}
     steps:
       - uses: actions/checkout@v5
 
-      - name: Compute release metadata
-        id: compute
+      - name: Compare release tag to source version
         run: |
           set -euo pipefail
-          tag="${GITHUB_REF_NAME}"
-          echo "Tag/ref: $tag"
-
-          # Strip the required leading 'v' (RELEASING.md: the 'v' is what the
-          # push trigger keys on) to get the semver string.
-          semver="${tag#v}"
-
-          # A pre-release tag carries an -rc / -beta / -alpha suffix; mark those
-          # as GitHub pre-releases so they never become `latest` (#20, #26).
-          case "$semver" in
-            *-rc*|*-beta*|*-alpha*) prerelease=true ;;
-            *)                      prerelease=false ;;
-          esac
-          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
-          echo "Pre-release: $prerelease"
-
-          # The base version is the semver with any pre-release suffix removed
-          # (1.0.0-rc.1 -> 1.0.0). The three version files carry the BASE
-          # version with no -rc suffix (RELEASING.md), so compare against that.
-          base="${semver%%-*}"
-
-          source_version="$(node -p "require('./package.json').version")"
+          tag="${{ github.event.release.tag_name }}"      # e.g. v1.0.0-rc.1
+          base="${tag#v}"; base="${base%%-*}"             # -> 1.0.0
+          src="$(node -p "require('./package.json').version")"
+          echo "Release tag: $tag"
           echo "Tag base version: $base"
-          echo "Source version (package.json): $source_version"
-          if [ "$base" != "$source_version" ]; then
-            echo "::error::Tag base version '$base' does not match package.json version '$source_version'. Bump the version files before tagging (see RELEASING.md)."
+          echo "Source version (package.json): $src"
+          if [ "$base" != "$src" ]; then
+            echo "::error::Release tag '$tag' (base $base) != package.json version '$src'. Fix the version or the tag."
             exit 1
           fi
 
@@ -96,10 +79,10 @@ jobs:
   # Builds a single universal (Intel + Apple Silicon) .dmg on macos-14, signed
   # and notarized when the APPLE_* secrets are present. Stages it under the
   # stable name Turnstile-macOS-universal.dmg (#24) and uploads it for the
-  # assembly job.
+  # attach job.
   macos:
     name: macOS universal (.dmg)
-    needs: meta
+    needs: check
     runs-on: macos-14
     env:
       CARGO_NET_RETRY: 10
@@ -176,7 +159,7 @@ jobs:
   # them. References no Apple secrets, so it cannot be blocked by their absence.
   linux:
     name: Linux x86_64 (.deb/.rpm/.AppImage)
-    needs: meta
+    needs: check
     runs-on: ubuntu-22.04
     env:
       CARGO_NET_RETRY: 10
@@ -235,19 +218,23 @@ jobs:
           path: dist/
           if-no-files-found: error
 
-  # ── Assemble + draft the Release ────────────────────────────────────────
+  # ── Attach assets to the published Release ──────────────────────────────
   # Collects the stable-named artifacts from both legs into one directory,
-  # writes SHA256SUMS over all four (#24), and creates/updates the DRAFT
-  # Release. Re-running on the same tag updates this draft in place (stable
-  # names overwrite, no duplicates), satisfying the idempotency criterion.
-  release:
-    name: Draft GitHub Release
-    needs: [meta, macos, linux]
+  # writes SHA256SUMS over all four (#24), and uploads them onto the triggering
+  # Release. `--clobber` makes re-runs replace the same stable-named assets
+  # rather than fail, satisfying the idempotency criterion. No Release is
+  # created here — the maintainer already published it in the UI (#54).
+  attach:
+    name: Attach assets to Release
+    needs: [macos, linux]
     runs-on: ubuntu-latest
-    # The Release-creating step needs write access to repo contents (#31).
+    # `gh release upload` needs write access to repo contents (#31).
     permissions:
       contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
     steps:
+      # Needed for scripts/normalize-artifacts.sh (the SHA256SUMS step below).
       - uses: actions/checkout@v5
 
       # Merge both legs' uploads into a single dist/ directory.
@@ -266,22 +253,15 @@ jobs:
       - name: List release assets
         run: ls -la dist
 
-      # softprops/action-gh-release is idempotent per tag: it creates the
-      # Release if absent, otherwise updates the existing one, and uploads the
-      # files by name — so a re-run overwrites the same stable-named assets
-      # rather than duplicating them. Kept a DRAFT so Bill reviews before it
-      # goes public (#34); flagged pre-release for -rc/-beta/-alpha tags so it
-      # never becomes `latest` (#20, #26).
-      - name: Create or update draft Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.ref_name }}
-          draft: true
-          prerelease: ${{ needs.meta.outputs.prerelease == 'true' }}
-          fail_on_unmatched_files: true
-          files: |
-            dist/Turnstile-macOS-universal.dmg
-            dist/Turnstile-linux-x86_64.deb
-            dist/Turnstile-linux-x86_64.rpm
-            dist/Turnstile-linux-x86_64.AppImage
-            dist/SHA256SUMS
+      # Upload onto the triggering Release. --clobber replaces existing assets
+      # so re-running a failed run re-attaches cleanly instead of erroring on a
+      # name collision (#54).
+      - name: Upload assets to the published Release
+        run: |
+          gh release upload "${{ github.event.release.tag_name }}" \
+            dist/Turnstile-macOS-universal.dmg \
+            dist/Turnstile-linux-x86_64.deb \
+            dist/Turnstile-linux-x86_64.rpm \
+            dist/Turnstile-linux-x86_64.AppImage \
+            dist/SHA256SUMS \
+            --clobber
