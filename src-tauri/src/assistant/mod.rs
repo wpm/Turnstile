@@ -259,11 +259,16 @@ pub async fn dispatch_tool(
         }
         ToolName::ReadProseProof => state.proof.lock().await.prose.text.clone(),
         ToolName::UpdateProseProof => {
-            let text = tool_input
+            let raw = tool_input
                 .get("text")
                 .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
+                .unwrap_or("");
+            // Render the assistant's Markdown/LaTeX to KaTeX HTML before storing,
+            // matching the translator path (lib.rs). `prose.text` is the
+            // already-rendered HTML the Prose Proof panel displays via {@html}
+            // and that sessions persist, so storing raw here would leave the
+            // panel unformatted — including after the session is reloaded.
+            let text = crate::proof::translator::render_katex(raw);
             state.proof.lock().await.prose.text = text.clone();
             state
                 .session_dirty
