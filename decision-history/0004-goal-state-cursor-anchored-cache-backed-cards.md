@@ -85,25 +85,25 @@ sequenceDiagram
 
 ### Presentation model
 
-| Option | Shape | Assessment |
-|--------|-------|------------|
-| Toggled whole-proof panel (today) | one goal, mutually exclusive with prose | Cannot show goal and prose together; a single end-of-document goal severs the per-line tactic→state link that is the whole point. |
-| Static per-line ladder | every row's goal rendered at once, aligned | Realizes the "connector" vision maximally, but a tall single goal cannot align to a one-row source line without either stretching the source or colliding with its neighbors, and live per-line querying is N requests per edit. |
-| **Cursor-anchored card (chosen)** | one goal, the cursor row's, rail-pinned | Shows goal beside prose; one goal at a time means a tall goal is free to be tall; exact alignment is trivial (one row). The all-at-once need is met separately by the toggle, read from the same cache. |
+| Option                            | Shape                                      | Assessment                                                                                                                                                                                                                       |
+| --------------------------------- | ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Toggled whole-proof panel (today) | one goal, mutually exclusive with prose    | Cannot show goal and prose together; a single end-of-document goal severs the per-line tactic→state link that is the whole point.                                                                                                |
+| Static per-line ladder            | every row's goal rendered at once, aligned | Realizes the "connector" vision maximally, but a tall single goal cannot align to a one-row source line without either stretching the source or colliding with its neighbors, and live per-line querying is N requests per edit. |
+| **Cursor-anchored card (chosen)** | one goal, the cursor row's, rail-pinned    | Shows goal beside prose; one goal at a time means a tall goal is free to be tall; exact alignment is trivial (one row). The all-at-once need is met separately by the toggle, read from the same cache.                          |
 
 ### Acquisition timing
 
-| Option | When queried | Assessment |
-|--------|--------------|------------|
-| Live per-line (with the ladder) | every row, every edit | N `plainGoal` calls per keystroke; the cost that sinks the static ladder. |
-| Lazy cursor-only | the cursor row, on arrival | Minimal queries, but the first visit to each row during reading pays a query's latency and can flicker. |
+| Option                                                  | When queried                       | Assessment                                                                                                                                           |
+| ------------------------------------------------------- | ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Live per-line (with the ladder)                         | every row, every edit              | N `plainGoal` calls per keystroke; the cost that sinks the static ladder.                                                                            |
+| Lazy cursor-only                                        | the cursor row, on arrival         | Minimal queries, but the first visit to each row during reading pays a query's latency and can flicker.                                              |
 | **Edit-driven, eager changed-tail into cache (chosen)** | `[k, end]` after each edit settles | Re-queries only what an edit could have changed, in the background; every read is then cache-served and instant. Decouples display from acquisition. |
 
 ### Position convention
 
-| Option | Card shows | Assessment |
-|--------|-----------|------------|
-| Before-state | goal entering the row's tactic | "What must I prove here." Matches a cursor parked at the start of the line. |
+| Option                   | Card shows                          | Assessment                                                                                                                                                                                                                |
+| ------------------------ | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Before-state             | goal entering the row's tactic      | "What must I prove here." Matches a cursor parked at the start of the line.                                                                                                                                               |
 | **After-state (chosen)** | goal at the row's trailing position | "What did this row get me." Matches a cursor at end-of-line (the common stepping position) and makes a closing line show what remains; the proof visibly runs out of goals at the bottom, retiring the completion banner. |
 
 ## Trade-off Analysis
