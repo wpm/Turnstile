@@ -1,8 +1,18 @@
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
 import { sveltekit } from "@sveltejs/kit/vite";
 import tailwindcss from "@tailwindcss/vite";
 
 const host = /** @type {string | undefined} */ (process.env["TAURI_DEV_HOST"]);
+
+// Resolve a fake-backend shim to an absolute filesystem path. Aliases must be
+// absolute (not root-relative like "/src/...") so esbuild's dev dep-optimizer
+// can resolve them when the importer is a node_module — e.g. the
+// @tauri-apps/plugin-* packages that import `@tauri-apps/api/core` (#53). A
+// root-relative replacement resolves fine for app sources but esbuild treats it
+// as an absolute path off the filesystem root and fails to read it.
+const fakeShim = (/** @type {string} */ name) =>
+  fileURLToPath(new URL(`./src/lib/fake/${name}`, import.meta.url));
 
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => ({
@@ -15,8 +25,8 @@ export default defineConfig(({ mode }) => ({
     mode === "e2e"
       ? {
           alias: {
-            "@tauri-apps/api/core": "/src/lib/fake/core.ts",
-            "@tauri-apps/api/event": "/src/lib/fake/event.ts",
+            "@tauri-apps/api/core": fakeShim("core.ts"),
+            "@tauri-apps/api/event": fakeShim("event.ts"),
           },
         }
       : undefined,
