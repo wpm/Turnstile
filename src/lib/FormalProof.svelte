@@ -140,6 +140,22 @@
   let unsubscribeProgress: (() => void) | undefined;
   let unsubscribeAnnotations: (() => void) | undefined;
   let unlistenSessionLoaded: (() => void) | undefined;
+  let unlistenFormalSourceUpdated: (() => void) | undefined;
+
+  // Replace the editor document with backend-authoritative content, clearing
+  // stale annotations and tagging the transaction programmatic so the update
+  // listener doesn't echo it back as an incremental edit. Shared by the
+  // session-load and Proof-Assistant-write paths (both set the backend source
+  // first; CodeMirror is a follower). No-op when the content already matches.
+  function applyBackendSource(newContent: string) {
+    if (!view) return;
+    if (newContent === view.state.doc.toString()) return;
+    view.dispatch({
+      changes: { from: 0, to: view.state.doc.length, insert: newContent },
+      effects: setAnnotations.of(EMPTY_ANNOTATIONS),
+      annotations: programmaticUpdate.of(true),
+    });
+  }
 
   type LspPosition = { line: number; character: number };
   type ContentChange = {
@@ -263,19 +279,19 @@
     unlistenSessionLoaded = await listen<{ proof_lean: string }>(
       "session-loaded",
       (e) => {
-        if (!view) return;
-        const newContent = e.payload.proof_lean;
-        const currentContent = view.state.doc.toString();
-        if (newContent === currentContent) return;
-        view.dispatch({
-          changes: { from: 0, to: view.state.doc.length, insert: newContent },
-          // Clear stale annotations from the previous document immediately.
-          effects: setAnnotations.of(EMPTY_ANNOTATIONS),
-          // The backend already set its source to this content during the load;
-          // tag the transaction so the update listener doesn't echo it back as
-          // an incremental change applied on top of the already-set source.
-          annotations: programmaticUpdate.of(true),
-        });
+        // The backend already set its source to this content during the load;
+        // applyBackendSource tags the transaction so the update listener doesn't
+        // echo it back as an incremental change on top of the already-set source.
+        applyBackendSource(e.payload.proof_lean);
+      },
+    );
+
+    // The Proof Assistant's update_lean_source tool replaced the backend source;
+    // follow it in the editor, the same way a session load does.
+    unlistenFormalSourceUpdated = await listen<string>(
+      "formal-source-updated",
+      (e) => {
+        applyBackendSource(e.payload);
       },
     );
   });
@@ -285,6 +301,7 @@
     unsubscribeAnnotations?.();
     unsubscribeGoalCache?.();
     unlistenSessionLoaded?.();
+    unlistenFormalSourceUpdated?.();
     if (dimTimer) clearTimeout(dimTimer);
     view?.scrollDOM.removeEventListener("scroll", refreshCard);
     view?.destroy();

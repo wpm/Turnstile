@@ -426,6 +426,79 @@ async fn update_document(
     Ok(())
 }
 
+/// Replace the formal proof source from a non-editor origin — the Proof
+/// Assistant's `update_lean_source` tool.
+///
+/// The backend is the single source of truth for the formal proof (ADR-0003),
+/// so a tool write goes through the same backend-authoritative mechanism a
+/// session load uses: assign `Proof.formal.source` directly, then push the whole
+/// document to both followers — `CodeMirror` (via [`proof::FORMAL_SOURCE_UPDATED_EVENT`],
+/// tagged programmatic so the editor's update listener does not echo it back as
+/// an edit) and the LSP (via `replace_document`, a whole-document `didChange`
+/// that re-elaborates the file). That re-elaboration refreshes the goal state,
+/// the per-row cache, semantic tokens, and the prose through the normal
+/// `ElaborationDone` pipeline — exactly as a session load does — so this path
+/// only has to seed the same invalidation `update_document` performs.
+pub async fn replace_formal_source(app: &AppHandle, new_source: String) {
+    let state = app.state::<AppState>();
+
+    // Assign the authoritative copy and, under the same lock, stale the per-row
+    // goal cache so no card lingers over text it no longer describes. The whole
+    // document is new, so every row stales (mirrors `update_document`'s
+    // downward-inclusive invalidation from the first changed line — here line 1).
+    let (source_is_empty, stale_snapshot) = {
+        let mut proof = state.proof.lock().await;
+        proof.formal.source.clone_from(&new_source);
+        let empty = proof.formal.source.trim().is_empty();
+        let snapshot = if empty {
+            None
+        } else {
+            let line_count = u32::try_from(proof.formal.source.split('\n').count())
+                .unwrap_or(u32::MAX)
+                .max(1);
+            proof.goal_state.mark_stale(1, line_count);
+            Some(proof.goal_state.snapshot())
+        };
+        (empty, snapshot)
+    };
+
+    // Invalidate any in-flight goal-state refresh from a prior edit so it can't
+    // repopulate the panels with data for the old source.
+    let goal_seq = state.goal_state_seq.fetch_add(1, Ordering::SeqCst) + 1;
+
+    if source_is_empty {
+        // The assistant cleared the proof: nothing left to describe. Clear the
+        // goal state and prose explicitly (the refresh paths won't overwrite a
+        // populated panel with an empty value), mirroring `update_document`.
+        clear_goal_state_and_prose(app, &state).await;
+    } else if let Some(snapshot) = stale_snapshot {
+        // Drop the stale cards now; the refill repopulates them once the
+        // re-elaboration triggered by `replace_document` completes.
+        emit_turnstile(app, &TurnstileMessage::GoalCacheUpdated(snapshot));
+        spawn_goal_state_refresh(app.clone(), goal_seq);
+    }
+
+    // Push the whole document to the LSP (the load path's mechanism). This bumps
+    // the Protocol version counter and re-elaborates, driving the goal-state /
+    // cache / token / prose refreshes through `ElaborationDone`.
+    {
+        let lock = state.lsp_client.lock().await;
+        if let Some(client) = lock.as_ref() {
+            if let Err(e) = client.replace_document(new_source.clone()) {
+                tracing::warn!("update_lean_source: failed to push document to LSP: {e}");
+            }
+        } else {
+            tracing::warn!("update_lean_source: LSP client not connected; edit not sent to server");
+        }
+    }
+
+    // Push to CodeMirror so the editor shows what the assistant wrote.
+    app.emit(proof::FORMAL_SOURCE_UPDATED_EVENT, &new_source)
+        .ok();
+
+    state.session_dirty.store(true, Ordering::SeqCst);
+}
+
 /// Debounce interval: how long to wait after an edit for the source to settle
 /// before attempting prose regeneration.
 const PROSE_DEBOUNCE: std::time::Duration = std::time::Duration::from_secs(2);
