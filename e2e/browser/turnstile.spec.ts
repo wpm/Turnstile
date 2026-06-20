@@ -92,12 +92,14 @@ test("sorry produces a warning annotation and the goal state", async ({
   await expect(page.locator(".cm-tok-keyword").first()).toBeVisible();
   // …and the goal state panel fills in with the descent goal. The top-right
   // pane defaults to prose now, so flip it to the goal (All-Goals) view first.
+  // Scope to `.goal-state` (the panel): the cursor-row card (#91) also renders
+  // a `.goal-conclusion` in the Formal pane.
   await page.getByRole("button", { name: "Switch to Formal Proof" }).click();
-  await expect(page.locator(".goal-conclusion")).toContainText(
+  await expect(page.locator(".goal-state .goal-conclusion")).toContainText(
     "n * n ≠ 2 * (d * d)",
     { timeout: 5_000 },
   );
-  await expect(page.locator(".goal-turnstile")).toBeVisible();
+  await expect(page.locator(".goal-state .goal-turnstile")).toBeVisible();
 });
 
 test("a completed proof runs out of goals, not a bare ⊢ no goals", async ({
@@ -118,6 +120,27 @@ test("a completed proof runs out of goals, not a bare ⊢ no goals", async ({
   // goal conclusion (the bug: ⊢ no goals).
   await expect(page.locator(".goal-turnstile")).toHaveCount(0);
   await expect(page.locator(".goal-conclusion")).toHaveCount(0);
+});
+
+test("the cursor-row goal card shows the after-state and hides off a fresh row", async ({
+  page,
+}) => {
+  await openApp(page);
+  await typeInEditor(page, THEOREM);
+
+  // After typing, the cursor sits on the `sorry` line, whose cached goal is
+  // fresh — the card appears in the Formal pane with the descent goal.
+  const card = page.locator(".goal-card");
+  await expect(card).toBeVisible({ timeout: 5_000 });
+  await expect(card.locator(".goal-conclusion")).toContainText(
+    "n * n ≠ 2 * (d * d)",
+  );
+
+  // Moving up off the `sorry` row lands on rows whose goal is not fresh, so the
+  // card — a pure function of (cursor row, cache) — disappears.
+  await page.keyboard.press("ArrowUp");
+  await page.keyboard.press("ArrowUp");
+  await expect(page.locator(".goal-card")).toHaveCount(0);
 });
 
 test("assistant chat: streams a reply about the goal and renders math", async ({
