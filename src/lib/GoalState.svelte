@@ -16,7 +16,8 @@
   );
 </script>
 
-<div class="goal-state">
+<!-- data-select-scope: Command-A selects this panel's goals only (#113). -->
+<div class="goal-state" data-select-scope>
   {#if freshRows.length === 0}
     <div class="goal-empty">
       {$goalCache.size > 0 ? "No goals." : "No goal state available."}
@@ -44,6 +45,9 @@
     font-family: monospace;
     font-size: 0.875rem;
     color: var(--color-text);
+    /* Override the app shell's user-select: none so the goals can be selected
+       and copied (and scoped Select All can highlight them). */
+    user-select: text;
   }
 
   .goal-empty {

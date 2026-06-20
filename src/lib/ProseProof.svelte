@@ -5,7 +5,8 @@
   }: { content?: string; generating?: boolean } = $props();
 </script>
 
-<div class="prose-proof" class:prose-generating={generating}>
+<!-- data-select-scope: Command-A selects this panel's prose only (#113). -->
+<div class="prose-proof" class:prose-generating={generating} data-select-scope>
   <!-- eslint-disable-next-line svelte/no-at-html-tags -- content is KaTeX-rendered HTML from our own backend -->
   {@html content}
 </div>
@@ -17,6 +18,9 @@
     padding: 1rem;
     font-size: 0.875rem;
     color: var(--color-text);
+    /* Override the app shell's user-select: none so the prose can be selected
+       and copied (and scoped Select All can highlight it). */
+    user-select: text;
   }
 
   /* Whole-window blink while prose is being generated — mirrors the

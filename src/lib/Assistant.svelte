@@ -251,7 +251,9 @@
   onmouseup={onMouseUp}
   onmouseleave={onMouseUp}
 >
-  <div class="transcript" bind:this={transcriptEl}>
+  <!-- data-select-scope: Command-A selects the transcript only (#113); the
+       entry below is a CodeMirror editor with its own in-editor Select All. -->
+  <div class="transcript" bind:this={transcriptEl} data-select-scope>
     {#each messages as message (message.id)}
       <div class="bubble-row {message.role}">
         <div
