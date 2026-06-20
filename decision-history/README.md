@@ -29,3 +29,4 @@ and the community hub at [adr.github.io](https://adr.github.io/).
 | [0001](0001-proof-assistant-configuration-and-failure-surfacing.md) | Proof Assistant configuration and failure surfacing                     | Accepted |
 | [0002](0002-cache-linux-ci-dependencies.md)                         | Cache Linux CI system dependencies via a shared composite action        | Accepted |
 | [0003](0003-backend-source-of-truth-for-formal-proof.md)            | Backend as single source of truth for formal-proof text and annotations | Accepted |
+| [0004](0004-goal-state-cursor-anchored-cache-backed-cards.md)       | Goal state as cursor-anchored, cache-backed after-state cards            | Proposed |
