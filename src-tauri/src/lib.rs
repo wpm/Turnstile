@@ -1066,6 +1066,27 @@ fn take_settings_load_warning(state: tauri::State<'_, AppState>) -> Option<Strin
         .take()
 }
 
+/// Whether this install can self-update via the Tauri updater (#53).
+///
+/// The updater can only replace `AppImage` and macOS/Windows installs. On Linux
+/// a `.deb`/`.rpm` is owned by the system package manager and can't self-update
+/// (see #50); a running `AppImage` advertises itself through the `APPIMAGE`
+/// environment variable, so its absence on Linux means deb/rpm (or a `cargo
+/// run` dev build). The frontend skips the update flow when this is false rather
+/// than letting the check fail noisily on an install type it can't update.
+const fn updater_supported_for_target(is_appimage: bool) -> bool {
+    if cfg!(target_os = "linux") {
+        is_appimage
+    } else {
+        true
+    }
+}
+
+#[tauri::command]
+fn updater_target_supported() -> bool {
+    updater_supported_for_target(std::env::var_os("APPIMAGE").is_some())
+}
+
 /// Resolve the API key for the backend and the initial [`AssistantStatus`].
 ///
 /// Resolution order matches [`secret::resolve_api_key`]: Turnstile's keychain
@@ -1210,6 +1231,12 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_window_state::Builder::new().build())
+        // Auto-update (#50): the updater plugin fetches the signed latest.json
+        // (#52), verifies the download against the embedded pubkey, and installs
+        // it; the process plugin provides the relaunch the frontend calls after
+        // a successful install.
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .on_window_event(|window, event| {
             if matches!(event, tauri::WindowEvent::Destroyed) {
                 use lsp_types::{DidCloseTextDocumentParams, TextDocumentIdentifier};
@@ -1258,6 +1285,7 @@ pub fn run() {
             set_api_key,
             secret::has_api_key,
             clear_api_key,
+            updater_target_supported,
         ])
         .run(tauri::generate_context!())
         .expect("error while running turnstile");
@@ -1291,10 +1319,22 @@ mod tests {
 
     use super::{
         assistant, claim_term_mode_hint, end_of_document_position, last_non_whitespace_position,
-        llm, proof, should_generate_prose, AppState, ShouldGenerate,
+        llm, proof, should_generate_prose, updater_supported_for_target, AppState, ShouldGenerate,
     };
     use crate::lean;
     use std::sync::Arc;
+
+    #[test]
+    fn updater_supported_tracks_appimage_only_on_linux() {
+        // A running AppImage (APPIMAGE set) can always self-update.
+        assert!(updater_supported_for_target(true));
+        // Without the AppImage marker: deb/rpm and dev builds on Linux can't
+        // self-update, but macOS/Windows installs always can.
+        assert_eq!(
+            updater_supported_for_target(false),
+            !cfg!(target_os = "linux")
+        );
+    }
 
     #[test]
     fn end_of_document_position_basic() {

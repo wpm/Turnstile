@@ -12,8 +12,9 @@
   import type { ProofView } from "$lib/types";
   import { onMount } from "svelte";
   import { SvelteMap } from "svelte/reactivity";
-  import { invoke } from "@tauri-apps/api/core";
+  import { invoke, isTauri } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
+  import { runUpdateFlow } from "$lib/updater";
   import {
     lspStatus as lspStatusStore,
     showMessage,
@@ -145,6 +146,43 @@
     }
   }
 
+  /**
+   * Launch-time auto-update check (#53). Non-blocking and Tauri-only: in the
+   * browser-driven e2e harness `isTauri()` is false, so the native updater /
+   * process / dialog plugins are never loaded. The flow itself lives in
+   * `$lib/updater` with its plugin bindings injected here, so it stays
+   * unit-testable without a Tauri runtime.
+   */
+  async function runUpdateCheck() {
+    if (!isTauri()) return;
+    try {
+      const [{ check }, { relaunch }, { ask }] = await Promise.all([
+        import("@tauri-apps/plugin-updater"),
+        import("@tauri-apps/plugin-process"),
+        import("@tauri-apps/plugin-dialog"),
+      ]);
+      await runUpdateFlow({
+        isSupported: () => invoke<boolean>("updater_target_supported"),
+        check: () => check(),
+        confirm: (message, title) =>
+          ask(message, {
+            title,
+            kind: "info",
+            okLabel: "Update",
+            cancelLabel: "Later",
+          }),
+        relaunch: () => relaunch(),
+        notify: addToast,
+        log: (message) => {
+          console.warn(message);
+        },
+      });
+    } catch (e) {
+      // Loading or wiring the updater must never break startup.
+      console.warn("updater unavailable", e);
+    }
+  }
+
   async function restoreAutosave(restore: boolean) {
     restorePromptOpen = false;
     try {
@@ -226,6 +264,9 @@
       unlistenProseGenerating = pg;
     });
     void setup;
+
+    // Check for an app update once on launch (non-blocking, Tauri-only).
+    void runUpdateCheck();
 
     // Load persisted settings; enable Save; offer autosave recovery.
     void (async () => {

@@ -31,6 +31,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": true,
     "publisher": "W.P. McNeill",
     "homepage": "https://github.com/wpm/Turnstile",
     "license": "MIT",
@@ -72,6 +73,14 @@
       "appimage": {
         "bundleMediaFramework": true
       }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/wpm/Turnstile/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEVERjYwOTYzRjdCQkEyRUYKUldUdm9ydjNZd24yN1ltcWV0TUdxUWpaVHd1YVQrWVBIUE1ONXRJWnBDbWF0a1Y2MkE5bC91c1AK"
     }
   }
 }
