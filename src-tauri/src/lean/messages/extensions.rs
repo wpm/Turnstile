@@ -13,7 +13,15 @@ use serde::{Deserialize, Serialize};
 /// Response type for the `$/lean/plainGoal` request.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PlainGoal {
+    /// The whole goal state rendered as one block (all goals, blank-line
+    /// separated). Kept as the input to prose/assistant.
     pub rendered: String,
+    /// Each open goal rendered individually (case label, hypotheses, and `⊢`
+    /// conclusion). Carries the per-goal structure the cursor-row card and the
+    /// All-Goals panel render, so the backend never re-splits `rendered`.
+    /// Defaults to empty when the server omits it (older servers / fakes).
+    #[serde(default)]
+    pub goals: Vec<String>,
 }
 
 pub(super) enum PlainGoalMethod {}

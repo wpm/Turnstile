@@ -323,15 +323,213 @@ pub struct ProseProof {
     pub goal_state_hash: String,
 }
 
+/// Status of a row's cached goal (ADR-0004). Display renders a card for a row
+/// **iff** its status is `Fresh`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../src/lib/")]
+#[serde(rename_all = "camelCase")]
+pub enum GoalRowStatus {
+    /// Queried and current: the row's after-state is the `goals` it carries.
+    Fresh,
+    /// Invalidated by an edit at or above this row; awaiting re-query. A card
+    /// on a stale row hides immediately, so no goal flickers mid-keystroke.
+    #[default]
+    Stale,
+    /// Queried, but the row has no open goal — a non-tactic line, or a line
+    /// that closed the proof. No card (a closed proof runs out of goals).
+    Empty,
+}
+
+/// One open goal in structured form (ADR-0004 decision 6).
+///
+/// An optional `case` label, its hypotheses, and the `⊢` conclusion. Parsed
+/// once in the backend from a `$/lean/plainGoal` `goals[]` entry, so the
+/// frontend renders structure rather than re-splitting text.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../src/lib/")]
+#[serde(rename_all = "camelCase")]
+pub struct GoalEntry {
+    pub case_label: Option<String>,
+    pub hypotheses: Vec<String>,
+    pub conclusion: String,
+}
+
+/// A row's cached goal: its `status` and, when `Fresh`, its after-state goals.
+///
+/// The goals are taken at the row's **trailing** position. There is more than
+/// one only in the brief unfocused window after a splitting tactic — the `+N`
+/// moment. Internal cache storage; the wire shape is [`GoalCacheRow`] (which
+/// adds the row number). Not exported to TypeScript.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RowGoal {
+    pub status: GoalRowStatus,
+    pub goals: Vec<GoalEntry>,
+}
+
+impl RowGoal {
+    /// Mark this row stale and drop any goal it was carrying, so a stale row
+    /// never serializes a goal the card could render.
+    fn mark_stale(&mut self) {
+        self.status = GoalRowStatus::Stale;
+        self.goals.clear();
+    }
+}
+
+/// One row in a [`GoalCacheInfo`] snapshot: a 1-indexed line number with its
+/// cached status and goals. Flattened from the cache for the wire.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, TS)]
+#[ts(export, export_to = "../../src/lib/")]
+#[serde(rename_all = "camelCase")]
+pub struct GoalCacheRow {
+    /// 1-indexed line number (matching the `CodeMirror` / frontend convention).
+    pub row: u32,
+    pub status: GoalRowStatus,
+    pub goals: Vec<GoalEntry>,
+}
+
+/// A full snapshot of the per-row goal cache (ADR-0004).
+///
+/// Delivered to the UI via
+/// [`crate::lean::messages::turnstile::TurnstileMessage::GoalCacheUpdated`];
+/// display is a pure function of `(cursor row, this snapshot)`.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, TS)]
+#[ts(export, export_to = "../../src/lib/")]
+pub struct GoalCacheInfo {
+    /// Cached rows, ascending. `Stale`/`Empty` rows are included so the
+    /// frontend can drop a card the instant its row goes stale.
+    pub rows: Vec<GoalCacheRow>,
+}
+
 /// The goal state reported by the Lean LSP while elaborating the formal proof.
 ///
-/// `full` is what Lean reports at the end of the document (the "whole-proof"
-/// goal state, independent of cursor position).
+/// - `full` is what Lean reports at the end of the document (the "whole-proof"
+///   goal state). It is retained as the input to **prose generation** and the
+///   **Proof Assistant**, which summarize the whole proof, not a single row.
+/// - `rows` is the per-row goal cache (ADR-0004): a 1-indexed row → after-state
+///   map. Acquisition is edit-driven and `fileProgress`-gated; display is a
+///   pure function of `(cursor row, rows)`.
 ///
-/// Populated on-demand and delivered to the UI via [`crate::lean::messages::turnstile::TurnstileMessage::GoalStateUpdated`].
+/// Delivered to the UI via [`crate::lean::messages::turnstile::TurnstileMessage`]
+/// (`GoalStateUpdated` for `full`, `GoalCacheUpdated` for `rows`).
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GoalState {
     pub full: String,
+    pub rows: std::collections::BTreeMap<u32, RowGoal>,
+}
+
+impl GoalState {
+    /// Mark rows `[from, to]` (1-indexed, inclusive) stale and drop any cached
+    /// row beyond `to` (the document shrank past it). **Downward-inclusive**:
+    /// an edit at row `from` stales `[from, to]` and never anything above,
+    /// because every tactic depends on the ones before it.
+    pub fn mark_stale(&mut self, from: u32, to: u32) {
+        self.rows.retain(|&row, _| row <= to);
+        for row in from..=to {
+            self.rows.entry(row).or_default().mark_stale();
+        }
+    }
+
+    /// The stale rows, ascending — exactly the set to re-query once
+    /// `fileProgress` reports the changed tail complete.
+    #[must_use]
+    pub fn stale_rows(&self) -> Vec<u32> {
+        self.rows
+            .iter()
+            .filter(|(_, r)| r.status == GoalRowStatus::Stale)
+            .map(|(&row, _)| row)
+            .collect()
+    }
+
+    /// Store a row's queried after-state. Empty `goals` records the row as
+    /// `Empty` (a non-tactic or proof-closing line); a non-empty list as
+    /// `Fresh`.
+    pub fn set_row(&mut self, row: u32, goals: Vec<GoalEntry>) {
+        let status = if goals.is_empty() {
+            GoalRowStatus::Empty
+        } else {
+            GoalRowStatus::Fresh
+        };
+        self.rows.insert(row, RowGoal { status, goals });
+    }
+
+    /// Clear the per-row cache (the formal proof was deleted).
+    pub fn clear_rows(&mut self) {
+        self.rows.clear();
+    }
+
+    /// Flatten the cache into a wire snapshot, rows ascending.
+    #[must_use]
+    pub fn snapshot(&self) -> GoalCacheInfo {
+        GoalCacheInfo {
+            rows: self
+                .rows
+                .iter()
+                .map(|(&row, r)| GoalCacheRow {
+                    row,
+                    status: r.status,
+                    goals: r.goals.clone(),
+                })
+                .collect(),
+        }
+    }
+}
+
+/// Parse one `$/lean/plainGoal` `goals[]` entry into structured form.
+///
+/// Splits into an optional leading `case` label, the hypothesis lines above the
+/// `⊢`, and the conclusion after it. A single entry is always one goal, so
+/// unlike the old `parseGoalText` this never splits on blank lines.
+#[must_use]
+pub fn parse_goal_entry(entry: &str) -> GoalEntry {
+    let mut lines: Vec<&str> = entry.split('\n').collect();
+    while lines.first().is_some_and(|l| l.trim().is_empty()) {
+        lines.remove(0);
+    }
+    while lines.last().is_some_and(|l| l.trim().is_empty()) {
+        lines.pop();
+    }
+
+    let mut case_label = None;
+    if lines.len() > 1 && lines[0].starts_with("case ") {
+        case_label = Some(lines[0].trim().to_string());
+        lines.remove(0);
+    }
+
+    let Some(goal_idx) = lines.iter().position(|l| l.trim_start().starts_with('⊢')) else {
+        return GoalEntry {
+            case_label,
+            hypotheses: Vec::new(),
+            conclusion: entry.trim().to_string(),
+        };
+    };
+
+    let hypotheses = lines[..goal_idx]
+        .iter()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| (*l).to_string())
+        .collect();
+
+    let joined = lines[goal_idx..].join("\n");
+    let conclusion = joined
+        .find('⊢')
+        .map_or_else(
+            || joined.trim().to_string(),
+            |pos| joined[pos + '⊢'.len_utf8()..].to_string(),
+        )
+        .trim_start_matches([' ', '\t'])
+        .to_string();
+
+    GoalEntry {
+        case_label,
+        hypotheses,
+        conclusion,
+    }
+}
+
+/// Parse a `$/lean/plainGoal` `goals[]` list into structured goals.
+#[must_use]
+pub fn parse_goal_entries(goals: &[String]) -> Vec<GoalEntry> {
+    goals.iter().map(|g| parse_goal_entry(g)).collect()
 }
 
 /// A proof represented both formally (Lean) and in prose, together with the
@@ -351,6 +549,7 @@ impl Proof {
     /// owns the source; the LSP annotations within it clear via the LSP).
     pub fn clear_derived(&mut self) {
         self.goal_state.full.clear();
+        self.goal_state.clear_rows();
         self.prose.text.clear();
         self.prose.goal_state_hash.clear();
     }
@@ -445,6 +644,7 @@ mod tests {
         let mut p = Proof::default();
         p.formal.source = "theorem t : True := trivial".to_string();
         p.goal_state.full = "⊢ True".to_string();
+        p.goal_state.set_row(1, vec![GoalEntry::default()]);
         p.prose.text = "It is trivially true.".to_string();
         p.prose.goal_state_hash = "abc123".to_string();
 
@@ -452,10 +652,137 @@ mod tests {
 
         // Derived state is gone — the panels will show nothing.
         assert!(p.goal_state.full.is_empty());
+        assert!(p.goal_state.rows.is_empty());
         assert!(p.prose.text.is_empty());
         assert!(p.prose.goal_state_hash.is_empty());
         // The formal source is the caller's; clear_derived must not touch it.
         assert_eq!(p.formal.source, "theorem t : True := trivial");
+    }
+
+    // ── Per-row goal cache (ADR-0004) ──────────────────────────────────
+
+    #[test]
+    fn parse_goal_entry_plain_conclusion() {
+        let g = parse_goal_entry("⊢ True");
+        assert_eq!(g.case_label, None);
+        assert!(g.hypotheses.is_empty());
+        assert_eq!(g.conclusion, "True");
+    }
+
+    #[test]
+    fn parse_goal_entry_hypotheses_above_turnstile() {
+        let g = parse_goal_entry("h : P\nh2 : Q\n⊢ P ∧ Q");
+        assert_eq!(g.hypotheses, vec!["h : P", "h2 : Q"]);
+        assert_eq!(g.conclusion, "P ∧ Q");
+    }
+
+    #[test]
+    fn parse_goal_entry_case_label() {
+        let g = parse_goal_entry("case inl\nh : P\n⊢ P ∨ Q");
+        assert_eq!(g.case_label.as_deref(), Some("case inl"));
+        assert_eq!(g.hypotheses, vec!["h : P"]);
+        assert_eq!(g.conclusion, "P ∨ Q");
+    }
+
+    #[test]
+    fn parse_goal_entry_strips_turnstile_even_when_indented() {
+        // The conclusion is cleaned of the `⊢` regardless of leading indent.
+        let g = parse_goal_entry("h : P\n  ⊢ P");
+        assert_eq!(g.hypotheses, vec!["h : P"]);
+        assert_eq!(g.conclusion, "P");
+    }
+
+    #[test]
+    fn parse_goal_entry_keeps_multiline_conclusion() {
+        let g = parse_goal_entry("⊢ (fun x =>\n  x + 1) 0 = 1");
+        assert_eq!(g.conclusion, "(fun x =>\n  x + 1) 0 = 1");
+    }
+
+    #[test]
+    fn parse_goal_entry_lone_case_line_is_not_a_label() {
+        let g = parse_goal_entry("case inl");
+        assert_eq!(g.case_label, None);
+        assert_eq!(g.conclusion, "case inl");
+    }
+
+    #[test]
+    fn parse_goal_entries_maps_each_entry() {
+        let entries = parse_goal_entries(&["⊢ P".to_string(), "h : Q\n⊢ Q".to_string()]);
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].conclusion, "P");
+        assert_eq!(entries[1].hypotheses, vec!["h : Q"]);
+    }
+
+    #[test]
+    fn mark_stale_is_downward_inclusive() {
+        let mut gs = GoalState::default();
+        gs.set_row(1, vec![GoalEntry::default()]);
+        gs.set_row(2, vec![GoalEntry::default()]);
+        gs.set_row(3, vec![GoalEntry::default()]);
+
+        // Editing row 2 stales [2, 3] and leaves row 1 fresh.
+        gs.mark_stale(2, 3);
+        assert_eq!(gs.rows[&1].status, GoalRowStatus::Fresh);
+        assert_eq!(gs.rows[&2].status, GoalRowStatus::Stale);
+        assert_eq!(gs.rows[&3].status, GoalRowStatus::Stale);
+        assert_eq!(gs.stale_rows(), vec![2, 3]);
+    }
+
+    #[test]
+    fn stale_rows_after_an_edit_are_bounded_to_the_changed_tail() {
+        // The re-query is scoped to the edit's blast radius, not the document
+        // size (ADR-0004 "To revisit"): editing near the end of a large proof
+        // stales only the tail, leaving everything above fresh.
+        let mut gs = GoalState::default();
+        for r in 1..=100 {
+            gs.set_row(r, vec![GoalEntry::default()]);
+        }
+        gs.mark_stale(98, 100);
+        assert_eq!(gs.stale_rows(), vec![98, 99, 100]);
+        // Rows above the edit stay fresh — no whole-document re-query.
+        assert_eq!(gs.rows[&1].status, GoalRowStatus::Fresh);
+        assert_eq!(gs.rows[&97].status, GoalRowStatus::Fresh);
+    }
+
+    #[test]
+    fn mark_stale_drops_rows_past_the_new_end() {
+        let mut gs = GoalState::default();
+        gs.set_row(1, vec![GoalEntry::default()]);
+        gs.set_row(5, vec![GoalEntry::default()]);
+
+        // The document shrank to 3 lines: row 5 is gone, not lingering.
+        gs.mark_stale(1, 3);
+        assert!(!gs.rows.contains_key(&5));
+        assert_eq!(gs.rows.keys().copied().collect::<Vec<_>>(), vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn mark_stale_clears_the_rows_goal() {
+        let mut gs = GoalState::default();
+        gs.set_row(1, vec![GoalEntry::default()]);
+        gs.mark_stale(1, 1);
+        assert!(gs.rows[&1].goals.is_empty());
+    }
+
+    #[test]
+    fn set_row_empty_goals_is_empty_status() {
+        let mut gs = GoalState::default();
+        gs.set_row(1, Vec::new());
+        assert_eq!(gs.rows[&1].status, GoalRowStatus::Empty);
+        assert!(gs.stale_rows().is_empty());
+    }
+
+    #[test]
+    fn snapshot_is_sorted_by_row() {
+        let mut gs = GoalState::default();
+        gs.set_row(3, vec![GoalEntry::default()]);
+        gs.set_row(1, vec![GoalEntry::default()]);
+        let snap = gs.snapshot();
+        assert_eq!(
+            snap.rows.iter().map(|r| r.row).collect::<Vec<_>>(),
+            vec![1, 3]
+        );
+        assert_eq!(snap.rows[0].status, GoalRowStatus::Fresh);
     }
 
     #[test]
@@ -690,6 +1017,7 @@ mod tests {
             },
             goal_state: GoalState {
                 full: "⊢ True".into(),
+                ..GoalState::default()
             },
         };
         let json = serde_json::to_string(&proof).unwrap();

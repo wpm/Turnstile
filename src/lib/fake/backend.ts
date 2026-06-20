@@ -17,6 +17,9 @@
  * Tests can reach the simulation through `window.__turnstileFake`.
  */
 
+import { parseGoalText } from "../goalState";
+import type { GoalCacheRow } from "../GoalCacheRow";
+
 type Listener = (event: { payload: unknown }) => void;
 
 const listeners = new Map<string, Set<Listener>>();
@@ -226,6 +229,40 @@ function computeGoalState(doc: string): string {
   return "no goals";
 }
 
+/**
+ * Per-row goal cache snapshot (ADR-0004). Attaches the after-state to the row
+ * whose tactic produced it — the `sorry` line if present, else the last line —
+ * and marks every other row `empty`. A `constructor` line models the brief
+ * unfocused window after a splitting tactic, carrying two goals so the card's
+ * `+N` notch can be exercised. Mirrors the real backend's per-row cache closely
+ * enough to drive the cursor-row card and the All-Goals panel.
+ */
+function computeGoalCache(doc: string): GoalCacheRow[] {
+  if (doc.trim() === "" || doc.includes("oops")) return [];
+  const goalStr = computeGoalState(doc);
+  const goals = goalStr && goalStr !== "no goals" ? parseGoalText(goalStr) : [];
+  const lines = doc.split("\n");
+  const sorryIdx = lines.findIndex((l) => l.includes("sorry"));
+  const targetRow = sorryIdx >= 0 ? sorryIdx + 1 : lines.length;
+  return lines.map((lineText, i) => {
+    const row = i + 1;
+    if (lineText.includes("constructor")) {
+      // Unfocused: two open goals right after the split.
+      return {
+        row,
+        status: "fresh",
+        goals: [
+          { caseLabel: null, hypotheses: [], conclusion: "P" },
+          { caseLabel: null, hypotheses: [], conclusion: "Q" },
+        ],
+      };
+    }
+    return row === targetRow && goals.length > 0
+      ? { row, status: "fresh", goals }
+      : { row, status: "empty", goals: [] };
+  });
+}
+
 /** Simulate Lean elaborating the current document. */
 function elaborate(): void {
   const seq = ++elaborationSeq;
@@ -249,6 +286,11 @@ function elaborate(): void {
     emit("turnstile-message", {
       type: "goalStateUpdated",
       full: goalState,
+    });
+    // Per-row cache snapshot (ADR-0004) — drives the cursor-row goal card.
+    emit("turnstile-message", {
+      type: "goalCacheUpdated",
+      rows: computeGoalCache(source),
     });
 
     // Mirror the real backend: a clean, non-empty goal state triggers a prose

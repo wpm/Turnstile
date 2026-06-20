@@ -90,29 +90,78 @@ test("sorry produces a warning annotation and the goal state", async ({
   });
   // …keyword tokens from semantic highlighting…
   await expect(page.locator(".cm-tok-keyword").first()).toBeVisible();
-  // …and the goal state panel fills in with the descent goal.
-  await expect(page.locator(".goal-conclusion")).toContainText(
+  // …and the goal state panel fills in with the descent goal. The top-right
+  // pane defaults to prose now, so flip it to the goal (All-Goals) view first.
+  // Scope to `.goal-state` (the panel): the cursor-row card (#91) also renders
+  // a `.goal-conclusion` in the Formal pane.
+  await page.getByRole("button", { name: "Switch to Formal Proof" }).click();
+  await expect(page.locator(".goal-state .goal-conclusion")).toContainText(
     "n * n ≠ 2 * (d * d)",
     { timeout: 5_000 },
   );
-  await expect(page.locator(".goal-turnstile")).toBeVisible();
+  await expect(page.locator(".goal-state .goal-turnstile")).toBeVisible();
+  // The All-Goals panel renders the cache per row (#93), labelled by line.
+  await expect(page.locator(".goal-state .goal-row-label")).toContainText(
+    "line",
+  );
 });
 
-test("a completed proof shows 'proof complete', not a bare ⊢ no goals", async ({
+test("a completed proof runs out of goals, not a bare ⊢ no goals", async ({
   page,
 }) => {
   await openApp(page);
+  // Flip the top-right pane to the goal view (prose is the default).
+  await page.getByRole("button", { name: "Switch to Formal Proof" }).click();
   // A proof with no `sorry` elaborates to no goals (fake returns "no goals").
   await typeInEditor(page, "theorem t : True := trivial");
 
-  // The panel reports completion…
-  await expect(page.locator(".goal-complete")).toContainText("proof complete", {
+  // The panel shows a quiet empty-state — a closed proof simply runs out of
+  // goals (ADR-0004); the green "proof complete" banner is gone.
+  await expect(page.locator(".goal-empty")).toContainText("No goals.", {
     timeout: 5_000,
   });
   // …and does NOT render a dangling turnstile or the literal "no goals" as a
   // goal conclusion (the bug: ⊢ no goals).
   await expect(page.locator(".goal-turnstile")).toHaveCount(0);
   await expect(page.locator(".goal-conclusion")).toHaveCount(0);
+});
+
+test("the cursor-row goal card shows the after-state and hides off a fresh row", async ({
+  page,
+}) => {
+  await openApp(page);
+  await typeInEditor(page, THEOREM);
+
+  // After typing, the cursor sits on the `sorry` line, whose cached goal is
+  // fresh — the card appears in the Formal pane with the descent goal.
+  const card = page.locator(".goal-card");
+  await expect(card).toBeVisible({ timeout: 5_000 });
+  await expect(card.locator(".goal-conclusion")).toContainText(
+    "n * n ≠ 2 * (d * d)",
+  );
+
+  // Moving up off the `sorry` row lands on rows whose goal is not fresh, so the
+  // card — a pure function of (cursor row, cache) — disappears.
+  await page.keyboard.press("ArrowUp");
+  await page.keyboard.press("ArrowUp");
+  await expect(page.locator(".goal-card")).toHaveCount(0);
+});
+
+test("the goal card marks an unfocused multi-goal step with a +N notch", async ({
+  page,
+}) => {
+  await openApp(page);
+  // A `constructor` step splits into two goals; the cursor lands on that row.
+  await typeInEditor(page, "theorem t : P ∧ Q := by\n  constructor");
+
+  const card = page.locator(".goal-card");
+  await expect(card).toBeVisible({ timeout: 5_000 });
+  // The card shows the first goal; the remaining one becomes a +1 notch.
+  await expect(card.locator(".goal-card-notch")).toHaveText("+1");
+
+  // The All-Goals panel renders the same cache row in full — both goals.
+  await page.getByRole("button", { name: "Switch to Formal Proof" }).click();
+  await expect(page.locator(".goal-state .goal-conclusion")).toHaveCount(2);
 });
 
 test("assistant chat: streams a reply about the goal and renders math", async ({
@@ -355,8 +404,7 @@ test("prose proof blinks while generation is in flight, then settles", async ({
   page,
 }) => {
   await openApp(page);
-  // Switch the bottom panel to the Prose Proof view.
-  await page.getByRole("button", { name: "Switch to Prose Proof" }).click();
+  // The Prose Proof pane is shown by default (upper-right).
 
   // Typing a valid proof triggers a prose regeneration; the panel blinks…
   await typeInEditor(page, "theorem t : True := trivial");
@@ -437,12 +485,15 @@ test("proof view toggle round-trips between formal and prose", async ({
   page,
 }) => {
   await openApp(page);
-  // Start on the formal view; switch to prose and back.
-  await page.getByRole("button", { name: "Switch to Prose Proof" }).click();
+  // Start on the prose view (the default); switch to the goal view and back.
   await expect(page.locator(".prose-proof")).toBeVisible();
 
   await page.getByRole("button", { name: "Switch to Formal Proof" }).click();
   await expect(page.locator(".prose-proof")).toHaveCount(0);
+  await expect(page.locator(".goal-state")).toBeVisible();
+
+  await page.getByRole("button", { name: "Switch to Prose Proof" }).click();
+  await expect(page.locator(".prose-proof")).toBeVisible();
 });
 
 test("an error in the source shows an error squiggle and gutter mark", async ({

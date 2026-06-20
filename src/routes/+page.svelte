@@ -15,7 +15,6 @@
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
   import {
-    goalState,
     lspStatus as lspStatusStore,
     showMessage,
     assistantStatus,
@@ -42,9 +41,8 @@
     type UiLayout,
   } from "$lib/session";
 
-  let proofView = $state<ProofView>("formal");
+  let proofView = $state<ProofView>("prose");
   let dark = $state(false);
-  let goalText = $state("");
   let prose = $state("");
   let lspReady = $state(false);
   let settingsOpen = $state(false);
@@ -106,9 +104,11 @@
 
   function currentLayout(): UiLayout {
     return {
-      assistantWidthPct: 100 - leftWidth,
+      // The Proof Assistant now occupies the bottom band at full width; persist
+      // its height fraction. The Prose pane width fraction rides in goalPanelPct.
+      assistantWidthPct: 100 - topHeight,
       proofView,
-      goalPanelPct: 100 - topHeight,
+      goalPanelPct: 100 - formalWidth,
     };
   }
 
@@ -164,10 +164,6 @@
     let unlistenMenu: (() => void) | undefined;
     let unlistenSetup: (() => void) | undefined;
     let unlistenProseGenerating: (() => void) | undefined;
-
-    const unsubscribeGoal = goalState.subscribe((text) => {
-      goalText = text;
-    });
 
     const unsubscribeLsp = lspStatusStore.subscribe((status) => {
       lspReady = status?.state === "connected";
@@ -296,7 +292,6 @@
     }, AUTOSAVE_INTERVAL_MS);
 
     return () => {
-      unsubscribeGoal();
       unsubscribeLsp();
       unsubscribeShowMessage();
       unsubscribeAssistant();
@@ -318,8 +313,8 @@
     document.documentElement.classList.toggle("dark", dark);
   }
 
-  let leftWidth = $state(50); // percent
-  let topHeight = $state(50); // percentage of left column
+  let formalWidth = $state(55); // width % of the Formal pane within the upper row
+  let topHeight = $state(60); // height % of the upper row (Formal + Prose)
 
   let draggingVertical = $state(false);
   let draggingHorizontal = $state(false);
@@ -341,12 +336,14 @@
   function onMouseMove(e: MouseEvent) {
     if (!dragRect) return;
     if (draggingVertical) {
-      leftWidth = Math.min(
+      // Vertical divider splits Formal (left) from Prose (right) in the upper row.
+      formalWidth = Math.min(
         80,
         Math.max(20, ((e.clientX - dragRect.left) / dragRect.width) * 100),
       );
     }
     if (draggingHorizontal) {
+      // Horizontal divider splits the upper row from the Proof Assistant band.
       topHeight = Math.min(
         85,
         Math.max(15, ((e.clientY - dragRect.top) / dragRect.height) * 100),
@@ -374,47 +371,51 @@
     onmouseup={onMouseUp}
     onmouseleave={onMouseUp}
   >
-    <div class="column" style="width: {leftWidth}%">
-      <div class="panel" style="height: {topHeight}%">
+    <div class="upper-row" style="height: {topHeight}%">
+      <div class="panel formal-panel" style="width: {formalWidth}%">
         <div class="panel-header">Formal Proof</div>
-        <div class="panel-content">
+        <div class="panel-content formal-content">
           <FormalProof {dark} {lspReady} />
+          <!-- The separator rail: a thin spine between code and prose that the
+               cursor-row goal card (#91) pins its right edge to. -->
+          <div class="rail" aria-hidden="true"></div>
         </div>
       </div>
 
-      <Divider orientation="horizontal" onDragStart={onHorizontalDragStart} />
+      <Divider orientation="vertical" onDragStart={onVerticalDragStart} />
 
-      <div class="panel" style="height: {100 - topHeight}%">
+      <div class="panel prose-panel" style="width: {100 - formalWidth}%">
         <div class="panel-header">
-          {proofView === "formal" ? "Goal State" : "Prose Proof"}
+          {proofView === "prose" ? "Prose Proof" : "Goal State"}
           <ProofViewToggle
             view={proofView}
             onToggle={() =>
-              (proofView = proofView === "formal" ? "prose" : "formal")}
+              (proofView = proofView === "prose" ? "formal" : "prose")}
           />
         </div>
         <div
           class="panel-content"
-          style={proofView === "formal"
-            ? goalFontSize
-              ? `font-size: ${String(goalFontSize)}pt`
-              : ""
-            : proseFontSize
+          style={proofView === "prose"
+            ? proseFontSize
               ? `font-size: ${String(proseFontSize)}pt`
+              : ""
+            : goalFontSize
+              ? `font-size: ${String(goalFontSize)}pt`
               : ""}
         >
-          {#if proofView === "formal"}
-            <GoalState content={goalText} />
-          {:else}
+          {#if proofView === "prose"}
             <ProseProof content={prose} generating={$proseGenerating} />
+          {:else}
+            <!-- All-Goals view: reads the per-row cache directly (ADR-0004). -->
+            <GoalState />
           {/if}
         </div>
       </div>
     </div>
 
-    <Divider orientation="vertical" onDragStart={onVerticalDragStart} />
+    <Divider orientation="horizontal" onDragStart={onHorizontalDragStart} />
 
-    <div class="column" style="width: {100 - leftWidth}%">
+    <div class="panel assistant-panel" style="height: {100 - topHeight}%">
       <div class="panel-header">
         Proof Assistant
         <ThemeToggle {dark} onToggle={toggleTheme} />
@@ -482,15 +483,16 @@
     flex: 1;
     min-height: 0;
     display: flex;
-    flex-direction: row;
+    flex-direction: column;
     overflow: hidden;
     user-select: none;
   }
 
-  .column {
+  /* Upper band: Formal Proof (left) and Prose Proof (right), side by side. */
+  .upper-row {
     display: flex;
-    flex-direction: column;
-    min-width: 0;
+    flex-direction: row;
+    min-height: 0;
     overflow: hidden;
   }
 
@@ -498,7 +500,31 @@
     display: flex;
     flex-direction: column;
     min-height: 0;
+    min-width: 0;
     overflow: hidden;
+  }
+
+  /* The Proof Assistant spans the full width of the lower band. */
+  .assistant-panel {
+    width: 100%;
+  }
+
+  /* Anchor context for the rail and the cursor-row goal card (#91). */
+  .formal-content {
+    position: relative;
+  }
+
+  /* Thin vertical spine on the inner edge of the Formal pane. A small cosmetic
+     gutter (the divider) separates it from the Prose pane. The cursor-row goal
+     card will pin its right edge here and grow leftward, never crossing it. */
+  .rail {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 2px;
+    background: var(--color-border);
+    pointer-events: none;
   }
 
   .panel-header {

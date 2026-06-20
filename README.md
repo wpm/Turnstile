@@ -16,6 +16,20 @@ with the formalism.
 The Lean code is the mathematics; the prose hints at the meaning. The
 turnstile (⊢) separates what you have from what you must show.
 
+## Focused, tactic-mode proofs
+
+Turnstile is built for **focused, tactic-mode** Lean proofs — proofs written
+inside a `by` block that stay in a single focused goal (`·`, `case`,
+structured `induction … with`). That shape is what the UI is tuned to: the
+goal state hangs a single card off the cursor's row, showing the after-state
+of that line ("what did this row get me?"), and the All-Goals view renders
+the whole per-row ladder when you want the entire stack.
+
+Term-mode proofs degrade gracefully rather than breaking: a proof with no
+tactic goals simply leaves the ladder empty and lets the prose carry the
+argument. The first time Turnstile sees such a proof it surfaces a one-time
+hint naming the mismatch, rather than an error or a silently empty pane.
+
 ## Running
 
 Requirements: [pnpm](https://pnpm.io), the [Rust

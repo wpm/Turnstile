@@ -3,6 +3,7 @@ import type { AssistantStatus } from "./AssistantStatus";
 import type { DerivedAnnotations } from "./DerivedAnnotations";
 import type { DiagnosticInfo } from "./DiagnosticInfo";
 import type { FileProgressRange } from "./FileProgressRange";
+import type { GoalCacheInfo } from "./GoalCacheInfo";
 import type { GoalStateInfo } from "./GoalStateInfo";
 import type { LspStatus } from "./LspStatus";
 import type { SemanticToken } from "./SemanticToken";
@@ -16,4 +17,4 @@ import type { SemanticToken } from "./SemanticToken";
  * Other subsystems (LLM, session, setup, prose, menu) currently emit their
  * own events directly and are not represented here.
  */
-export type TurnstileMessage = { "type": "diagnostics", items: Array<DiagnosticInfo>, } | { "type": "annotationsUpdated", annotations: DerivedAnnotations, } | { "type": "fileProgress", items: Array<FileProgressRange>, } | { "type": "elaborationDone" } | { "type": "showMessage", severity: string, message: string, } | { "type": "lspStatus" } & LspStatus | { "type": "assistantStatus" } & AssistantStatus | { "type": "semanticTokenRefresh" } | { "type": "semanticTokens", items: Array<SemanticToken>, } | { "type": "goalStateUpdated" } & GoalStateInfo;
+export type TurnstileMessage = { "type": "diagnostics", items: Array<DiagnosticInfo>, } | { "type": "annotationsUpdated", annotations: DerivedAnnotations, } | { "type": "fileProgress", items: Array<FileProgressRange>, } | { "type": "elaborationDone" } | { "type": "showMessage", severity: string, message: string, } | { "type": "lspStatus" } & LspStatus | { "type": "assistantStatus" } & AssistantStatus | { "type": "semanticTokenRefresh" } | { "type": "semanticTokens", items: Array<SemanticToken>, } | { "type": "goalStateUpdated" } & GoalStateInfo | { "type": "goalCacheUpdated" } & GoalCacheInfo;

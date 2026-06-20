@@ -116,6 +116,23 @@ describe("update_document elaboration", () => {
     );
   });
 
+  it("emits a two-goal cache row for an unfocused `constructor` step", async () => {
+    const { payloads } = collect("turnstile-message");
+    await fakeInvoke(
+      "update_document",
+      replaceAll("theorem t : P ∧ Q := by\n  constructor"),
+    );
+    await vi.advanceTimersByTimeAsync(ELABORATION_MS + 5);
+
+    const cache = payloads.find(
+      (p) => (p as { type: string }).type === "goalCacheUpdated",
+    ) as { rows: { row: number; status: string; goals: unknown[] }[] };
+    // The `constructor` row carries two open goals (the +N / unfocused moment).
+    const multi = cache.rows.find((r) => r.goals.length > 1);
+    expect(multi?.status).toBe("fresh");
+    expect(multi?.goals).toHaveLength(2);
+  });
+
   it("tokenizes keywords and flags sorry as a warning diagnostic", async () => {
     const { payloads } = collect("turnstile-message");
     await fakeInvoke(

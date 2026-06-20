@@ -35,10 +35,14 @@
   import {
     fileProgress,
     annotations as annotationsStore,
+    goalCache,
   } from "./turnstile_messages";
   import { progressHighlightLines } from "./progress";
   import type { FileProgressRange } from "./FileProgressRange";
   import { cursorPosition, proofSource, settings, wordWrap } from "./appState";
+  import { get } from "svelte/store";
+  import GoalCard from "./GoalCard.svelte";
+  import type { GoalEntry } from "./GoalEntry";
 
   const setProgressLines = StateEffect.define<FileProgressRange[]>();
 
@@ -81,7 +85,46 @@
   }: { dark?: boolean; lspReady?: boolean } = $props();
 
   let container: HTMLDivElement;
+  let hostWrap = $state<HTMLDivElement | undefined>(undefined);
   let view = $state<EditorView | undefined>(undefined);
+
+  // ── Cursor-row goal card (ADR-0004) ──────────────────────────────────
+  // Display is a pure function of (cursor row, goal cache): the card renders
+  // iff the cursor row's cached goal is `fresh`. No Lean query on the read path.
+  let cardGoals = $state<GoalEntry[]>([]);
+  let cardTop = $state(0);
+  let cardVisible = $state(false);
+  let cardDimmed = $state(false);
+  let unsubscribeGoalCache: (() => void) | undefined;
+  let dimTimer: ReturnType<typeof setTimeout> | undefined;
+
+  /**
+   * Recompute the cursor-row card from the cache and the editor geometry. Pure
+   * lookup — never touches Lean. Hides the card unless the cursor row is
+   * `fresh`; positions it just below the cursor line (so it never underlaps the
+   * line's own text) with its right edge pinned to the rail.
+   */
+  function refreshCard() {
+    if (!view || !hostWrap) {
+      cardVisible = false;
+      return;
+    }
+    const head = view.state.selection.main.head;
+    const line = view.state.doc.lineAt(head);
+    const entry = get(goalCache).get(line.number); // cache rows are 1-indexed
+    if (!entry || entry.status !== "fresh" || entry.goals.length === 0) {
+      cardVisible = false;
+      return;
+    }
+    const coords = view.coordsAtPos(line.from);
+    if (!coords) {
+      cardVisible = false;
+      return;
+    }
+    cardGoals = entry.goals;
+    cardTop = coords.bottom - hostWrap.getBoundingClientRect().top;
+    cardVisible = true;
+  }
   const themeCompartment = new Compartment();
   const editableCompartment = new Compartment();
   const wrapCompartment = new Compartment();
@@ -139,6 +182,25 @@
                 col: head - line.from,
               });
             }
+            // Cursor movement, edits, and viewport/geometry changes can all move
+            // the card or change which row it reflects — recompute from cache.
+            if (
+              update.selectionSet ||
+              update.docChanged ||
+              update.geometryChanged
+            ) {
+              refreshCard();
+            }
+            // While typing on the cursor row, fade the card rather than let it
+            // fight the text being entered under it (the row will go stale and
+            // hide shortly after, once the backend re-elaborates).
+            if (update.docChanged) {
+              cardDimmed = true;
+              if (dimTimer) clearTimeout(dimTimer);
+              dimTimer = setTimeout(() => {
+                cardDimmed = false;
+              }, 400);
+            }
             if (!update.docChanged) return;
             const fullText = update.state.doc.toString();
             proofSource.set(fullText);
@@ -174,6 +236,13 @@
       parent: container,
     });
 
+    // A new cache snapshot can show, hide, or change the card. Scrolling moves
+    // the cursor line, so the card must follow it.
+    unsubscribeGoalCache = goalCache.subscribe(() => {
+      refreshCard();
+    });
+    view.scrollDOM.addEventListener("scroll", refreshCard, { passive: true });
+
     unsubscribeProgress = fileProgress.subscribe((ranges) => {
       if (!view) return;
       view.dispatch({ effects: setProgressLines.of(ranges) });
@@ -207,7 +276,10 @@
   onDestroy(() => {
     unsubscribeProgress?.();
     unsubscribeAnnotations?.();
+    unsubscribeGoalCache?.();
     unlistenSessionLoaded?.();
+    if (dimTimer) clearTimeout(dimTimer);
+    view?.scrollDOM.removeEventListener("scroll", refreshCard);
     view?.destroy();
   });
 
@@ -245,13 +317,22 @@
   });
 </script>
 
-<div bind:this={container} class="editor-host"></div>
+<div bind:this={hostWrap} class="editor-host">
+  <div bind:this={container} class="editor-mount"></div>
+  {#if cardVisible}
+    <GoalCard goals={cardGoals} top={cardTop} dimmed={cardDimmed} />
+  {/if}
+</div>
 
 <style>
   .editor-host {
     height: 100%;
     overflow: hidden;
     position: relative;
+  }
+
+  .editor-mount {
+    height: 100%;
   }
 
   .editor-host :global(.cm-editor) {
