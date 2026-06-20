@@ -1,5 +1,6 @@
 <script lang="ts">
   import { isProofComplete, parseGoalText } from "./goalState";
+  import GoalEntryView from "./GoalEntryView.svelte";
 
   let { content = "" }: { content?: string } = $props();
 
@@ -20,20 +21,9 @@
       {#if i > 0}
         <hr class="goal-separator" />
       {/if}
-      <div class="goal-block">
-        {#if goal.caseLabel}
-          <div class="goal-case">{goal.caseLabel}</div>
-        {/if}
-        {#if goal.hypotheses.length > 0}
-          <div class="goal-hypotheses">
-            {#each goal.hypotheses as hyp, j (j)}
-              <div class="goal-hyp">{hyp}</div>
-            {/each}
-          </div>
-        {/if}
-        <div class="goal-turnstile" aria-label="proves">⊢</div>
-        <div class="goal-conclusion">{goal.conclusion}</div>
-      </div>
+      <!-- The shared renderer in full form (ADR-0004): one rendering path for
+           the goal, also used by the cursor card in compact form (#91). -->
+      <GoalEntryView {goal} />
     {/each}
   {/if}
 </div>
@@ -51,42 +41,6 @@
   .goal-empty {
     color: var(--color-text-muted);
     font-style: italic;
-  }
-
-  .goal-block {
-    margin-bottom: 0.75rem;
-  }
-
-  .goal-case {
-    font-size: 0.75rem;
-    font-weight: 600;
-    letter-spacing: 0.03em;
-    color: var(--color-text-muted);
-    margin-bottom: 0.5rem;
-  }
-
-  .goal-hypotheses {
-    padding-left: 0.5rem;
-    border-left: 2px solid var(--color-border);
-    margin-bottom: 0.5rem;
-  }
-
-  .goal-hyp {
-    white-space: pre-wrap;
-    line-height: 1.5;
-  }
-
-  .goal-turnstile {
-    font-size: 1rem;
-    color: var(--color-accent);
-    margin-bottom: 0.25rem;
-    user-select: none;
-  }
-
-  .goal-conclusion {
-    padding-left: 1rem;
-    white-space: pre-wrap;
-    line-height: 1.5;
   }
 
   .goal-separator {
