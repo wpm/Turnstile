@@ -121,6 +121,7 @@ impl Default for Transcript {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToolName {
     ReadLeanSource,
+    UpdateLeanSource,
     ReadGoalState,
     ReadProseProof,
     UpdateProseProof,
@@ -132,6 +133,7 @@ impl ToolName {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::ReadLeanSource => "read_lean_source",
+            Self::UpdateLeanSource => "update_lean_source",
             Self::ReadGoalState => "read_goal_state",
             Self::ReadProseProof => "read_prose_proof",
             Self::UpdateProseProof => "update_prose_proof",
@@ -146,6 +148,7 @@ impl TryFrom<&str> for ToolName {
     fn try_from(value: &str) -> Result<Self, Self::Error> {
         match value {
             "read_lean_source" => Ok(Self::ReadLeanSource),
+            "update_lean_source" => Ok(Self::UpdateLeanSource),
             "read_goal_state" => Ok(Self::ReadGoalState),
             "read_prose_proof" => Ok(Self::ReadProseProof),
             "update_prose_proof" => Ok(Self::UpdateProseProof),
@@ -173,6 +176,28 @@ pub fn default_tools() -> Vec<ToolDefinition> {
                 "type": "object",
                 "properties": {},
                 "required": []
+            }),
+        },
+        ToolDefinition {
+            name: ToolName::UpdateLeanSource.as_str().into(),
+            description: "Replace the entire contents of the Lean source editor with new \
+                          text. Use this to apply a fix or new proof step you have agreed on \
+                          with the user, instead of asking them to copy it in by hand. This \
+                          is a complete replacement: include the whole file, not just the \
+                          changed lines. Read the current source first so you don't drop \
+                          anything the user wants to keep, and show the user what you're \
+                          changing before you write it unless they've asked you to just go \
+                          ahead."
+                .into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "text": {
+                        "type": "string",
+                        "description": "The new Lean source, a complete replacement of the editor contents."
+                    }
+                },
+                "required": ["text"]
             }),
         },
         ToolDefinition {
@@ -249,6 +274,18 @@ pub async fn dispatch_tool(
 
     match tool {
         ToolName::ReadLeanSource => state.proof.lock().await.formal.source.clone(),
+        ToolName::UpdateLeanSource => {
+            let text = tool_input
+                .get("text")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            // Route through the backend-authoritative replace path (ADR-0003):
+            // it assigns the source, pushes to CodeMirror and the LSP, and lets
+            // the normal re-elaboration pipeline refresh goal state and prose.
+            crate::replace_formal_source(app, text).await;
+            "Lean source updated successfully.".to_string()
+        }
         ToolName::ReadGoalState => {
             let goal = state.proof.lock().await.goal_state.full.clone();
             if goal.is_empty() {
@@ -560,15 +597,31 @@ mod tests {
     // -- Tool definitions ------------------------------------------------
 
     #[test]
-    fn default_tools_has_five_entries() {
+    fn default_tools_has_six_entries() {
         let tools = default_tools();
-        assert_eq!(tools.len(), 5);
+        assert_eq!(tools.len(), 6);
         let names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
         assert!(names.contains(&"read_lean_source"));
+        assert!(names.contains(&"update_lean_source"));
         assert!(names.contains(&"read_goal_state"));
         assert!(names.contains(&"read_prose_proof"));
         assert!(names.contains(&"update_prose_proof"));
         assert!(names.contains(&"read_diagnostics"));
+    }
+
+    #[test]
+    fn update_lean_source_tool_requires_text_input() {
+        let tool = default_tools()
+            .into_iter()
+            .find(|t| t.name == "update_lean_source")
+            .expect("update_lean_source tool present");
+        // A write tool must advertise its `text` parameter as required, matching
+        // update_prose_proof, so the LLM always supplies the replacement source.
+        let required = tool.input_schema.get("required").and_then(|v| v.as_array());
+        assert_eq!(
+            required.map(|r| r.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>()),
+            Some(vec!["text"])
+        );
     }
 
     #[test]
@@ -587,6 +640,7 @@ mod tests {
     fn tool_name_round_trips_via_str() {
         for variant in [
             ToolName::ReadLeanSource,
+            ToolName::UpdateLeanSource,
             ToolName::ReadGoalState,
             ToolName::ReadProseProof,
             ToolName::UpdateProseProof,

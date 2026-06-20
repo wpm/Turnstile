@@ -570,6 +570,16 @@ pub struct ProsePayload {
 /// call, or by a session load.  Payload: [`ProsePayload`].
 pub const PROSE_UPDATED_EVENT: &str = "prose-updated";
 
+/// Emitted when the formal source is replaced from a non-editor origin.
+///
+/// The origin is the Proof Assistant's `update_lean_source` tool. Payload: the
+/// new source `String`. The frontend applies it to `CodeMirror` as a
+/// programmatic update so the editor follows the backend-authoritative copy
+/// without echoing it back as an edit. (Typing originates in the editor and
+/// needs no such event; a session load uses `session-loaded`, which carries the
+/// whole session.)
+pub const FORMAL_SOURCE_UPDATED_EVENT: &str = "formal-source-updated";
+
 /// Drives the Prose Proof busy indicator.
 ///
 /// Emitted around a prose-translation LLM call so the UI can show a busy

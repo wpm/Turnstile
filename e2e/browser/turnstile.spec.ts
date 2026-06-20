@@ -540,6 +540,35 @@ test("loading a session over existing edits replaces the backend source, not con
   );
 });
 
+test("the Proof Assistant writing source replaces the editor contents", async ({
+  page,
+}) => {
+  // The update_lean_source tool sets the backend source and emits
+  // `formal-source-updated`; the editor follows it as a programmatic update
+  // (no echo back to the backend), the same mechanism a session load uses.
+  await openApp(page);
+
+  // Some prior content the assistant's write should fully replace.
+  await typeInEditor(page, "theorem old : True := sorry");
+  await expect(page.locator(".formal-panel .cm-content")).toContainText(
+    "theorem old",
+  );
+
+  const NEW_SOURCE = "theorem fixed : True := by trivial";
+  await page.evaluate((src) => {
+    window.__turnstileFake?.emit("formal-source-updated", src);
+  }, NEW_SOURCE);
+
+  await expect(page.locator(".formal-panel .cm-content")).toContainText(
+    "theorem fixed",
+    { timeout: 5_000 },
+  );
+  // A complete replacement: none of the old declaration survives.
+  await expect(page.locator(".formal-panel .cm-content")).not.toContainText(
+    "theorem old",
+  );
+});
+
 test("Command-A selects only the focused panel, not the whole app (#113)", async ({
   page,
 }) => {
