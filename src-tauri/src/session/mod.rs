@@ -360,6 +360,8 @@ pub async fn new_session(app: AppHandle, state: tauri::State<'_, AppState>) -> R
     // Reset transcript and proof.
     *state.transcript.lock().await = crate::assistant::Transcript::default();
     *state.proof.lock().await = crate::proof::Proof::default();
+    // Let the term-mode hint fire again for the fresh proof (#94).
+    state.term_mode_hint_shown.store(false, Ordering::SeqCst);
 
     // Emit event so frontend can clear editor / prose.
     let blank = SessionState::blank();
@@ -416,6 +418,8 @@ async fn apply_loaded_session(
         proof.prose.goal_state_hash = session.prose.tactic_state_hash.clone().unwrap_or_default();
         proof.goal_state = crate::proof::GoalState::default();
     }
+    // Let the term-mode hint fire again for the loaded proof (#94).
+    state.term_mode_hint_shown.store(false, Ordering::SeqCst);
 
     // The backend is authoritative for the loaded text: push the whole document
     // to the LSP so its copy matches, rather than relying on incremental edits

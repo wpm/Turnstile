@@ -77,6 +77,12 @@ pub struct AppState {
     /// `$/lean/fileProgress` event, so that a stale background refresh task
     /// does not overwrite the panel with old data.
     pub goal_state_seq: Arc<AtomicU64>,
+    /// Whether the one-time "this looks like a term-mode proof" hint has been
+    /// shown this run. Turnstile targets focused, tactic-mode proofs; a
+    /// non-trivial, error-free document that elaborates to no tactic goals is
+    /// surfaced once as a hint rather than a silent empty ladder. Reset on a
+    /// new session so a fresh proof can hint again.
+    pub term_mode_hint_shown: Arc<AtomicBool>,
     /// Semantic token type legend from the server's `InitializeResult`.
     pub token_types: Arc<Mutex<Vec<String>>>,
     /// Semantic token modifier legend from the server's `InitializeResult`.
@@ -874,8 +880,64 @@ async fn refill_goal_cache(app: &AppHandle, state: &AppState, seq: u64) -> Resul
         }
         proof.goal_state.snapshot()
     };
+
+    // Product framing (#94): a non-trivial, error-free document that elaborated
+    // to no tactic goals anywhere is almost certainly a term-mode proof — a
+    // focused tactic proof always has a goal on its tactic rows. Surface the
+    // one-time hint instead of leaving a silently empty ladder. Term-mode still
+    // degrades gracefully: the ladder is simply empty and the prose carries it.
+    let has_fresh = snapshot
+        .rows
+        .iter()
+        .any(|r| r.status == proof::GoalRowStatus::Fresh);
     emit_turnstile(app, &TurnstileMessage::GoalCacheUpdated(snapshot));
+    if !has_fresh {
+        maybe_hint_term_mode(app, state);
+    }
     Ok(())
+}
+
+/// User-facing one-time hint that the open proof looks term-mode. Turnstile is
+/// tuned for focused, tactic-mode proofs (decision 8); this names the shape
+/// mismatch without treating it as an error.
+const TERM_MODE_HINT: &str =
+    "Turnstile is tuned for focused, tactic-mode proofs. This proof has no \
+     tactic goals — likely term-mode — so the goal ladder stays empty and the \
+     prose carries the argument.";
+
+/// Decide whether to surface the term-mode hint *now*, consuming the one-shot
+/// flag. Returns `true` exactly once: for an error-free proof on the first
+/// call, never again until the flag is reset (new/loaded session). With errors
+/// present the flag is left untouched — the error is surfaced through
+/// diagnostics, and a later error-free elaboration can still hint.
+fn claim_term_mode_hint(state: &AppState, has_errors: bool) -> bool {
+    if has_errors {
+        return false;
+    }
+    // Swap false→true: the prior value tells us whether we are the first.
+    !state.term_mode_hint_shown.swap(true, Ordering::SeqCst)
+}
+
+/// Show [`TERM_MODE_HINT`] once per run, but only for a genuine term-mode
+/// proof: a non-empty document with no error diagnostics. Errors are surfaced
+/// through diagnostics, not this hint, and an empty document has nothing to
+/// hint about.
+fn maybe_hint_term_mode(app: &AppHandle, state: &AppState) {
+    let has_errors = state
+        .current_diagnostics
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .iter()
+        .any(|d| d.severity == 1);
+    if claim_term_mode_hint(state, has_errors) {
+        emit_turnstile(
+            app,
+            &TurnstileMessage::ShowMessage {
+                severity: "info".to_string(),
+                message: TERM_MODE_HINT.to_string(),
+            },
+        );
+    }
 }
 
 /// Spawn a background task that requests a fresh set of semantic tokens from
@@ -1108,6 +1170,7 @@ pub fn run() {
                 prose_translator_failed: Arc::new(AtomicBool::new(false)),
                 prose_generation_seq: Arc::new(AtomicU64::new(0)),
                 goal_state_seq: Arc::new(AtomicU64::new(0)),
+                term_mode_hint_shown: Arc::new(AtomicBool::new(false)),
                 token_types: Arc::new(Mutex::new(Vec::new())),
                 token_modifiers: Arc::new(Mutex::new(Vec::new())),
             });
@@ -1227,8 +1290,8 @@ mod tests {
     use std::sync::Mutex;
 
     use super::{
-        assistant, end_of_document_position, last_non_whitespace_position, llm, proof,
-        should_generate_prose, AppState, ShouldGenerate,
+        assistant, claim_term_mode_hint, end_of_document_position, last_non_whitespace_position,
+        llm, proof, should_generate_prose, AppState, ShouldGenerate,
     };
     use crate::lean;
     use std::sync::Arc;
@@ -1278,6 +1341,7 @@ mod tests {
             prose_translator_failed: Arc::new(AtomicBool::new(false)),
             prose_generation_seq: Arc::new(AtomicU64::new(0)),
             goal_state_seq: Arc::new(AtomicU64::new(0)),
+            term_mode_hint_shown: Arc::new(AtomicBool::new(false)),
             token_types: Arc::new(Mutex::new(Vec::new())),
             token_modifiers: Arc::new(Mutex::new(Vec::new())),
         }
@@ -1303,6 +1367,34 @@ mod tests {
             severity: 2,
             message: "heads up".to_string(),
         }
+    }
+
+    #[test]
+    fn claim_term_mode_hint_fires_once_for_an_error_free_proof() {
+        let state = make_state();
+        // First error-free claim wins…
+        assert!(claim_term_mode_hint(&state, false));
+        // …and never again until the flag is reset.
+        assert!(!claim_term_mode_hint(&state, false));
+        assert!(!claim_term_mode_hint(&state, false));
+    }
+
+    #[test]
+    fn claim_term_mode_hint_skips_when_errors_present_and_leaves_flag() {
+        let state = make_state();
+        // An error means "broken proof", not "term-mode": don't hint, and don't
+        // consume the one-shot — a later error-free elaboration can still hint.
+        assert!(!claim_term_mode_hint(&state, true));
+        assert!(claim_term_mode_hint(&state, false));
+    }
+
+    #[test]
+    fn claim_term_mode_hint_resets_after_flag_cleared() {
+        let state = make_state();
+        assert!(claim_term_mode_hint(&state, false));
+        // A new/loaded session clears the flag so a fresh proof can hint again.
+        state.term_mode_hint_shown.store(false, Ordering::SeqCst);
+        assert!(claim_term_mode_hint(&state, false));
     }
 
     #[tokio::test]

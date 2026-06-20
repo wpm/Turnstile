@@ -2,9 +2,11 @@
 import type { GoalCacheRow } from "./GoalCacheRow";
 
 /**
- * A full snapshot of the per-row goal cache, delivered to the UI via
- * [`crate::lean::messages::turnstile::TurnstileMessage::GoalCacheUpdated`].
- * Display is a pure function of `(cursor row, this snapshot)`.
+ * A full snapshot of the per-row goal cache (ADR-0004).
+ *
+ * Delivered to the UI via
+ * [`crate::lean::messages::turnstile::TurnstileMessage::GoalCacheUpdated`];
+ * display is a pure function of `(cursor row, this snapshot)`.
  */
 export type GoalCacheInfo = { 
 /**
