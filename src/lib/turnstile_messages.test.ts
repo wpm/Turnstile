@@ -20,6 +20,7 @@ import {
   annotations,
   lspStatus,
   goalState,
+  goalCache,
   elaborationDone,
   showMessage,
 } from "./turnstile_messages";
@@ -36,6 +37,7 @@ beforeEach(() => {
   annotations.set(EMPTY_ANNOTATIONS);
   lspStatus.set(null);
   goalState.set("");
+  goalCache.set(new Map());
   elaborationDone.set(0);
   showMessage.set(null);
 });
@@ -77,6 +79,41 @@ describe("startMessageListener", () => {
     await startMessageListener();
     emit({ type: "goalStateUpdated", full: "⊢ True" });
     expect(get(goalState)).toBe("⊢ True");
+  });
+
+  it("handles goalCacheUpdated by keying the snapshot rows by row number", async () => {
+    await startMessageListener();
+    emit({
+      type: "goalCacheUpdated",
+      rows: [
+        {
+          row: 1,
+          status: "fresh",
+          goals: [{ caseLabel: null, hypotheses: [], conclusion: "True" }],
+        },
+        { row: 2, status: "stale", goals: [] },
+      ],
+    });
+    const cache = get(goalCache);
+    expect(cache.size).toBe(2);
+    expect(cache.get(1)?.status).toBe("fresh");
+    expect(cache.get(1)?.goals[0].conclusion).toBe("True");
+    expect(cache.get(2)?.status).toBe("stale");
+  });
+
+  it("replaces the whole cache on each goalCacheUpdated snapshot", async () => {
+    await startMessageListener();
+    emit({
+      type: "goalCacheUpdated",
+      rows: [{ row: 1, status: "fresh", goals: [] }],
+    });
+    emit({
+      type: "goalCacheUpdated",
+      rows: [{ row: 5, status: "empty", goals: [] }],
+    });
+    const cache = get(goalCache);
+    expect(cache.has(1)).toBe(false);
+    expect(cache.get(5)?.status).toBe("empty");
   });
 
   it("handles elaborationDone by clearing progress and bumping the counter", async () => {

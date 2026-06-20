@@ -6,6 +6,7 @@ import { EMPTY_ANNOTATIONS } from "./annotations";
 import type { FileProgressRange } from "./FileProgressRange";
 import type { LspStatus } from "./LspStatus";
 import type { AssistantStatus } from "./AssistantStatus";
+import type { GoalCacheRow } from "./GoalCacheRow";
 
 /** Current file progress ranges (lines being elaborated). */
 export const fileProgress = writable<FileProgressRange[]>([]);
@@ -26,6 +27,14 @@ export const assistantStatus = writable<AssistantStatus | null>(null);
 
 /** Current goal state text (the `.full` string from GoalStateInfo). */
 export const goalState = writable<string>("");
+
+/**
+ * Per-row goal cache (ADR-0004): a 1-indexed row → its cached goal. The backend
+ * sends a full snapshot on every change; the card and the All-Goals panel are
+ * pure functions of `(cursor row, this map)`. A row renders a card iff its
+ * status is `"fresh"`.
+ */
+export const goalCache = writable<Map<number, GoalCacheRow>>(new Map());
 
 /** Counter incremented on each ElaborationDone message so components can react. */
 export const elaborationDone = writable<number>(0);
@@ -59,6 +68,11 @@ export async function startMessageListener(): Promise<() => void> {
         break;
       case "goalStateUpdated":
         goalState.set(msg.full);
+        break;
+      case "goalCacheUpdated":
+        // Replace the whole cache with the snapshot; reading is a pure lookup
+        // keyed on the cursor row, so a fresh Map keeps it reactive.
+        goalCache.set(new Map(msg.rows.map((r) => [r.row, r])));
         break;
       case "elaborationDone":
         // Elaboration finished: no lines are being processed any more.
