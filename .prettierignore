@@ -18,6 +18,10 @@ src/lib/DiagnosticInfo.ts
 src/lib/DiagnosticSeverity.ts
 src/lib/DisconnectReason.ts
 src/lib/FileProgressRange.ts
+src/lib/GoalCacheInfo.ts
+src/lib/GoalCacheRow.ts
+src/lib/GoalEntry.ts
+src/lib/GoalRowStatus.ts
 src/lib/GoalStateInfo.ts
 src/lib/GutterMark.ts
 src/lib/HoverHit.ts

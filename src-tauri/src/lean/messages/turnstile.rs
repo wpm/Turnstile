@@ -241,6 +241,11 @@ pub enum TurnstileMessage {
         items: Vec<SemanticToken>,
     },
     GoalStateUpdated(GoalStateInfo),
+    /// A full snapshot of the per-row goal cache (ADR-0004). The frontend
+    /// replaces its cache with this; display is a pure function of
+    /// `(cursor row, cache)`. Distinct from `GoalStateUpdated`, which still
+    /// carries the whole-proof `full` goal for prose / the Proof Assistant.
+    GoalCacheUpdated(crate::proof::GoalCacheInfo),
 }
 
 // ── Display implementations ────────────────────────────────────────────
@@ -265,6 +270,7 @@ impl fmt::Display for TurnstileMessage {
             Self::SemanticTokenRefresh => write!(f, "semanticTokenRefresh"),
             Self::SemanticTokens { items } => write!(f, "semanticTokens ({} tokens)", items.len()),
             Self::GoalStateUpdated(_) => write!(f, "goalStateUpdated"),
+            Self::GoalCacheUpdated(c) => write!(f, "goalCacheUpdated ({} rows)", c.rows.len()),
         }
     }
 }

@@ -132,6 +132,10 @@ fn dispatch_turnstile_message(app: &AppHandle, msg: TurnstileMessage) {
             let state = app.state::<AppState>();
             let seq = state.goal_state_seq.fetch_add(1, Ordering::SeqCst) + 1;
             spawn_goal_state_refresh(app.clone(), seq);
+            // Lean has finished the changed tail: refill the stale rows of the
+            // per-row goal cache (ADR-0004). Shares the goal-state sequence so a
+            // newer edit's invalidation supersedes a now-stale refill.
+            spawn_goal_cache_refresh(app.clone(), seq);
             spawn_semantic_token_refresh(app.clone());
             emit_turnstile(app, &TurnstileMessage::ElaborationDone);
         }
@@ -148,7 +152,8 @@ fn dispatch_turnstile_message(app: &AppHandle, msg: TurnstileMessage) {
         | TurnstileMessage::ShowMessage { .. }
         | TurnstileMessage::AnnotationsUpdated { .. }
         | TurnstileMessage::SemanticTokens { .. }
-        | TurnstileMessage::GoalStateUpdated(_)) => {
+        | TurnstileMessage::GoalStateUpdated(_)
+        | TurnstileMessage::GoalCacheUpdated(_)) => {
             emit_turnstile(app, &msg);
         }
     }
@@ -318,10 +323,29 @@ async fn update_document(
     // `changes` below are still forwarded to the LSP, which tracks the document
     // via versioned `didChange` — that is the one incrementor we keep, because
     // incrementalism is the LSP's native protocol.
-    let source_is_empty = {
+    // The lowest line any change touched (0-indexed LSP). Downward-inclusive
+    // invalidation stales `[k, end]`: every tactic depends on the ones before
+    // it, so an edit can only affect its own row and the rows below.
+    let edit_start_line = changes.iter().map(|c| c.range.start.line).min();
+
+    let (source_is_empty, stale_snapshot) = {
         let mut proof = state.proof.lock().await;
         proof.formal.source = full_text;
-        proof.formal.source.trim().is_empty()
+        let empty = proof.formal.source.trim().is_empty();
+        let snapshot = if empty {
+            None
+        } else {
+            // Count lines the CodeMirror way (a trailing newline starts a new
+            // line) so row numbers line up with the editor and the cursor.
+            let line_count = u32::try_from(proof.formal.source.split('\n').count())
+                .unwrap_or(u32::MAX)
+                .max(1);
+            let from = edit_start_line.map_or(1, |l| l + 1).min(line_count);
+            // Stale rows hide their cards at once — no goal flickers mid-edit.
+            proof.goal_state.mark_stale(from, line_count);
+            Some(proof.goal_state.snapshot())
+        };
+        (empty, snapshot)
     };
 
     // Bump the goal-state sequence so any in-flight refresh from a prior edit
@@ -338,6 +362,12 @@ async fn update_document(
         // server's view stays in sync.
         clear_goal_state_and_prose(&app, &state).await;
     } else {
+        // Push the stale snapshot now so stale rows drop their cards
+        // immediately; the refill (on the next `fileProgress` completion)
+        // repopulates them.
+        if let Some(snapshot) = stale_snapshot {
+            emit_turnstile(&app, &TurnstileMessage::GoalCacheUpdated(snapshot));
+        }
         // Schedule a fresh goal-state refresh. The fileProgress-based refresh
         // handles the post-elaboration case; this also covers edits where Lean
         // sends no fileProgress (e.g. a paste into an idle, empty editor).
@@ -649,6 +679,12 @@ async fn clear_goal_state_and_prose(app: &AppHandle, state: &AppState) {
             full: String::new(),
         }),
     );
+    // The per-row cache was cleared by `clear_derived`; push the empty snapshot
+    // so the card and the All-Goals panel empty out too.
+    emit_turnstile(
+        app,
+        &TurnstileMessage::GoalCacheUpdated(proof::GoalCacheInfo::default()),
+    );
     app.emit(
         proof::PROSE_UPDATED_EVENT,
         &proof::ProsePayload {
@@ -720,6 +756,126 @@ fn spawn_goal_state_refresh(app: AppHandle, seq: u64) {
             spawn_prose_regeneration(app.clone(), prose_seq);
         }
     });
+}
+
+/// 0-indexed `(line, trailing-column)` for each line of `source`. The trailing
+/// column is the end of the line's content (its trimmed length), so a
+/// `$/lean/plainGoal` queried there reports the row's **after**-state — "what
+/// did this row get me?" (ADR-0004 decision 3).
+fn trailing_positions(source: &str) -> Vec<(u32, u32)> {
+    source
+        .split('\n')
+        .enumerate()
+        .map(|(i, line)| {
+            let col = line.trim_end().chars().count();
+            (
+                u32::try_from(i).unwrap_or(u32::MAX),
+                u32::try_from(col).unwrap_or(u32::MAX),
+            )
+        })
+        .collect()
+}
+
+/// Spawn a sequence-guarded task that refills the stale rows of the per-row
+/// goal cache and emits a [`TurnstileMessage::GoalCacheUpdated`] snapshot.
+///
+/// Runs on `$/lean/fileProgress` completion (`ElaborationDone`), when Lean has
+/// a settled goal for the changed tail. A newer edit bumps `goal_state_seq`,
+/// aborting an in-flight refill before it can overwrite the fresh invalidation.
+fn spawn_goal_cache_refresh(app: AppHandle, seq: u64) {
+    tauri::async_runtime::spawn(async move {
+        let state = app.state::<AppState>();
+        if state.goal_state_seq.load(Ordering::SeqCst) != seq {
+            return;
+        }
+        if let Err(e) = refill_goal_cache(&app, &state, seq).await {
+            log::debug!("goal-cache refresh: {e}");
+        }
+    });
+}
+
+/// Re-query `$/lean/plainGoal` at the trailing position of every stale row,
+/// store each result `fresh`/`empty`, and emit the updated cache snapshot.
+///
+/// Scoped to the changed tail: only stale rows are queried. On a never-yet
+/// populated cache over a non-empty document (e.g. after a session load that
+/// set the source server-side without an edit), the whole document is seeded
+/// stale so the cache fills on the first elaboration.
+#[allow(clippy::significant_drop_tightening)] // brief locks, dropped before awaits
+async fn refill_goal_cache(app: &AppHandle, state: &AppState, seq: u64) -> Result<(), String> {
+    use lsp_types::{Position, TextDocumentIdentifier, TextDocumentPositionParams};
+
+    let (source, rows_to_query) = {
+        let mut proof = state.proof.lock().await;
+        let source = proof.formal.source.clone();
+        if source.trim().is_empty() {
+            return Ok(());
+        }
+        if proof.goal_state.rows.is_empty() {
+            let line_count = u32::try_from(source.split('\n').count())
+                .unwrap_or(u32::MAX)
+                .max(1);
+            proof.goal_state.mark_stale(1, line_count);
+        }
+        (source, proof.goal_state.stale_rows())
+    };
+
+    if rows_to_query.is_empty() {
+        return Ok(());
+    }
+
+    // Clone a lock-free handle and drop the mutex before issuing requests, so a
+    // stalled query can't block didChange/hover (mirrors the `full` fetch).
+    let handle = {
+        let lock = state.lsp_client.lock().await;
+        let Some(client) = lock.as_ref() else {
+            return Err("LSP not connected".to_string());
+        };
+        client.handle()
+    };
+    let doc_uri = handle.proof_uri.clone();
+    let trailing = trailing_positions(&source);
+
+    let mut results: Vec<(u32, Vec<proof::GoalEntry>)> = Vec::with_capacity(rows_to_query.len());
+    for row in rows_to_query {
+        // A newer edit superseded this refill — stop before doing more work.
+        if state.goal_state_seq.load(Ordering::SeqCst) != seq {
+            return Ok(());
+        }
+        let Some(&(line, character)) = trailing.get((row as usize).saturating_sub(1)) else {
+            continue;
+        };
+        let params = TextDocumentPositionParams {
+            text_document: TextDocumentIdentifier {
+                uri: doc_uri.clone(),
+            },
+            position: Position { line, character },
+        };
+        let goals = match handle.plain_goal(params).await {
+            Ok(Some(g)) => proof::parse_goal_entries(&g.goals),
+            Ok(None) => Vec::new(),
+            Err(e) => {
+                // Leave the row stale; a later elaboration retries it.
+                log::debug!("goal-cache: plainGoal at row {row} failed: {e}");
+                continue;
+            }
+        };
+        results.push((row, goals));
+    }
+
+    // Commit under the lock, but only if no newer edit has intervened.
+    let snapshot = {
+        let mut proof = state.proof.lock().await;
+        if state.goal_state_seq.load(Ordering::SeqCst) != seq {
+            return Ok(());
+        }
+        for (row, goals) in results {
+            proof.goal_state.set_row(row, goals);
+        }
+        proof.goal_state.snapshot()
+    };
+    emit_turnstile(app, &TurnstileMessage::GoalCacheUpdated(snapshot));
+    Ok(())
 }
 
 /// Spawn a background task that requests a fresh set of semantic tokens from
