@@ -8,10 +8,13 @@
 </script>
 
 <div class="goal-state">
-  {#if complete}
-    <div class="goal-complete">No goals — proof complete.</div>
-  {:else if goals.length === 0}
-    <div class="goal-empty">No goal state available.</div>
+  {#if goals.length === 0}
+    <!-- A closed proof simply runs out of goals (ADR-0004); no banner, just a
+         quiet empty-state. `complete` still distinguishes "no goals" (proof
+         closed) from "nothing elaborated yet" so we never render `⊢ no goals`. -->
+    <div class="goal-empty">
+      {complete ? "No goals." : "No goal state available."}
+    </div>
   {:else}
     {#each goals as goal, i (i)}
       {#if i > 0}
@@ -48,11 +51,6 @@
   .goal-empty {
     color: var(--color-text-muted);
     font-style: italic;
-  }
-
-  .goal-complete {
-    color: #16a34a;
-    font-weight: 600;
   }
 
   .goal-block {
