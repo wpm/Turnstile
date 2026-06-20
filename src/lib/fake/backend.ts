@@ -232,8 +232,10 @@ function computeGoalState(doc: string): string {
 /**
  * Per-row goal cache snapshot (ADR-0004). Attaches the after-state to the row
  * whose tactic produced it — the `sorry` line if present, else the last line —
- * and marks every other row `empty`. Mirrors the real backend's per-row cache
- * closely enough to drive the cursor-row card.
+ * and marks every other row `empty`. A `constructor` line models the brief
+ * unfocused window after a splitting tactic, carrying two goals so the card's
+ * `+N` notch can be exercised. Mirrors the real backend's per-row cache closely
+ * enough to drive the cursor-row card and the All-Goals panel.
  */
 function computeGoalCache(doc: string): GoalCacheRow[] {
   if (doc.trim() === "" || doc.includes("oops")) return [];
@@ -242,8 +244,19 @@ function computeGoalCache(doc: string): GoalCacheRow[] {
   const lines = doc.split("\n");
   const sorryIdx = lines.findIndex((l) => l.includes("sorry"));
   const targetRow = sorryIdx >= 0 ? sorryIdx + 1 : lines.length;
-  return lines.map((_, i) => {
+  return lines.map((lineText, i) => {
     const row = i + 1;
+    if (lineText.includes("constructor")) {
+      // Unfocused: two open goals right after the split.
+      return {
+        row,
+        status: "fresh",
+        goals: [
+          { caseLabel: null, hypotheses: [], conclusion: "P" },
+          { caseLabel: null, hypotheses: [], conclusion: "Q" },
+        ],
+      };
+    }
     return row === targetRow && goals.length > 0
       ? { row, status: "fresh", goals }
       : { row, status: "empty", goals: [] };
