@@ -90,7 +90,9 @@ test("sorry produces a warning annotation and the goal state", async ({
   });
   // …keyword tokens from semantic highlighting…
   await expect(page.locator(".cm-tok-keyword").first()).toBeVisible();
-  // …and the goal state panel fills in with the descent goal.
+  // …and the goal state panel fills in with the descent goal. The top-right
+  // pane defaults to prose now, so flip it to the goal (All-Goals) view first.
+  await page.getByRole("button", { name: "Switch to Formal Proof" }).click();
   await expect(page.locator(".goal-conclusion")).toContainText(
     "n * n ≠ 2 * (d * d)",
     { timeout: 5_000 },
@@ -98,15 +100,18 @@ test("sorry produces a warning annotation and the goal state", async ({
   await expect(page.locator(".goal-turnstile")).toBeVisible();
 });
 
-test("a completed proof shows 'proof complete', not a bare ⊢ no goals", async ({
+test("a completed proof runs out of goals, not a bare ⊢ no goals", async ({
   page,
 }) => {
   await openApp(page);
+  // Flip the top-right pane to the goal view (prose is the default).
+  await page.getByRole("button", { name: "Switch to Formal Proof" }).click();
   // A proof with no `sorry` elaborates to no goals (fake returns "no goals").
   await typeInEditor(page, "theorem t : True := trivial");
 
-  // The panel reports completion…
-  await expect(page.locator(".goal-complete")).toContainText("proof complete", {
+  // The panel shows a quiet empty-state — a closed proof simply runs out of
+  // goals (ADR-0004); the green "proof complete" banner is gone.
+  await expect(page.locator(".goal-empty")).toContainText("No goals.", {
     timeout: 5_000,
   });
   // …and does NOT render a dangling turnstile or the literal "no goals" as a
@@ -355,8 +360,7 @@ test("prose proof blinks while generation is in flight, then settles", async ({
   page,
 }) => {
   await openApp(page);
-  // Switch the bottom panel to the Prose Proof view.
-  await page.getByRole("button", { name: "Switch to Prose Proof" }).click();
+  // The Prose Proof pane is shown by default (upper-right).
 
   // Typing a valid proof triggers a prose regeneration; the panel blinks…
   await typeInEditor(page, "theorem t : True := trivial");
@@ -437,12 +441,15 @@ test("proof view toggle round-trips between formal and prose", async ({
   page,
 }) => {
   await openApp(page);
-  // Start on the formal view; switch to prose and back.
-  await page.getByRole("button", { name: "Switch to Prose Proof" }).click();
+  // Start on the prose view (the default); switch to the goal view and back.
   await expect(page.locator(".prose-proof")).toBeVisible();
 
   await page.getByRole("button", { name: "Switch to Formal Proof" }).click();
   await expect(page.locator(".prose-proof")).toHaveCount(0);
+  await expect(page.locator(".goal-state")).toBeVisible();
+
+  await page.getByRole("button", { name: "Switch to Prose Proof" }).click();
+  await expect(page.locator(".prose-proof")).toBeVisible();
 });
 
 test("an error in the source shows an error squiggle and gutter mark", async ({
