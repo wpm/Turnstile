@@ -2,9 +2,22 @@
   import { onDestroy, onMount, tick } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
+  import { EditorState, Compartment } from "@codemirror/state";
+  import {
+    EditorView,
+    keymap,
+    placeholder as placeholderExt,
+  } from "@codemirror/view";
+  import {
+    defaultKeymap,
+    history,
+    historyKeymap,
+    insertNewline,
+  } from "@codemirror/commands";
   import Divider from "./Divider.svelte";
   import { renderMathInMarkdown } from "./render";
   import { assistantStatus } from "./turnstile_messages";
+  import { unicodeAbbreviationsOnly } from "./unicodeAbbreviations";
 
   type Role = "user" | "assistant" | "error";
   interface Message {
@@ -47,6 +60,14 @@
   let dragging = $state(false);
   let dragRect: DOMRect | null = null;
   let containerEl: HTMLDivElement;
+
+  // The message entry is a CodeMirror instance (not a plain <textarea>) so it
+  // shares the `\`-escape unicode glyph dropdown with the Formal Proof editor
+  // (#98). `input` mirrors the editor's document for the send guards below.
+  let inputEl: HTMLDivElement;
+  let inputView: EditorView | undefined;
+  const editableCompartment = new Compartment();
+  const placeholderCompartment = new Compartment();
 
   const MIN_INPUT_PANEL_HEIGHT = 48; // single line
   const MAX_INPUT_PANEL_RATIO = 0.5;
@@ -93,11 +114,21 @@
     }
   }
 
+  /** Replace the editor's document, keeping the `input` mirror in sync. */
+  function setInput(value: string) {
+    input = value;
+    if (inputView && inputView.state.doc.toString() !== value) {
+      inputView.dispatch({
+        changes: { from: 0, to: inputView.state.doc.length, insert: value },
+      });
+    }
+  }
+
   async function send() {
     const text = input.trim();
     if (!text || busy || disconnected) return;
     messages.push({ id: nextId++, role: "user", text });
-    input = "";
+    setInput("");
     busy = true;
     streamingText = "";
     void scrollToBottom();
@@ -116,20 +147,71 @@
     }
   }
 
-  function onKeydown(e: KeyboardEvent) {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      void send();
-    }
-  }
-
   const unsubscribeStatus = assistantStatus.subscribe((status) => {
     // Null (no status yet) is treated as usable; only an explicit
     // "disconnected" disables the input.
     disconnected = status?.state === "disconnected";
   });
 
+  /**
+   * Build the message-entry editor. Prose surface (#98): the unicode glyph
+   * dropdown is the *only* completion source, and native browser spell-check is
+   * enabled via content attributes — the `\`-dropdown and the spelling squiggle
+   * are separate layers and coexist. Enter sends; Shift-Enter inserts a newline.
+   * `autocompletion` (in `unicodeAbbreviationsOnly`) registers its accept-on-
+   * Enter binding at Prec.highest, so while the glyph dropdown is open Enter
+   * accepts the glyph; it only falls through to send when the dropdown is shut.
+   */
+  function createInputEditor() {
+    inputView = new EditorView({
+      state: EditorState.create({
+        extensions: [
+          history(),
+          keymap.of([
+            {
+              key: "Enter",
+              run: () => {
+                void send();
+                return true;
+              },
+            },
+            { key: "Shift-Enter", run: insertNewline },
+            ...defaultKeymap,
+            ...historyKeymap,
+          ]),
+          unicodeAbbreviationsOnly,
+          EditorView.lineWrapping,
+          editableCompartment.of(EditorView.editable.of(!disconnected)),
+          placeholderCompartment.of(placeholderExt(placeholder)),
+          // Prose entry: opt into the native browser spell-check layer that
+          // CodeMirror ships with off.
+          EditorView.contentAttributes.of({
+            spellcheck: "true",
+            autocorrect: "on",
+            autocapitalize: "on",
+            "aria-label": "Message Proof Assistant",
+          }),
+          EditorView.theme({
+            "&": { height: "100%", fontSize: "0.875rem" },
+            ".cm-scroller": {
+              overflow: "auto",
+              fontFamily: "inherit",
+              lineHeight: "1.5",
+            },
+            ".cm-content": { padding: "0.5rem 0.75rem" },
+            "&.cm-focused": { outline: "none" },
+          }),
+          EditorView.updateListener.of((update) => {
+            if (update.docChanged) input = update.state.doc.toString();
+          }),
+        ],
+      }),
+      parent: inputEl,
+    });
+  }
+
   onMount(async () => {
+    createInputEditor();
     await loadTranscript();
     unlistenDelta = await listen<string>("assistant-delta", (e) => {
       if (!busy) return;
@@ -145,6 +227,19 @@
     unlistenDelta?.();
     unlistenSessionLoaded?.();
     unsubscribeStatus();
+    inputView?.destroy();
+  });
+
+  // Disconnecting locks the entry and swaps in the explanatory placeholder;
+  // reconnecting restores both. Reconfigured through compartments so the
+  // editor's document and history survive the toggle.
+  $effect(() => {
+    inputView?.dispatch({
+      effects: [
+        editableCompartment.reconfigure(EditorView.editable.of(!disconnected)),
+        placeholderCompartment.reconfigure(placeholderExt(placeholder)),
+      ],
+    });
   });
 </script>
 
@@ -197,13 +292,7 @@
   <Divider orientation="horizontal" {onDragStart} />
 
   <div class="input-panel" style="height: {inputPanelHeight}px">
-    <textarea
-      bind:value={input}
-      onkeydown={onKeydown}
-      {placeholder}
-      disabled={disconnected}
-      rows="1"
-    ></textarea>
+    <div class="input-editor" class:disconnected bind:this={inputEl}></div>
     <button
       onclick={() => void send()}
       disabled={!input.trim() || busy || disconnected}
@@ -369,30 +458,41 @@
     background: var(--color-header-bg);
   }
 
-  textarea {
+  /* CodeMirror message entry. Mirrors the old <textarea> chrome; the editor's
+     own theme (set in createInputEditor) handles padding/scroll/wrap. */
+  .input-editor {
     flex: 1;
     height: 100%;
-    resize: none;
+    min-width: 0;
     border: 1px solid var(--color-border);
     border-radius: 0.5rem;
-    padding: 0.5rem 0.75rem;
-    font-size: 0.875rem;
-    font-family: inherit;
     background: var(--color-bg);
     color: var(--color-text);
-    outline: none;
-    overflow-y: auto;
+    overflow: hidden;
     user-select: text;
   }
 
-  textarea:focus {
+  .input-editor :global(.cm-editor) {
+    height: 100%;
+    background: transparent;
+  }
+
+  .input-editor :global(.cm-content) {
+    caret-color: var(--color-text);
+  }
+
+  .input-editor:focus-within {
     border-color: var(--color-accent);
   }
 
-  textarea:disabled {
+  /* Disconnected: the entry is read-only and reads as disabled. */
+  .input-editor.disconnected {
     background: var(--color-header-bg);
-    color: var(--color-text-muted);
     cursor: not-allowed;
+  }
+
+  .input-editor.disconnected :global(.cm-content) {
+    color: var(--color-text-muted);
   }
 
   button {

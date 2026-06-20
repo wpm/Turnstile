@@ -29,7 +29,7 @@ const THEOREM = [
 async function openApp(page: Page) {
   await page.goto("/");
   // Editor becomes editable once the fake LSP reports connected.
-  await expect(page.locator(".cm-content")).toHaveAttribute(
+  await expect(page.locator(".formal-panel .cm-content")).toHaveAttribute(
     "contenteditable",
     "true",
     { timeout: 10_000 },
@@ -37,8 +37,23 @@ async function openApp(page: Page) {
 }
 
 async function typeInEditor(page: Page, text: string) {
-  await page.locator(".cm-content").click();
+  await page.locator(".formal-panel .cm-content").click();
   await page.keyboard.insertText(text);
+}
+
+// The Proof Assistant entry is a CodeMirror instance (#98), not a <textarea>:
+// locate its editable content and drive it through the keyboard, clearing any
+// leftover text first so a dropped send doesn't bleed into the next message.
+function assistantInput(page: Page) {
+  return page.locator(".assistant-panel .cm-content");
+}
+
+async function sendAssistantMessage(page: Page, text: string) {
+  await assistantInput(page).click();
+  await page.keyboard.press("ControlOrMeta+a");
+  await page.keyboard.press("Delete");
+  await page.keyboard.insertText(text);
+  await page.keyboard.press("Enter");
 }
 
 test("status bar reports a connected Lean server", async ({ page }) => {
@@ -55,7 +70,7 @@ test("recovers connected status emitted before the listener subscribed", async (
   // stuck on "Starting…" with a read-only editor. `?eager-lsp=1` makes the
   // fake announce connected at load, before any listener exists.
   await page.goto("/?eager-lsp=1");
-  await expect(page.locator(".cm-content")).toHaveAttribute(
+  await expect(page.locator(".formal-panel .cm-content")).toHaveAttribute(
     "contenteditable",
     "true",
     { timeout: 10_000 },
@@ -174,9 +189,7 @@ test("assistant chat: streams a reply about the goal and renders math", async ({
     timeout: 5_000,
   });
 
-  const input = page.getByPlaceholder("Message Proof Assistant…");
-  await input.fill("What is the current goal?");
-  await input.press("Enter");
+  await sendAssistantMessage(page, "What is the current goal?");
 
   // User bubble appears immediately.
   await expect(page.locator(".bubble.user")).toContainText(
@@ -203,7 +216,6 @@ test("assistant chat: bubbles hug their text whether or not the transcript overf
   // stretch, so assert the CSS contract plus that no bubble clips OR balloons
   // past its own text.
   await openApp(page);
-  const input = page.getByPlaceholder("Message Proof Assistant…");
   // Send sequentially until the transcript overflows. send() is a no-op while a
   // reply is still streaming, so a send fired too early is silently dropped
   // (this flaked in WebKit). Pace by waiting for the user bubble (one per
@@ -213,8 +225,10 @@ test("assistant chat: bubbles hug their text whether or not the transcript overf
   const TURNS = 6;
   for (let i = 0; i < TURNS; i++) {
     await expect(async () => {
-      await input.fill(`overflow the transcript, message ${String(i)}`);
-      await input.press("Enter");
+      await sendAssistantMessage(
+        page,
+        `overflow the transcript, message ${String(i)}`,
+      );
       await expect(page.locator(".bubble.user")).toHaveCount(i + 1, {
         timeout: 2_000,
       });
@@ -261,9 +275,7 @@ test("assistant chat: replies without echoing the user's message", async ({
   page,
 }) => {
   await openApp(page);
-  const input = page.getByPlaceholder("Message Proof Assistant…");
-  await input.fill("hello turnstile");
-  await input.press("Enter");
+  await sendAssistantMessage(page, "hello turnstile");
   const lastBubble = page.locator(".bubble.assistant").last();
   await expect(lastBubble).toContainText("Proof Assistant", {
     timeout: 10_000,
@@ -271,6 +283,53 @@ test("assistant chat: replies without echoing the user's message", async ({
   // The assistant must never echo the user's text back (#57/#62).
   await expect(lastBubble).not.toContainText("[echo]");
   await expect(lastBubble).not.toContainText("hello turnstile");
+});
+
+test("unicode abbreviations: a \\-escape dropdown renders glyphs and accepts into the formal editor", async ({
+  page,
+}) => {
+  // #98: typing `\` + letters opens an autocomplete dropdown beneath the cursor
+  // whose options show the *rendered glyph* (not the plain escape). Accepting
+  // replaces the escape with the character.
+  await openApp(page);
+  await page.locator(".formal-panel .cm-content").click();
+  // Type char-by-char so the eager (activateOnTyping) completion fires.
+  await page.keyboard.type("\\alpha");
+
+  const tooltip = page.locator(".cm-tooltip-autocomplete");
+  await expect(tooltip).toBeVisible();
+  // The list shows the live glyph alongside its escape.
+  await expect(tooltip).toContainText("α");
+  await expect(tooltip).toContainText("\\alpha");
+
+  // Accept the (exact, top-ranked) match: the escape becomes the glyph.
+  // CodeMirror guards Enter behind a 75 ms interaction delay (so a fast Enter
+  // doesn't accept an option the user never saw); a human's pause clears it.
+  await page.waitForTimeout(150);
+  await page.keyboard.press("Enter");
+  const content = page.locator(".formal-panel .cm-content");
+  await expect(content).toContainText("α");
+  await expect(content).not.toContainText("\\alpha");
+});
+
+test("unicode abbreviations: Enter accepts a glyph in the assistant entry instead of sending", async ({
+  page,
+}) => {
+  // The same dropdown rides in the Proof Assistant entry (now a CodeMirror
+  // instance). While it's open, Enter accepts the glyph rather than firing the
+  // message — only a plain Enter (no dropdown) sends.
+  await openApp(page);
+  await assistantInput(page).click();
+  await page.keyboard.type("\\to");
+  await expect(page.locator(".cm-tooltip-autocomplete")).toContainText("→");
+
+  // Past CodeMirror's 75 ms accept guard, Enter accepts the glyph (it does not
+  // send) because the dropdown is open.
+  await page.waitForTimeout(150);
+  await page.keyboard.press("Enter");
+  // The glyph landed in the entry; no message was sent.
+  await expect(assistantInput(page)).toContainText("→");
+  await expect(page.locator(".bubble.user")).toHaveCount(0);
 });
 
 test("status bar reports a connected Proof Assistant", async ({ page }) => {
@@ -286,7 +345,7 @@ test("disconnected assistant: error toast names the fix and the input is disable
   // Simulate a stored-but-rejected key: a key is present (so the first-run modal
   // doesn't pop), but the assistant is disconnected.
   await page.goto("/?assistant=disconnected:keyRejected");
-  await expect(page.locator(".cm-content")).toHaveAttribute(
+  await expect(page.locator(".formal-panel .cm-content")).toHaveAttribute(
     "contenteditable",
     "true",
     { timeout: 10_000 },
@@ -303,11 +362,16 @@ test("disconnected assistant: error toast names the fix and the input is disable
   await expect(toast).toContainText("API key was rejected");
   await expect(toast).toContainText("Settings");
 
-  // The chat input is disabled with an explanatory placeholder.
-  const input = page.getByPlaceholder(
+  // The chat input is locked (read-only) and shows the explanatory placeholder.
+  // It's a CodeMirror editor (#98), so "disabled" is a non-editable content DOM
+  // rather than a form control's disabled attribute.
+  await expect(assistantInput(page)).toHaveAttribute(
+    "contenteditable",
+    "false",
+  );
+  await expect(page.locator(".assistant-panel .cm-placeholder")).toContainText(
     "Proof Assistant unavailable — set your API key in Settings",
   );
-  await expect(input).toBeDisabled();
 });
 
 test("settings dialog opens from the menu, edits persist", async ({ page }) => {
@@ -389,7 +453,7 @@ test("word wrap toggles via the View menu", async ({ page }) => {
   await typeInEditor(page, longLine);
 
   const contentWidth = async () =>
-    (await page.locator(".cm-content").boundingBox())?.width ?? 0;
+    (await page.locator(".formal-panel .cm-content").boundingBox())?.width ?? 0;
   const before = await contentWidth();
 
   await page.evaluate(() => {
@@ -423,9 +487,12 @@ test("opening a session loads the proof and prose", async ({ page }) => {
   await page.evaluate(() => {
     window.__turnstileFake?.emit("menu-event", "open_session");
   });
-  await expect(page.locator(".cm-content")).toContainText("sqrt2_irrational", {
-    timeout: 5_000,
-  });
+  await expect(page.locator(".formal-panel .cm-content")).toContainText(
+    "sqrt2_irrational",
+    {
+      timeout: 5_000,
+    },
+  );
 });
 
 test("loading a session over existing edits replaces the backend source, not concatenates it", async ({
@@ -441,16 +508,21 @@ test("loading a session over existing edits replaces the backend source, not con
 
   // The user has some prior content in the editor (and thus in the backend).
   await typeInEditor(page, "theorem old : True := sorry");
-  await expect(page.locator(".cm-content")).toContainText("theorem old");
+  await expect(page.locator(".formal-panel .cm-content")).toContainText(
+    "theorem old",
+  );
 
   // Loading a session sets the backend source directly and re-populates the
   // editor. The backend source must equal exactly the loaded proof.
   await page.evaluate(() => {
     window.__turnstileFake?.emit("menu-event", "open_session");
   });
-  await expect(page.locator(".cm-content")).toContainText("sqrt2_irrational", {
-    timeout: 5_000,
-  });
+  await expect(page.locator(".formal-panel .cm-content")).toContainText(
+    "sqrt2_irrational",
+    {
+      timeout: 5_000,
+    },
+  );
 
   const source = await page.evaluate(
     () => window.__turnstileFake?.getSource() ?? "",
@@ -460,7 +532,8 @@ test("loading a session over existing edits replaces the backend source, not con
   expect(source).toContain("sqrt2_irrational");
   // The editor and the backend agree exactly.
   const editorText = await page.evaluate(
-    () => document.querySelector(".cm-content")?.textContent ?? "",
+    () =>
+      document.querySelector(".formal-panel .cm-content")?.textContent ?? "",
   );
   expect(source.replace(/\s+/g, " ").trim()).toBe(
     editorText.replace(/\s+/g, " ").trim(),
@@ -533,14 +606,19 @@ test("a showMessage notification surfaces a dismissable toast", async ({
 test("new session clears the editor", async ({ page }) => {
   await openApp(page);
   await typeInEditor(page, "theorem scratch : True := trivial");
-  await expect(page.locator(".cm-content")).toContainText("scratch");
+  await expect(page.locator(".formal-panel .cm-content")).toContainText(
+    "scratch",
+  );
 
   await page.evaluate(() => {
     window.__turnstileFake?.emit("menu-event", "new_session");
   });
-  await expect(page.locator(".cm-content")).not.toContainText("scratch", {
-    timeout: 5_000,
-  });
+  await expect(page.locator(".formal-panel .cm-content")).not.toContainText(
+    "scratch",
+    {
+      timeout: 5_000,
+    },
+  );
 });
 
 test("autosave recovery prompt restores the session", async ({ page }) => {
@@ -553,7 +631,10 @@ test("autosave recovery prompt restores the session", async ({ page }) => {
   const dialog = page.getByRole("dialog", { name: "Restore session" });
   await expect(dialog).toBeVisible({ timeout: 10_000 });
   await dialog.getByRole("button", { name: "Restore" }).click();
-  await expect(page.locator(".cm-content")).toContainText("sqrt2_irrational", {
-    timeout: 5_000,
-  });
+  await expect(page.locator(".formal-panel .cm-content")).toContainText(
+    "sqrt2_irrational",
+    {
+      timeout: 5_000,
+    },
+  );
 });

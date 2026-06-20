@@ -9,6 +9,10 @@ src-tauri/
 docs/
 e2e/lean-server/recordings/
 
+# Vendored verbatim from vscode-lean4 (lean4-unicode-input/src/abbreviations.json,
+# #98). Kept pristine so it can be re-synced from upstream without prettier churn.
+src/lib/abbreviations.json
+
 # ts-rs generated bindings (src-tauri cargo test exports these in ts-rs's
 # own formatting; prettier must not fight it or every cargo test dirties
 # the tree)
