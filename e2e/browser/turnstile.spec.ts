@@ -569,6 +569,44 @@ test("the Proof Assistant writing source replaces the editor contents", async ({
   );
 });
 
+test("Command-A selects only the focused panel, not the whole app (#113)", async ({
+  page,
+}) => {
+  await openApp(page);
+  await typeInEditor(page, THEOREM);
+  // Build a goal state, then show the All-Goals panel (prose is the default).
+  await expect(page.locator(".cm-elaborating")).toHaveCount(0, {
+    timeout: 5_000,
+  });
+  await page.getByRole("button", { name: "Switch to Formal Proof" }).click();
+  await expect(page.locator(".goal-state .goal-conclusion")).toContainText(
+    "n * n ≠ 2 * (d * d)",
+    { timeout: 5_000 },
+  );
+
+  // Click into the Goal State panel and select all. Helper returns whether the
+  // resulting selection is wholly contained within the goal panel.
+  const selectionScopedToGoal = async () => {
+    await page.locator(".goal-state").click();
+    await page.keyboard.press("ControlOrMeta+a");
+    return page.evaluate(() => {
+      const sel = window.getSelection();
+      if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return false;
+      const goal = document.querySelector(".goal-state");
+      return goal?.contains(sel.getRangeAt(0).commonAncestorContainer) ?? false;
+    });
+  };
+  expect(await selectionScopedToGoal()).toBe(true);
+
+  // The selection is the goal text — and it does NOT bleed into the formal
+  // editor's source (the whole-app Select All bug).
+  const selected = await page.evaluate(
+    () => window.getSelection()?.toString() ?? "",
+  );
+  expect(selected).toContain("n * n ≠ 2 * (d * d)");
+  expect(selected).not.toContain("sqrt2_irrational");
+});
+
 test("theme toggle switches the document between light and dark", async ({
   page,
 }) => {

@@ -41,6 +41,7 @@
     saveSessionAs,
     type UiLayout,
   } from "$lib/session";
+  import { handleSelectAll } from "$lib/selectAll";
 
   let proofView = $state<ProofView>("prose");
   let dark = $state(false);
@@ -332,7 +333,15 @@
       );
     }, AUTOSAVE_INTERVAL_MS);
 
+    // Scope Command-A / Ctrl-A to the focused panel instead of the whole window
+    // (#113). Bubble phase (not capture) so a focused CodeMirror editor's own
+    // Mod-a runs first and marks the event handled; this handler then leaves it
+    // alone.
+    const onKeydown = (e: KeyboardEvent) => handleSelectAll(e, document);
+    window.addEventListener("keydown", onKeydown);
+
     return () => {
+      window.removeEventListener("keydown", onKeydown);
       unsubscribeLsp();
       unsubscribeShowMessage();
       unsubscribeAssistant();
