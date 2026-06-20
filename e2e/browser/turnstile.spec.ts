@@ -100,6 +100,10 @@ test("sorry produces a warning annotation and the goal state", async ({
     { timeout: 5_000 },
   );
   await expect(page.locator(".goal-state .goal-turnstile")).toBeVisible();
+  // The All-Goals panel renders the cache per row (#93), labelled by line.
+  await expect(page.locator(".goal-state .goal-row-label")).toContainText(
+    "line",
+  );
 });
 
 test("a completed proof runs out of goals, not a bare ⊢ no goals", async ({

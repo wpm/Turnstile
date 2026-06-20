@@ -1,29 +1,37 @@
 <script lang="ts">
-  import { isProofComplete, parseGoalText } from "./goalState";
+  import { goalCache } from "./turnstile_messages";
   import GoalEntryView from "./GoalEntryView.svelte";
 
-  let { content = "" }: { content?: string } = $props();
-
-  const complete = $derived(isProofComplete(content));
-  const goals = $derived(complete ? [] : parseGoalText(content));
+  // The All-Goals panel (ADR-0004): the entire per-row goal cache rendered at
+  // once, for the reader who wants the whole stack. Served from the same cache
+  // as the cursor-row card (#91) — no extra Lean queries, instant when toggled.
+  //
+  // Only rows with a fresh goal contribute; stale rows are mid-elaboration and
+  // empty rows carry no goal. A closed proof simply runs out of goals (the
+  // green "proof complete" banner is gone) — shown as a quiet empty-state.
+  const freshRows = $derived(
+    [...$goalCache.values()]
+      .filter((r) => r.status === "fresh" && r.goals.length > 0)
+      .sort((a, b) => a.row - b.row),
+  );
 </script>
 
 <div class="goal-state">
-  {#if goals.length === 0}
-    <!-- A closed proof simply runs out of goals (ADR-0004); no banner, just a
-         quiet empty-state. `complete` still distinguishes "no goals" (proof
-         closed) from "nothing elaborated yet" so we never render `⊢ no goals`. -->
+  {#if freshRows.length === 0}
     <div class="goal-empty">
-      {complete ? "No goals." : "No goal state available."}
+      {$goalCache.size > 0 ? "No goals." : "No goal state available."}
     </div>
   {:else}
-    {#each goals as goal, i (i)}
-      {#if i > 0}
-        <hr class="goal-separator" />
-      {/if}
-      <!-- The shared renderer in full form (ADR-0004): one rendering path for
-           the goal, also used by the cursor card in compact form (#91). -->
-      <GoalEntryView {goal} />
+    {#each freshRows as row (row.row)}
+      <div class="goal-row">
+        <div class="goal-row-label">line {row.row}</div>
+        {#each row.goals as goal, i (i)}
+          {#if i > 0}
+            <hr class="goal-separator" />
+          {/if}
+          <GoalEntryView {goal} />
+        {/each}
+      </div>
     {/each}
   {/if}
 </div>
@@ -41,6 +49,19 @@
   .goal-empty {
     color: var(--color-text-muted);
     font-style: italic;
+  }
+
+  .goal-row {
+    margin-bottom: 1rem;
+  }
+
+  .goal-row-label {
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: var(--color-text-muted);
+    margin-bottom: 0.25rem;
   }
 
   .goal-separator {

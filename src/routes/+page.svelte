@@ -15,7 +15,6 @@
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
   import {
-    goalState,
     lspStatus as lspStatusStore,
     showMessage,
     assistantStatus,
@@ -44,7 +43,6 @@
 
   let proofView = $state<ProofView>("prose");
   let dark = $state(false);
-  let goalText = $state("");
   let prose = $state("");
   let lspReady = $state(false);
   let settingsOpen = $state(false);
@@ -166,10 +164,6 @@
     let unlistenMenu: (() => void) | undefined;
     let unlistenSetup: (() => void) | undefined;
     let unlistenProseGenerating: (() => void) | undefined;
-
-    const unsubscribeGoal = goalState.subscribe((text) => {
-      goalText = text;
-    });
 
     const unsubscribeLsp = lspStatusStore.subscribe((status) => {
       lspReady = status?.state === "connected";
@@ -298,7 +292,6 @@
     }, AUTOSAVE_INTERVAL_MS);
 
     return () => {
-      unsubscribeGoal();
       unsubscribeLsp();
       unsubscribeShowMessage();
       unsubscribeAssistant();
@@ -413,7 +406,8 @@
           {#if proofView === "prose"}
             <ProseProof content={prose} generating={$proseGenerating} />
           {:else}
-            <GoalState content={goalText} />
+            <!-- All-Goals view: reads the per-row cache directly (ADR-0004). -->
+            <GoalState />
           {/if}
         </div>
       </div>
