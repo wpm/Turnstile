@@ -15,6 +15,21 @@ export function isProofComplete(raw: string): boolean {
   return raw.trim().toLowerCase() === "no goals";
 }
 
+/**
+ * The hypotheses in `current` that are not already in `previous`, preserving
+ * order. Used by the compact (card) rendering to show only what a row *added*
+ * to the context — the hypothesis delta — since goals tend to be short and the
+ * unchanged stack is noise at the cursor. With no `previous`, every hypothesis
+ * is "new", so the delta is the whole list.
+ */
+export function hypothesisDelta(
+  current: string[],
+  previous: string[] = [],
+): string[] {
+  const prior = new Set(previous);
+  return current.filter((h) => !prior.has(h));
+}
+
 export function parseGoalText(raw: string): GoalBlock[] {
   if (!raw.trim()) return [];
 

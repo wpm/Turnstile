@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isProofComplete, parseGoalText } from "./goalState";
+import { hypothesisDelta, isProofComplete, parseGoalText } from "./goalState";
 
 describe("parseGoalText", () => {
   it("returns empty array for empty string", () => {
@@ -86,6 +86,28 @@ describe("parseGoalText", () => {
     const [goal] = parseGoalText(input);
     expect(goal.hypotheses).toEqual(["h : P"]);
     expect(goal.conclusion).toBe("  ⊢ P");
+  });
+});
+
+describe("hypothesisDelta", () => {
+  it("returns the whole list when there is no previous context", () => {
+    expect(hypothesisDelta(["h : P", "h2 : Q"])).toEqual(["h : P", "h2 : Q"]);
+  });
+
+  it("keeps only hypotheses absent from the previous context, in order", () => {
+    expect(hypothesisDelta(["h : P", "h2 : Q", "h3 : R"], ["h : P"])).toEqual([
+      "h2 : Q",
+      "h3 : R",
+    ]);
+  });
+
+  it("is empty when the row added no hypotheses", () => {
+    expect(hypothesisDelta(["h : P"], ["h : P", "h2 : Q"])).toEqual([]);
+  });
+
+  it("matches hypotheses by exact string", () => {
+    // A renamed/retyped hypothesis is a different string, so it counts as new.
+    expect(hypothesisDelta(["h : P ∧ Q"], ["h : P"])).toEqual(["h : P ∧ Q"]);
   });
 });
 
