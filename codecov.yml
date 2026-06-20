@@ -1,0 +1,30 @@
+# Codecov configuration.
+# Reference: https://docs.codecov.com/docs/codecovyml-reference
+#
+# Why this exists (#114): with no config, Codecov applied its default status
+# checks, which flip to a failure (a red X in the UI) whenever overall coverage
+# drops at all — even by a fraction of a percent on a commit that doesn't really
+# touch code (e.g. a CI tweak). Those checks don't block the build, but the red
+# Xs are noise. We relax the thresholds here so that stops happening, and keep
+# the required total coverage intentionally low for the time being.
+
+coverage:
+  # Sub-percent jitter shouldn't read as a meaningful change.
+  precision: 2
+  round: down
+  range: "0...100"
+
+  status:
+    project:
+      default:
+        # Required total coverage is intentionally low for now.
+        target: 0%
+        # Don't fail on a drop in overall coverage.
+        threshold: 100%
+        # Report as a neutral/informational status so it never shows a red X.
+        informational: true
+    patch:
+      default:
+        target: 0%
+        threshold: 100%
+        informational: true
