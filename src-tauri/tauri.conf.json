@@ -31,6 +31,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": true,
     "publisher": "W.P. McNeill",
     "homepage": "https://github.com/wpm/Turnstile",
     "license": "MIT",

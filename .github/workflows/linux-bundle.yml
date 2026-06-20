@@ -103,10 +103,16 @@ jobs:
           key: ${{ matrix.target }}
 
       # Produce the real installers (deb/rpm/AppImage; bundle.targets is "all"
-      # in tauri.conf.json). Unsigned — no Linux signing secrets are referenced,
-      # so this runs without any secrets configured. Passing --target keeps the
-      # output path predictable and makes adding aarch64 a one-line matrix edit.
+      # in tauri.conf.json). bundle.createUpdaterArtifacts is on (#52), which
+      # makes tauri sign the AppImage update bundle, so the minisign key (#51)
+      # must be present or the build fails. The key has no password. On main the
+      # repo secret is available; this leg is main-gated so forks (which lack the
+      # secret) never reach it. App-format installers (deb/rpm/AppImage) are
+      # unsigned by the Apple/Developer ID path — that's macOS-only.
       - name: Tauri build (bundle)
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
         run: pnpm tauri build --target ${{ matrix.target }}
 
       # Confirm all three Linux bundle formats were produced. Catches a bundler
