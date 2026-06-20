@@ -147,6 +147,23 @@ test("the cursor-row goal card shows the after-state and hides off a fresh row",
   await expect(page.locator(".goal-card")).toHaveCount(0);
 });
 
+test("the goal card marks an unfocused multi-goal step with a +N notch", async ({
+  page,
+}) => {
+  await openApp(page);
+  // A `constructor` step splits into two goals; the cursor lands on that row.
+  await typeInEditor(page, "theorem t : P ∧ Q := by\n  constructor");
+
+  const card = page.locator(".goal-card");
+  await expect(card).toBeVisible({ timeout: 5_000 });
+  // The card shows the first goal; the remaining one becomes a +1 notch.
+  await expect(card.locator(".goal-card-notch")).toHaveText("+1");
+
+  // The All-Goals panel renders the same cache row in full — both goals.
+  await page.getByRole("button", { name: "Switch to Formal Proof" }).click();
+  await expect(page.locator(".goal-state .goal-conclusion")).toHaveCount(2);
+});
+
 test("assistant chat: streams a reply about the goal and renders math", async ({
   page,
 }) => {

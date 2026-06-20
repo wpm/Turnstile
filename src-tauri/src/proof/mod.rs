@@ -729,6 +729,22 @@ mod tests {
     }
 
     #[test]
+    fn stale_rows_after_an_edit_are_bounded_to_the_changed_tail() {
+        // The re-query is scoped to the edit's blast radius, not the document
+        // size (ADR-0004 "To revisit"): editing near the end of a large proof
+        // stales only the tail, leaving everything above fresh.
+        let mut gs = GoalState::default();
+        for r in 1..=100 {
+            gs.set_row(r, vec![GoalEntry::default()]);
+        }
+        gs.mark_stale(98, 100);
+        assert_eq!(gs.stale_rows(), vec![98, 99, 100]);
+        // Rows above the edit stay fresh — no whole-document re-query.
+        assert_eq!(gs.rows[&1].status, GoalRowStatus::Fresh);
+        assert_eq!(gs.rows[&97].status, GoalRowStatus::Fresh);
+    }
+
+    #[test]
     fn mark_stale_drops_rows_past_the_new_end() {
         let mut gs = GoalState::default();
         gs.set_row(1, vec![GoalEntry::default()]);
