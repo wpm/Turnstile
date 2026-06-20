@@ -136,6 +136,12 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # Updater signing (#52): bundle.createUpdaterArtifacts is on, so tauri
+          # signs the .app.tar.gz update bundle with the minisign key (#51) and
+          # writes its .sig. Separate from the Apple Developer ID above; the key
+          # has no password, so the password var stays empty.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
         run: pnpm tauri build --target universal-apple-darwin
 
       # Copy the built .dmg to its stable, version-less name (#24). The script
@@ -145,6 +151,23 @@ jobs:
           scripts/normalize-artifacts.sh \
             --in src-tauri/target/universal-apple-darwin/release/bundle \
             --out dist
+
+      # Carry the updater bundle (.app.tar.gz) and its minisign signature
+      # (.app.tar.gz.sig) alongside the installer so the attach job can build
+      # latest.json (#52). Found by their .sig sibling — the only minisign-
+      # signed outputs of the build — so we never hardcode tauri's versioned
+      # name. Keep the original names: latest.json's URLs are generated to match.
+      - name: Stage updater artifacts
+        run: |
+          set -euo pipefail
+          bundle=src-tauri/target/universal-apple-darwin/release/bundle
+          # Match the updater sig by its full suffix, not a bare *.sig, so a
+          # stray signature inside the .app can't be mistaken for one.
+          find "$bundle" -type f -name '*.app.tar.gz.sig' |
+            while IFS= read -r sig; do
+              cp -f "$sig" dist/
+              cp -f "${sig%.sig}" dist/
+            done
 
       - name: Upload macOS artifact
         uses: actions/upload-artifact@v4
@@ -202,7 +225,14 @@ jobs:
       # Produce all three Linux formats (bundle.targets is "all" in
       # tauri.conf.json). Passing --target keeps the output path predictable for
       # the normalize step below.
+      # createUpdaterArtifacts is on, so the AppImage gets a signed update bundle
+      # (.AppImage.tar.gz + .sig) using the minisign key (#51, #52). The key has
+      # no password, so the password var stays empty. deb/rpm get no updater
+      # bundle — they're owned by the system package manager (#50).
       - name: Tauri build (bundle)
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
         run: pnpm tauri build --target x86_64-unknown-linux-gnu
 
       - name: Stage stable-named artifacts
@@ -210,6 +240,19 @@ jobs:
           scripts/normalize-artifacts.sh \
             --in src-tauri/target/x86_64-unknown-linux-gnu/release/bundle \
             --out dist
+
+      # Carry the AppImage updater bundle (.AppImage.tar.gz) and its signature
+      # for latest.json (#52), found by the .sig sibling so the versioned name
+      # is never hardcoded. Mirrors the macOS leg.
+      - name: Stage updater artifacts
+        run: |
+          set -euo pipefail
+          bundle=src-tauri/target/x86_64-unknown-linux-gnu/release/bundle
+          find "$bundle" -type f -name '*.AppImage.tar.gz.sig' |
+            while IFS= read -r sig; do
+              cp -f "$sig" dist/
+              cp -f "${sig%.sig}" dist/
+            done
 
       - name: Upload Linux artifacts
         uses: actions/upload-artifact@v4
@@ -237,13 +280,29 @@ jobs:
       # Needed for scripts/normalize-artifacts.sh (the SHA256SUMS step below).
       - uses: actions/checkout@v5
 
-      # Merge both legs' uploads into a single dist/ directory.
+      # Merge both legs' uploads into a single dist/ directory. Each leg's
+      # upload carries its installers plus its signed updater bundle + .sig.
       - name: Download stable artifacts
         uses: actions/download-artifact@v4
         with:
           pattern: stable-*
           path: dist
           merge-multiple: true
+
+      # Build the signed updater manifest from the per-platform update bundles
+      # now assembled in dist/ (#52). Written before SHA256SUMS so it's covered
+      # by the manifest. The version is the single source in package.json (#25);
+      # the URLs point at this release's assets by tag.
+      - name: Generate latest.json
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./package.json').version")"
+          node scripts/make-latest-json.mjs \
+            --dir dist \
+            --version "$version" \
+            --tag "${{ github.event.release.tag_name }}" \
+            --repo "${{ github.repository }}" \
+            --out dist/latest.json
 
       # SHA256SUMS spans the full set, so it must be computed here — after both
       # legs' artifacts are present — not on either leg alone (#24).
@@ -255,13 +314,26 @@ jobs:
 
       # Upload onto the triggering Release. --clobber replaces existing assets
       # so re-running a failed run re-attaches cleanly instead of erroring on a
-      # name collision (#54).
+      # name collision (#54). The updater bundles (.app.tar.gz /
+      # .AppImage.tar.gz) and their .sig files carry tauri's versioned names, so
+      # they're collected by glob rather than listed — latest.json references
+      # them by those exact names (#52).
       - name: Upload assets to the published Release
         run: |
+          set -euo pipefail
+          assets=(
+            dist/Turnstile-macOS-universal.dmg
+            dist/Turnstile-linux-x86_64.deb
+            dist/Turnstile-linux-x86_64.rpm
+            dist/Turnstile-linux-x86_64.AppImage
+            dist/latest.json
+            dist/SHA256SUMS
+          )
+          while IFS= read -r f; do
+            assets+=("$f")
+          done < <(find dist -maxdepth 1 -type f \
+            \( -name '*.app.tar.gz' -o -name '*.app.tar.gz.sig' \
+            -o -name '*.AppImage.tar.gz' -o -name '*.AppImage.tar.gz.sig' \))
           gh release upload "${{ github.event.release.tag_name }}" \
-            dist/Turnstile-macOS-universal.dmg \
-            dist/Turnstile-linux-x86_64.deb \
-            dist/Turnstile-linux-x86_64.rpm \
-            dist/Turnstile-linux-x86_64.AppImage \
-            dist/SHA256SUMS \
+            "${assets[@]}" \
             --clobber

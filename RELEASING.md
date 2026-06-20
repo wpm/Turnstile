@@ -79,9 +79,27 @@ App-Specific Passwords.
 > them with `gh secret set <NAME> --repo wpm/Turnstile`, which prompts for the
 > value rather than taking it on the command line.
 
-Turnstile has **no auto-updater**, so an updater signing key
-(`TAURI_SIGNING_PRIVATE_KEY`) is not needed. `CODECOV_TOKEN` is used by CI but
-is unrelated to releases.
+### Updater signing key
+
+Turnstile auto-updates via the Tauri updater (#50). The release workflow has
+`bundle.createUpdaterArtifacts` enabled, so `tauri build` signs each update
+bundle (macOS `.app.tar.gz`, Linux `.AppImage.tar.gz`) with a **minisign** key
+and emits its `.sig`; the `attach` job assembles those into a signed
+`latest.json` on the Release. This key is **separate from the Apple Developer
+ID** and irrecoverable — losing or rotating it forces every install to
+re-download once.
+
+| Secret                      | Where it comes from                                                                   |
+| --------------------------- | ------------------------------------------------------------------------------------- |
+| `TAURI_SIGNING_PRIVATE_KEY` | full contents of `turnstile-updater.key` (`cargo tauri signer generate`, no password) |
+
+The key has no password, so `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` is left empty
+in the workflow. The matching public key is embedded in `tauri.conf.json` under
+`plugins.updater.pubkey` for in-app verification. Because the key is required to
+build updater artifacts, the main-only Linux bundle job (`linux-bundle.yml`)
+reads it too. See #51 for generating and storing the key.
+
+`CODECOV_TOKEN` is used by CI but is unrelated to releases.
 
 ### Repo settings
 
