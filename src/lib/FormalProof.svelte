@@ -25,6 +25,7 @@
   } from "./annotations";
   import { lspHoverTooltip } from "./hover";
   import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
+  import { unicodeAbbreviations } from "./unicodeAbbreviations";
   import {
     syntaxHighlighting,
     defaultHighlightStyle,
@@ -159,6 +160,12 @@
           highlightActiveLine(),
           history(),
           keymap.of([...defaultKeymap, ...historyKeymap]),
+          // Unicode `\`-escape glyph completions, composed (no `override`) so
+          // the future Lean LSP completion source stacks alongside it (#98).
+          // `autocompletion` registers its own keymap at Prec.highest, so Enter
+          // accepts the glyph when the dropdown is open and falls through to the
+          // editor bindings (newline, etc.) when it isn't.
+          unicodeAbbreviations,
           tooltips({ parent: document.body }),
           progressField,
           annotationField,
