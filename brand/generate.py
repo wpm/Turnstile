@@ -57,11 +57,12 @@ PALETTE = {
 
 # --- App-icon recipe -------------------------------------------------------
 # Per brand/README.md "Consuming this": for platform icons that need a filled
-# tile, knock the mark out of a brand square. We use the accent (blue-600) tile
-# with a white mark — the most brand-identifying, highest-contrast combination,
-# and it holds its read down to taskbar / dock / store-tile sizes.
-ICON_TILE = PALETTE["accent"]
-ICON_MARK = PALETTE["paper"]
+# tile, knock the mark out of a brand square. We use a paper (white) tile with
+# the ink (black) mark — matching the website's light-mode rendering, the
+# highest-contrast pairing, and it holds its read down to taskbar / dock /
+# store-tile sizes.
+ICON_TILE = PALETTE["paper"]
+ICON_MARK = PALETTE["ink"]
 ICON_SIZE = 1024
 ICON_RADIUS = round(0.2237 * ICON_SIZE)  # iOS-style rounded-square corner
 ICON_MARK_SCALE = 0.66  # mark box as a fraction of the tile (leaves clearspace)
