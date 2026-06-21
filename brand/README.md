@@ -136,7 +136,7 @@ results.
 
 | Output                        | What it is                                                                |
 | ----------------------------- | ------------------------------------------------------------------------- |
-| `brand/app-icon.png`          | 1024² master fed to `tauri icon` (white mark on the blue-600 accent tile) |
+| `brand/app-icon.png`          | 1024² master fed to `tauri icon` (black ink mark on a paper-white tile)    |
 | `src-tauri/icons/*`           | Full Tauri desktop + Windows Store icon set                               |
 | `static/favicon.svg`          | Vector favicon; ink in light mode, slate-100 in dark                      |
 | `static/favicon.ico`          | Multi-size `.ico` (16/32/48)                                              |
@@ -160,8 +160,9 @@ Wiring these into the site's `<head>` is the site-scaffold's job, not this one.
 
 ### The app-icon recipe
 
-The desktop/store icons are the mark knocked out **white** of a **blue-600
-(`--ts-accent`) rounded-square tile** — the most brand-identifying, highest-
-contrast pairing, and it holds its read down to taskbar/dock/store-tile sizes.
-To switch to a slate-900 or paper tile instead, change `ICON_TILE` / `ICON_MARK`
-at the top of `generate.py` and re-run.
+The desktop/store icons are the **black ink (`--ts-ink`) mark** on a
+**paper-white (`--ts-paper`) rounded-square tile** — matching the website's
+light-mode rendering, the highest-contrast pairing, and it holds its read down
+to taskbar/dock/store-tile sizes. To switch to a slate-900 or accent tile
+instead, change `ICON_TILE` / `ICON_MARK` at the top of `generate.py` and
+re-run.
