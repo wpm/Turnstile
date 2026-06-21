@@ -22,13 +22,6 @@ Turnstile is built for **focused, tactic-mode** Lean proofs — proofs written
 inside a `by` block that stay in a single focused goal (`·`, `case`,
 structured `induction … with`).
 
-> **Goal State is off in 1.0.0.** The user-facing goal-state surfaces — the
-> cursor-anchored goal card that hangs off the editor's current row, the
-> All-Goals view that renders the whole per-row ladder, and the editor's
-> separator rail — are pulled from 1.0.0 behind a build-time feature flag that
-> is **off by default** (see [Feature flags](#feature-flags)). The code stays
-> in the tree; with the flag off none of it is reachable.
-
 ## Running
 
 Requirements: [pnpm](https://pnpm.io), the [Rust
