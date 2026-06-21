@@ -13,18 +13,18 @@
     <meta name="color-scheme" content="light dark" />
 
     <!--
-      Favicon: the brand mark, served straight from the source of truth as an
-      SVG favicon. The icon issue (#2) emits a full favicon set + social card
-      for the site to consume; swap those in here when they land.
-    -->
+    Favicon: the brand mark, served straight from the source of truth as an
+    SVG favicon. The icon issue (#2) emits a full favicon set + social card
+    for the site to consume; swap those in here when they land.
+  -->
     <link rel="icon" type="image/svg+xml" href="../brand/turnstile.svg" />
 
     <!--
-      Type: IBM Plex superfamily (brand/README.md → Type). Pulled from Google
-      Fonts for the scaffold; the brand direction is to self-host these. The
-      font stacks in tokens.css fall back cleanly if these never load (e.g.
-      offline), so the page still opens correctly from a local file.
-    -->
+    Type: IBM Plex superfamily (brand/README.md → Type). Pulled from Google
+    Fonts for the scaffold; the brand direction is to self-host these. The
+    font stacks in tokens.css fall back cleanly if these never load (e.g.
+    offline), so the page still opens correctly from a local file.
+  -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -41,11 +41,11 @@
     <header class="site-header">
       <div class="container">
         <!--
-          Wordmark lockup: the mark + "Turnstile". The SVG is inlined (from
-          brand/turnstile.svg) so it inherits the page's `color` via
-          currentColor and inverts in dark mode. The visible word is the
-          accessible name, so the mark itself is decorative (aria-hidden).
-        -->
+      Wordmark lockup: the mark + "Turnstile". The SVG is inlined (from
+      brand/turnstile.svg) so it inherits the page's `color` via
+      currentColor and inverts in dark mode. The visible word is the
+      accessible name, so the mark itself is decorative (aria-hidden).
+    -->
         <a class="wordmark" href="#main" aria-label="Turnstile — home">
           <svg
             class="logo"
@@ -115,18 +115,14 @@
           Turnstile is a desktop app for developing
           <a href="https://lean-lang.org">Lean&nbsp;4</a> proofs alongside a
           textbook-style prose rendering of the same argument. The left pane is
-          a CodeMirror editor backed by a live <code>lean&nbsp;--server</code>;
-          below it sits the current goal state or the generated prose proof. On
-          first launch Turnstile installs elan, the pinned Lean toolchain, and
-          the <a href="https://leanprover-community.github.io/">Mathlib</a>
-          cache automatically.
+          a CodeMirror editor backed by a live <code>lean&nbsp;--server</code>.
         </p>
         <p>
-          The right pane is a Proof Assistant — a Claude-backed collaborator
-          that reads your source, goal state, and diagnostics through tools, and
-          keeps the prose in step with the formalism. The Lean code is the
-          mathematics; the prose hints at the meaning. The turnstile (&#8866;)
-          separates what you have from what you must show.
+          The right pane is human-readble prose proof of the proof along with
+          the Proof Assistant — a Claude-backed collaborator that reads your
+          source, goal state, and diagnostics through tools, and keeps the prose
+          in step with the formalism. The Lean code is the mathematics; the
+          prose relates the meaning.
         </p>
       </section>
 
@@ -147,8 +143,9 @@
             <p>
               The editor is backed by a live <code>lean&nbsp;--server</code>, so
               goal state and diagnostics are always current. Turnstile installs
-              elan, the pinned Lean toolchain, and the Mathlib cache on first
-              launch.
+              elan, the pinned Lean toolchain, and the
+              <a href="https://leanprover-community.github.io/">Mathlib</a>
+              cache on first launch.
             </p>
           </article>
           <article class="card">
