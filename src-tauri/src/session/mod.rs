@@ -58,7 +58,8 @@ pub struct Meta {
     /// Assistant/code split: assistant panel width as a percentage (0–100).
     #[serde(alias = "chat_width_pct")]
     pub assistant_width_pct: f64,
-    /// Which proof view was active: `"formal"` or `"prose"`. Absent in older files.
+    /// Which right-column view was active: `"assistant"` or `"prose"` (legacy
+    /// `"formal"`/`"goal"` values may appear in older files). Absent in older files.
     #[serde(default)]
     pub proof_view: Option<String>,
     /// Goal panel height as a percentage of the editor column. Absent in older files.

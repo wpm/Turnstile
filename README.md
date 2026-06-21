@@ -6,12 +6,12 @@
 _A Lean proof assistant pairing formal proofs with prose._
 
 Turnstile is a desktop app for developing Lean 4 proofs alongside a
-textbook-style prose rendering of the same argument. The left pane is a
-CodeMirror editor backed by a live `lean --server`; below it sits the
-current goal state or the generated prose proof. The right pane is a
-Proof Assistant — a Claude-backed collaborator that reads your source,
-goal state, and diagnostics through tools, and keeps the prose in step
-with the formalism.
+textbook-style prose rendering of the same argument. The window is a
+vertical split: the **left column** is a CodeMirror editor backed by a
+live `lean --server`. The **right column** is the Proof Assistant — a
+Claude-backed collaborator that reads your source, goal state, and
+diagnostics through tools, and keeps the prose in step with the
+formalism — or, via a toggle in its header, the generated prose proof.
 
 The Lean code is the mathematics; the prose hints at the meaning. The
 turnstile (⊢) separates what you have from what you must show.
@@ -20,15 +20,14 @@ turnstile (⊢) separates what you have from what you must show.
 
 Turnstile is built for **focused, tactic-mode** Lean proofs — proofs written
 inside a `by` block that stay in a single focused goal (`·`, `case`,
-structured `induction … with`). That shape is what the UI is tuned to: the
-goal state hangs a single card off the cursor's row, showing the after-state
-of that line ("what did this row get me?"), and the All-Goals view renders
-the whole per-row ladder when you want the entire stack.
+structured `induction … with`).
 
-Term-mode proofs degrade gracefully rather than breaking: a proof with no
-tactic goals simply leaves the ladder empty and lets the prose carry the
-argument. The first time Turnstile sees such a proof it surfaces a one-time
-hint naming the mismatch, rather than an error or a silently empty pane.
+> **Goal State is off in 1.0.0.** The user-facing goal-state surfaces — the
+> cursor-anchored goal card that hangs off the editor's current row, the
+> All-Goals view that renders the whole per-row ladder, and the editor's
+> separator rail — are pulled from 1.0.0 behind a build-time feature flag that
+> is **off by default** (see [Feature flags](#feature-flags)). The code stays
+> in the tree; with the flag off none of it is reachable.
 
 ## Running
 
@@ -45,6 +44,21 @@ pnpm install
 pnpm tauri dev
 # release bundle
 pnpm tauri build
+```
+
+## Feature flags
+
+Build-time flags live in `src/lib/featureFlags.ts` and are read from Vite's
+`import.meta.env`, so they are inlined at build time and unset branches are
+dead-code-eliminated from the bundle.
+
+| Flag              | Default | Effect when set to `1`                                                                                              |
+| ----------------- | ------- | ------------------------------------------------------------------------------------------------------------------- |
+| `VITE_GOAL_STATE` | off     | Restores the Goal State view, the cursor-anchored goal cards, and the Formal Proof separator rail (ADR-0004, #119). |
+
+```sh
+# run the dev app with Goal State restored
+VITE_GOAL_STATE=1 pnpm tauri dev
 ```
 
 ## Testing
