@@ -44,6 +44,7 @@
   import { get } from "svelte/store";
   import GoalCard from "./GoalCard.svelte";
   import type { GoalEntry } from "./GoalEntry";
+  import { GOAL_STATE_ENABLED } from "./featureFlags";
 
   const setProgressLines = StateEffect.define<FileProgressRange[]>();
 
@@ -106,7 +107,10 @@
    * line's own text) with its right edge pinned to the rail.
    */
   function refreshCard() {
-    if (!view || !hostWrap) {
+    // The cursor-anchored goal card is pulled from 1.0.0 behind the Goal State
+    // flag (#119); when it's off the card never shows. The machinery below is
+    // kept (ADR-0004) but stays inert.
+    if (!GOAL_STATE_ENABLED || !view || !hostWrap) {
       cardVisible = false;
       return;
     }
@@ -343,7 +347,7 @@
 
 <div bind:this={hostWrap} class="editor-host">
   <div bind:this={container} class="editor-mount"></div>
-  {#if cardVisible}
+  {#if GOAL_STATE_ENABLED && cardVisible}
     <GoalCard goals={cardGoals} top={cardTop} dimmed={cardDimmed} />
   {/if}
 </div>

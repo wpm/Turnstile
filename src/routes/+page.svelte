@@ -10,6 +10,7 @@
   import SettingsDialog from "$lib/SettingsDialog.svelte";
   import Toast, { type ToastItem } from "$lib/Toast.svelte";
   import type { ProofView } from "$lib/types";
+  import { GOAL_STATE_ENABLED } from "$lib/featureFlags";
   import { onMount } from "svelte";
   import { SvelteMap } from "svelte/reactivity";
   import { invoke, isTauri } from "@tauri-apps/api/core";
@@ -43,7 +44,13 @@
   } from "$lib/session";
   import { handleSelectAll } from "$lib/selectAll";
 
-  let proofView = $state<ProofView>("prose");
+  // The right column shows the Proof Assistant by default; the header toggle
+  // flips it to the Prose Proof. "goal" is a dev-only third view that rejoins
+  // the cycle when GOAL_STATE_ENABLED is on (the mothballed All-Goals view,
+  // #119) — it is never produced when the flag is off, so it stays out of the
+  // shipped `ProofView` type.
+  type RightView = ProofView | "goal";
+  let proofView = $state<RightView>("assistant");
   let dark = $state(false);
   let prose = $state("");
   let lspReady = $state(false);
@@ -105,12 +112,14 @@
   }
 
   function currentLayout(): UiLayout {
+    // A single vertical split now: Formal Proof (left) vs. the Proof Assistant /
+    // Prose Proof column (right). Persist the right column's width fraction in
+    // both legacy Meta fields so older `.turn` readers keep working.
+    const rightWidthPct = 100 - formalWidth;
     return {
-      // The Proof Assistant now occupies the bottom band at full width; persist
-      // its height fraction. The Prose pane width fraction rides in goalPanelPct.
-      assistantWidthPct: 100 - topHeight,
+      assistantWidthPct: rightWidthPct,
       proofView,
-      goalPanelPct: 100 - formalWidth,
+      goalPanelPct: rightWidthPct,
     };
   }
 
@@ -363,11 +372,9 @@
     document.documentElement.classList.toggle("dark", dark);
   }
 
-  let formalWidth = $state(55); // width % of the Formal pane within the upper row
-  let topHeight = $state(60); // height % of the upper row (Formal + Prose)
+  let formalWidth = $state(55); // width % of the Formal Proof (left) column
 
   let draggingVertical = $state(false);
-  let draggingHorizontal = $state(false);
   let dragRect: DOMRect | null = null;
   let containerEl: HTMLDivElement;
 
@@ -377,34 +384,32 @@
     e.preventDefault();
   }
 
-  function onHorizontalDragStart(e: MouseEvent) {
-    draggingHorizontal = true;
-    dragRect = containerEl.getBoundingClientRect();
-    e.preventDefault();
-  }
-
   function onMouseMove(e: MouseEvent) {
-    if (!dragRect) return;
-    if (draggingVertical) {
-      // Vertical divider splits Formal (left) from Prose (right) in the upper row.
-      formalWidth = Math.min(
-        80,
-        Math.max(20, ((e.clientX - dragRect.left) / dragRect.width) * 100),
-      );
-    }
-    if (draggingHorizontal) {
-      // Horizontal divider splits the upper row from the Proof Assistant band.
-      topHeight = Math.min(
-        85,
-        Math.max(15, ((e.clientY - dragRect.top) / dragRect.height) * 100),
-      );
-    }
+    if (!dragRect || !draggingVertical) return;
+    // The vertical divider splits the Formal Proof (left) column from the
+    // Proof Assistant / Prose Proof (right) column.
+    formalWidth = Math.min(
+      80,
+      Math.max(20, ((e.clientX - dragRect.left) / dragRect.width) * 100),
+    );
   }
 
   function onMouseUp() {
     draggingVertical = false;
-    draggingHorizontal = false;
     dragRect = null;
+  }
+
+  // Cycle the right column's view. The shipped path is binary (Proof Assistant
+  // ⇄ Prose Proof). When the Goal State flag is on (dev only), the mothballed
+  // All-Goals view rejoins the cycle as a third stop (#119).
+  function cycleView() {
+    if (proofView === "assistant") {
+      proofView = "prose";
+    } else if (proofView === "prose") {
+      proofView = GOAL_STATE_ENABLED ? "goal" : "assistant";
+    } else {
+      proofView = "assistant";
+    }
   }
 
   const goalFontSize = $derived($settingsStore?.goal_state_font_size);
@@ -421,62 +426,66 @@
     onmouseup={onMouseUp}
     onmouseleave={onMouseUp}
   >
-    <div class="upper-row" style="height: {topHeight}%">
-      <div class="panel formal-panel" style="width: {formalWidth}%">
-        <div class="panel-header">Formal Proof</div>
-        <div class="panel-content formal-content">
-          <FormalProof {dark} {lspReady} />
-          <!-- The separator rail: a thin spine between code and prose that the
-               cursor-row goal card (#91) pins its right edge to. -->
-          <div class="rail" aria-hidden="true"></div>
-        </div>
+    <!-- Left column, full height: the Formal Proof. -->
+    <div class="panel formal-panel" style="width: {formalWidth}%">
+      <div class="panel-header">
+        Formal Proof
+        <ThemeToggle {dark} onToggle={toggleTheme} />
       </div>
-
-      <Divider orientation="vertical" onDragStart={onVerticalDragStart} />
-
-      <div class="panel prose-panel" style="width: {100 - formalWidth}%">
-        <div class="panel-header">
-          {proofView === "prose" ? "Prose Proof" : "Goal State"}
-          <ProofViewToggle
-            view={proofView}
-            onToggle={() =>
-              (proofView = proofView === "prose" ? "formal" : "prose")}
-          />
-        </div>
-        <div
-          class="panel-content"
-          style={proofView === "prose"
-            ? proseFontSize
-              ? `font-size: ${String(proseFontSize)}pt`
-              : ""
-            : goalFontSize
-              ? `font-size: ${String(goalFontSize)}pt`
-              : ""}
-        >
-          {#if proofView === "prose"}
-            <ProseProof content={prose} generating={$proseGenerating} />
-          {:else}
-            <!-- All-Goals view: reads the per-row cache directly (ADR-0004). -->
-            <GoalState />
-          {/if}
-        </div>
+      <div class="panel-content formal-content">
+        <FormalProof {dark} {lspReady} />
+        {#if GOAL_STATE_ENABLED}
+          <!-- The separator rail: a thin spine between code and prose that the
+               cursor-row goal card (#91) pins its right edge to. Behind the
+               Goal State flag (#119) — it is only a pin target for those
+               cards, so it stays hidden when they are. -->
+          <div class="rail" aria-hidden="true"></div>
+        {/if}
       </div>
     </div>
 
-    <Divider orientation="horizontal" onDragStart={onHorizontalDragStart} />
+    <Divider orientation="vertical" onDragStart={onVerticalDragStart} />
 
-    <div class="panel assistant-panel" style="height: {100 - topHeight}%">
+    <!-- Right column, full height: Proof Assistant (default) ⇄ Prose Proof. -->
+    <div
+      class="panel right-panel"
+      class:assistant-panel={proofView === "assistant"}
+      style="width: {100 - formalWidth}%"
+    >
       <div class="panel-header">
-        Proof Assistant
-        <ThemeToggle {dark} onToggle={toggleTheme} />
+        {proofView === "prose"
+          ? "Prose Proof"
+          : proofView === "goal"
+            ? "Goal State"
+            : "Proof Assistant"}
+        <ProofViewToggle
+          view={proofView === "prose" ? "prose" : "assistant"}
+          onToggle={cycleView}
+        />
       </div>
       <div
         class="panel-content"
-        style={assistantFontSize
-          ? `font-size: ${String(assistantFontSize)}pt`
-          : ""}
+        style={proofView === "prose"
+          ? proseFontSize
+            ? `font-size: ${String(proseFontSize)}pt`
+            : ""
+          : proofView === "goal"
+            ? goalFontSize
+              ? `font-size: ${String(goalFontSize)}pt`
+              : ""
+            : assistantFontSize
+              ? `font-size: ${String(assistantFontSize)}pt`
+              : ""}
       >
-        <Assistant />
+        {#if proofView === "prose"}
+          <ProseProof content={prose} generating={$proseGenerating} />
+        {:else if GOAL_STATE_ENABLED && proofView === "goal"}
+          <!-- All-Goals view: reads the per-row cache directly (ADR-0004).
+               Reachable only when the Goal State flag is on (#119). -->
+          <GoalState />
+        {:else}
+          <Assistant />
+        {/if}
       </div>
     </div>
 
@@ -529,21 +538,15 @@
     font-family: system-ui, sans-serif;
   }
 
+  /* Two full-height columns: Formal Proof (left) and the Proof Assistant /
+     Prose Proof column (right), split by a draggable vertical divider. */
   .app-container {
     flex: 1;
     min-height: 0;
     display: flex;
-    flex-direction: column;
+    flex-direction: row;
     overflow: hidden;
     user-select: none;
-  }
-
-  /* Upper band: Formal Proof (left) and Prose Proof (right), side by side. */
-  .upper-row {
-    display: flex;
-    flex-direction: row;
-    min-height: 0;
-    overflow: hidden;
   }
 
   .panel {
@@ -552,11 +555,6 @@
     min-height: 0;
     min-width: 0;
     overflow: hidden;
-  }
-
-  /* The Proof Assistant spans the full width of the lower band. */
-  .assistant-panel {
-    width: 100%;
   }
 
   /* Anchor context for the rail and the cursor-row goal card (#91). */
