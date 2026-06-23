@@ -1,0 +1,281 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>
+      Turnstile — A Lean proof assistant pairing formal proofs with prose
+    </title>
+    <meta
+      name="description"
+      content="Turnstile is a desktop app for developing Lean 4 proofs alongside a textbook-style prose rendering of the same argument."
+    />
+    <meta name="color-scheme" content="light dark" />
+
+    <!--
+    Favicon: the brand mark, served straight from the source of truth as an
+    SVG favicon. The icon issue (#2) emits a full favicon set + social card
+    for the site to consume; swap those in here when they land.
+  -->
+    <link rel="icon" type="image/svg+xml" href="brand/turnstile.svg" />
+
+    <!--
+    Type: IBM Plex superfamily (brand/README.md → Type). Pulled from Google
+    Fonts for the scaffold; the brand direction is to self-host these. The
+    font stacks in tokens.css fall back cleanly if these never load (e.g.
+    offline), so the page still opens correctly from a local file.
+  -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Serif:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <header class="site-header">
+      <div class="container">
+        <!--
+      Wordmark lockup: the mark + "Turnstile". The SVG is inlined (from
+      brand/turnstile.svg) so it inherits the page's `color` via
+      currentColor and inverts in dark mode. The visible word is the
+      accessible name, so the mark itself is decorative (aria-hidden).
+    -->
+        <a class="wordmark" href="#main" aria-label="Turnstile — home">
+          <svg
+            class="logo"
+            viewBox="0 0 256 256"
+            aria-hidden="true"
+            focusable="false"
+          >
+            <path
+              fill-rule="evenodd"
+              d="M24 128a104 104 0 1 0 208 0a104 104 0 1 0 -208 0ZM46 128a82 82 0 1 0 164 0a82 82 0 1 0 -164 0Z"
+            />
+            <rect x="89" y="88" width="22" height="80" rx="11" />
+            <rect x="100" y="117" width="64" height="22" rx="11" />
+          </svg>
+          <span>Turnstile</span>
+        </a>
+
+        <nav class="site-nav" aria-label="Primary">
+          <ul>
+            <li><a href="#overview">Overview</a></li>
+            <li><a href="#features">Features</a></li>
+            <li><a href="#releases">Releases</a></li>
+            <li>
+              <a href="https://github.com/wpm/Turnstile">GitHub</a>
+            </li>
+          </ul>
+        </nav>
+      </div>
+    </header>
+
+    <main id="main" class="container">
+      <!-- Hero -->
+      <section class="hero" aria-labelledby="hero-heading">
+        <svg
+          class="logo-hero"
+          viewBox="0 0 256 256"
+          role="img"
+          aria-label="Turnstile logo"
+        >
+          <title>Turnstile</title>
+          <path
+            fill-rule="evenodd"
+            d="M24 128a104 104 0 1 0 208 0a104 104 0 1 0 -208 0ZM46 128a82 82 0 1 0 164 0a82 82 0 1 0 -164 0Z"
+          />
+          <rect x="89" y="88" width="22" height="80" rx="11" />
+          <rect x="100" y="117" width="64" height="22" rx="11" />
+        </svg>
+
+        <h1 id="hero-heading">Turnstile</h1>
+        <p class="lede">
+          A Lean proof assistant pairing formal proofs with prose. Develop
+          Lean&nbsp;4 proofs alongside a textbook-style rendering of the same
+          argument, with a Claude-backed assistant keeping the prose in step
+          with the formalism.
+        </p>
+
+        <div class="actions">
+          <a class="button button--primary" href="#releases">Get Turnstile</a>
+          <a class="button button--secondary" href="#overview">Learn more</a>
+        </div>
+      </section>
+
+      <!-- Overview -->
+      <section id="overview" aria-labelledby="overview-heading">
+        <h2 id="overview-heading">Overview</h2>
+        <p>
+          Turnstile is a desktop app for developing
+          <a href="https://lean-lang.org">Lean&nbsp;4</a> proofs alongside a
+          textbook-style prose rendering of the same argument. The left pane is
+          a CodeMirror editor backed by a live <code>lean&nbsp;--server</code>.
+        </p>
+        <p>
+          The right pane is human-readble prose proof of the proof along with
+          the Proof Assistant — a Claude-backed collaborator that reads your
+          source, goal state, and diagnostics through tools, and keeps the prose
+          in step with the formalism. The Lean code is the mathematics; the
+          prose relates the meaning.
+        </p>
+      </section>
+
+      <!-- Features -->
+      <section id="features" aria-labelledby="features-heading">
+        <h2 id="features-heading">Features</h2>
+        <div class="features">
+          <article class="card">
+            <h3>Formal &amp; prose, side by side</h3>
+            <p>
+              A CodeMirror editor holds the Lean source while a textbook-style
+              prose proof of the same argument renders alongside it — the
+              formalism and its meaning in one view.
+            </p>
+          </article>
+          <article class="card">
+            <h3>Live Lean server</h3>
+            <p>
+              The editor is backed by a live <code>lean&nbsp;--server</code>, so
+              goal state and diagnostics are always current. Turnstile installs
+              elan, the pinned Lean toolchain, and the
+              <a href="https://leanprover-community.github.io/">Mathlib</a>
+              cache on first launch.
+            </p>
+          </article>
+          <article class="card">
+            <h3>Proof Assistant</h3>
+            <p>
+              A Claude-backed collaborator reads your source, goal state, and
+              diagnostics through tools, and keeps the prose in step as the
+              proof evolves.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <!-- Releases -->
+      <section id="releases" aria-labelledby="releases-heading">
+        <h2 id="releases-heading">Releases</h2>
+        <p>
+          Download the latest stable build of Turnstile for your platform. The
+          links always resolve to the most recent published release.
+        </p>
+
+        <!--
+          Download links point at GitHub's `releases/latest/download/<asset>`
+          redirect, which resolves to the latest *published, non-prerelease*
+          release — so these 404 through the RC phase and only go live once the
+          first stable 1.0.0 is published (#26). Asset names are the stable
+          names minted by the release pipeline (#24, see RELEASING.md). These
+          are absolute github.com URLs because the assets live there, not on
+          Pages — so they are intentionally not relative like the brand assets.
+        -->
+        <div class="downloads" id="downloads">
+          <article class="card download" data-os="macos">
+            <h3>macOS</h3>
+            <p>Universal build for Apple silicon and Intel Macs.</p>
+            <div class="download-links">
+              <a
+                class="button button--primary"
+                href="https://github.com/wpm/Turnstile/releases/latest/download/Turnstile-macOS-universal.dmg"
+                >Download <code>.dmg</code></a
+              >
+            </div>
+          </article>
+          <article class="card download" data-os="linux">
+            <h3>Linux</h3>
+            <p>x86_64 packages — pick the format your distribution uses.</p>
+            <div class="download-links">
+              <a
+                class="button button--primary"
+                href="https://github.com/wpm/Turnstile/releases/latest/download/Turnstile-linux-x86_64.deb"
+                >Download <code>.deb</code></a
+              >
+              <a
+                class="button button--secondary"
+                href="https://github.com/wpm/Turnstile/releases/latest/download/Turnstile-linux-x86_64.rpm"
+                >Download <code>.rpm</code></a
+              >
+              <a
+                class="button button--secondary"
+                href="https://github.com/wpm/Turnstile/releases/latest/download/Turnstile-linux-x86_64.AppImage"
+                >Download <code>.AppImage</code></a
+              >
+            </div>
+          </article>
+        </div>
+
+        <p class="downloads-meta">
+          Verify your download against
+          <a
+            href="https://github.com/wpm/Turnstile/releases/latest/download/SHA256SUMS"
+            ><code>SHA256SUMS</code></a
+          >, or browse every build on the
+          <a href="https://github.com/wpm/Turnstile/releases">releases page</a>.
+          Download links go live once the first stable 1.0.0 is published.
+        </p>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container">
+        <nav class="footer-links" aria-label="Resources">
+          <ul>
+            <li><a href="https://github.com/wpm/Turnstile">GitHub</a></li>
+            <li><a href="https://lean-lang.org">Lean</a></li>
+            <li>
+              <a href="https://leanprover-community.github.io/">Mathlib</a>
+            </li>
+            <li>
+              <a href="https://leanprover.zulipchat.com/">Lean Zulip</a>
+            </li>
+          </ul>
+        </nav>
+        <p class="footer-meta">
+          Turnstile is open source on
+          <a href="https://github.com/wpm/Turnstile">GitHub</a>.
+        </p>
+      </div>
+    </footer>
+
+    <!--
+      Progressive enhancement: surface the visitor's most likely download
+      first. The section is fully usable without this — every download stays
+      visible and ordered; the script only reorders and badges the best guess.
+      Framework-free inline script to match the rest of the static site.
+    -->
+    <script>
+      (function () {
+        var downloads = document.getElementById("downloads");
+        if (!downloads) return;
+
+        // Prefer the high-entropy userAgentData platform, fall back to the
+        // legacy navigator.platform string.
+        var uaData = navigator.userAgentData;
+        var hint = (
+          (uaData && uaData.platform) ||
+          navigator.platform ||
+          ""
+        ).toLowerCase();
+
+        var os = null;
+        if (hint.indexOf("mac") !== -1) os = "macos";
+        else if (hint.indexOf("linux") !== -1 || hint.indexOf("x11") !== -1)
+          os = "linux";
+        if (!os) return;
+
+        var card = downloads.querySelector('[data-os="' + os + '"]');
+        if (!card) return;
+
+        downloads.prepend(card);
+        card.setAttribute("data-recommended", "true");
+      })();
+    </script>
+  </body>
+</html>

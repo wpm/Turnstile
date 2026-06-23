@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" fill="currentColor" role="img" aria-label="Turnstile">
+  <title>Turnstile</title>
+  <desc>A turnstile (⊢) enclosed in a ring. Single-color; driven by currentColor.</desc>
+  <path fill-rule="evenodd" d="M24 128a104 104 0 1 0 208 0a104 104 0 1 0 -208 0ZM46 128a82 82 0 1 0 164 0a82 82 0 1 0 -164 0Z"/>
+  <rect x="89" y="88" width="22" height="80" rx="11"/>
+  <rect x="100" y="117" width="64" height="22" rx="11"/>
+</svg>
