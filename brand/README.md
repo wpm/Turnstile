@@ -134,15 +134,15 @@ results.
 
 ### What it emits
 
-| Output                        | What it is                                                                |
-| ----------------------------- | ------------------------------------------------------------------------- |
-| `brand/app-icon.png`          | 1024² master fed to `tauri icon` (black ink mark on a paper-white tile)    |
-| `src-tauri/icons/*`           | Full Tauri desktop + Windows Store icon set                               |
-| `static/favicon.svg`          | Vector favicon; ink in light mode, slate-100 in dark                      |
-| `static/favicon.ico`          | Multi-size `.ico` (16/32/48)                                              |
-| `static/favicon-96x96.png`    | Modern PNG favicon                                                        |
-| `static/apple-touch-icon.png` | 180² opaque iOS home-screen tile                                          |
-| `static/og-image.png`         | 1200×630 Open Graph / social card                                         |
+| Output                        | What it is                                                              |
+| ----------------------------- | ----------------------------------------------------------------------- |
+| `brand/app-icon.png`          | 1024² master fed to `tauri icon` (black ink mark on a paper-white tile) |
+| `src-tauri/icons/*`           | Full Tauri desktop + Windows Store icon set                             |
+| `static/favicon.svg`          | Vector favicon; ink in light mode, slate-100 in dark                    |
+| `static/favicon.ico`          | Multi-size `.ico` (16/32/48)                                            |
+| `static/favicon-96x96.png`    | Modern PNG favicon                                                      |
+| `static/apple-touch-icon.png` | 180² opaque iOS home-screen tile                                        |
+| `static/og-image.png`         | 1200×630 Open Graph / social card                                       |
 
 Wiring these into the site's `<head>` is the site-scaffold's job, not this one.
 
