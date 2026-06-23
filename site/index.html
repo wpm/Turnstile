@@ -163,9 +163,62 @@
       <section id="releases" aria-labelledby="releases-heading">
         <h2 id="releases-heading">Releases</h2>
         <p>
-          Downloads are coming soon. Builds will be published on the project's
-          <a href="https://github.com/wpm/Turnstile/releases">releases page</a>
-          — check there for the latest version once 1.0.0 is cut.
+          Download the latest stable build of Turnstile for your platform. The
+          links always resolve to the most recent published release.
+        </p>
+
+        <!--
+          Download links point at GitHub's `releases/latest/download/<asset>`
+          redirect, which resolves to the latest *published, non-prerelease*
+          release — so these 404 through the RC phase and only go live once the
+          first stable 1.0.0 is published (#26). Asset names are the stable
+          names minted by the release pipeline (#24, see RELEASING.md). These
+          are absolute github.com URLs because the assets live there, not on
+          Pages — so they are intentionally not relative like the brand assets.
+        -->
+        <div class="downloads" id="downloads">
+          <article class="card download" data-os="macos">
+            <h3>macOS</h3>
+            <p>Universal build for Apple silicon and Intel Macs.</p>
+            <div class="download-links">
+              <a
+                class="button button--primary"
+                href="https://github.com/wpm/Turnstile/releases/latest/download/Turnstile-macOS-universal.dmg"
+                >Download <code>.dmg</code></a
+              >
+            </div>
+          </article>
+          <article class="card download" data-os="linux">
+            <h3>Linux</h3>
+            <p>x86_64 packages — pick the format your distribution uses.</p>
+            <div class="download-links">
+              <a
+                class="button button--primary"
+                href="https://github.com/wpm/Turnstile/releases/latest/download/Turnstile-linux-x86_64.deb"
+                >Download <code>.deb</code></a
+              >
+              <a
+                class="button button--secondary"
+                href="https://github.com/wpm/Turnstile/releases/latest/download/Turnstile-linux-x86_64.rpm"
+                >Download <code>.rpm</code></a
+              >
+              <a
+                class="button button--secondary"
+                href="https://github.com/wpm/Turnstile/releases/latest/download/Turnstile-linux-x86_64.AppImage"
+                >Download <code>.AppImage</code></a
+              >
+            </div>
+          </article>
+        </div>
+
+        <p class="downloads-meta">
+          Verify your download against
+          <a
+            href="https://github.com/wpm/Turnstile/releases/latest/download/SHA256SUMS"
+            ><code>SHA256SUMS</code></a
+          >, or browse every build on the
+          <a href="https://github.com/wpm/Turnstile/releases">releases page</a>.
+          Download links go live once the first stable 1.0.0 is published.
         </p>
       </section>
     </main>
@@ -190,5 +243,39 @@
         </p>
       </div>
     </footer>
+
+    <!--
+      Progressive enhancement: surface the visitor's most likely download
+      first. The section is fully usable without this — every download stays
+      visible and ordered; the script only reorders and badges the best guess.
+      Framework-free inline script to match the rest of the static site.
+    -->
+    <script>
+      (function () {
+        var downloads = document.getElementById("downloads");
+        if (!downloads) return;
+
+        // Prefer the high-entropy userAgentData platform, fall back to the
+        // legacy navigator.platform string.
+        var uaData = navigator.userAgentData;
+        var hint = (
+          (uaData && uaData.platform) ||
+          navigator.platform ||
+          ""
+        ).toLowerCase();
+
+        var os = null;
+        if (hint.indexOf("mac") !== -1) os = "macos";
+        else if (hint.indexOf("linux") !== -1 || hint.indexOf("x11") !== -1)
+          os = "linux";
+        if (!os) return;
+
+        var card = downloads.querySelector('[data-os="' + os + '"]');
+        if (!card) return;
+
+        downloads.prepend(card);
+        card.setAttribute("data-recommended", "true");
+      })();
+    </script>
   </body>
 </html>

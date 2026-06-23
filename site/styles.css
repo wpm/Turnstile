@@ -286,6 +286,50 @@ main section {
   color: var(--ts-color-text-muted);
 }
 
+/* ── Downloads ───────────────────────────────────────────────────────── */
+.downloads {
+  display: grid;
+  gap: 1.5rem;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  margin-block: 1.5rem;
+}
+
+.download h3 {
+  margin-top: 0;
+}
+
+/* The buttons within a download card; wraps so .deb/.rpm/.AppImage flow. */
+.download-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+
+/*
+ * The OS-detection script (progressive enhancement) flags the visitor's most
+ * likely card with data-recommended; surface it with an accent border and a
+ * small label. Absent the script, no card carries the attribute and every
+ * download stays equally visible.
+ */
+.download[data-recommended] {
+  border-color: var(--ts-accent);
+}
+
+.download[data-recommended]::before {
+  content: "Recommended for your system";
+  display: block;
+  margin-bottom: 0.75rem;
+  font-size: var(--ts-text-sm);
+  font-weight: var(--ts-weight-medium);
+  color: var(--ts-accent);
+}
+
+.downloads-meta {
+  color: var(--ts-color-text-muted);
+  font-size: var(--ts-text-sm);
+}
+
 /* ── Footer ──────────────────────────────────────────────────────────── */
 .site-footer {
   border-top: 1px solid var(--ts-color-border);
